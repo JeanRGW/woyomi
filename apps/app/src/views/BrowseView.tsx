@@ -1,8 +1,48 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HomeSection, SearchResults, Source } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
 import type { SourceResults } from '@media-platform/core'
 import { MediaCard } from '../components'
+
+/** Runs tasks one at a time; a rejected task never blocks the next. */
+type SectionQueue = <T>(task: () => Promise<T>) => Promise<T>
+
+function createQueue(): SectionQueue {
+  let tail: Promise<unknown> = Promise.resolve()
+  return (task) => {
+    const run = tail.then(task, task)
+    tail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+}
+
+/** True once the element is near the viewport (fallback: always true). */
+function useNearViewport<T extends HTMLElement>(rootMargin = '800px') {
+  const ref = useRef<T | null>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setNear(true)
+      return
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setNear(true)
+          io.disconnect()
+        }
+      },
+      { rootMargin }
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [rootMargin])
+  return [ref, near] as const
+}
 
 export function BrowseView({ runtime }: { runtime: AppRuntime }) {
   const [mode, setMode] = useState<'home' | 'search'>('home')
@@ -37,6 +77,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
   const [pinned, setPinned] = useState<string[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const avail = useMemo(() => homeSources(runtime, sources), [runtime, sources])
+  const [queue] = useState(createQueue)
 
   useEffect(() => {
     let cancelled = false
@@ -64,10 +105,10 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
         <p className="muted">Your landing is empty — pick a source below and pin it to show its sections here.</p>
       )}
       {pinnedSources.map((s) => (
-        <HomeSource key={s.id} runtime={runtime} source={s} pinned onTogglePin={() => togglePin(s.id)} />
+        <HomeSource key={s.id} runtime={runtime} source={s} pinned onTogglePin={() => togglePin(s.id)} queue={queue} />
       ))}
       {selectedSource && (
-        <HomeSource key={selectedSource.id} runtime={runtime} source={selectedSource} pinned={false} onTogglePin={() => togglePin(selectedSource.id)} />
+        <HomeSource key={selectedSource.id} runtime={runtime} source={selectedSource} pinned={false} onTogglePin={() => togglePin(selectedSource.id)} queue={queue} />
       )}
 
       <h2>All sources</h2>
@@ -88,7 +129,19 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
   )
 }
 
-function HomeSource({ runtime, source, pinned, onTogglePin }: { runtime: AppRuntime; source: Source; pinned: boolean; onTogglePin: () => void }) {
+function HomeSource({
+  runtime,
+  source,
+  pinned,
+  onTogglePin,
+  queue
+}: {
+  runtime: AppRuntime
+  source: Source
+  pinned: boolean
+  onTogglePin: () => void
+  queue: SectionQueue
+}) {
   const [sections, setSections] = useState<HomeSection[]>([])
 
   useEffect(() => {
@@ -111,37 +164,48 @@ function HomeSource({ runtime, source, pinned, onTogglePin }: { runtime: AppRunt
         </button>
       </div>
       {sections.map((sec) => (
-        <SectionGrid key={sec.id} runtime={runtime} source={source} section={sec} />
+        <SectionGrid key={sec.id} runtime={runtime} source={source} section={sec} queue={queue} />
       ))}
     </div>
   )
 }
 
-function SectionGrid({ runtime, source, section }: { runtime: AppRuntime; source: Source; section: HomeSection }) {
+function SectionGrid({
+  runtime,
+  source,
+  section,
+  queue
+}: {
+  runtime: AppRuntime
+  source: Source
+  section: HomeSection
+  queue: SectionQueue
+}) {
   const [result, setResult] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [sentinel, sentinelNear] = useNearViewport<HTMLDivElement>()
 
   useEffect(() => {
     let cancelled = false
+    if (!sentinelNear || result) return
     setLoading(true)
     setError('')
-    runtime.engine
-      .getHomeSection(source.id, section.id, 1)
+    queue(() => runtime.engine.getHomeSection(source.id, section.id, 1))
       .then((r) => !cancelled && setResult(r))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
       .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [runtime, source.id, section.id])
+  }, [runtime, source.id, section.id, sentinelNear, queue, result])
 
   async function loadMore() {
     const page = (result?.page ?? 1) + 1
     setLoading(true)
     setError('')
     try {
-      const r = await runtime.engine.getHomeSection(source.id, section.id, page)
+      const r = await queue(() => runtime.engine.getHomeSection(source.id, section.id, page))
       setResult((prev) => (prev ? { ...r, items: [...prev.items, ...r.items] } : r))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -160,6 +224,7 @@ function SectionGrid({ runtime, source, section }: { runtime: AppRuntime; source
           {loading ? 'Loading…' : 'Load more'}
         </button>
       )}
+      <div ref={sentinel} />
     </div>
   )
 }
