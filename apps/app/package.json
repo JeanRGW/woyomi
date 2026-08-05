@@ -1,0 +1,32 @@
+{
+  "name": "@media-platform/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:plugin-mangadex": "pnpm --filter @media-platform/plugin-mangadex build:plugin",
+    "build:plugin-examplevideo": "pnpm --filter @media-platform/plugin-examplevideo build:plugin",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@media-platform/core": "workspace:*",
+    "@media-platform/plugin-mangadex": "workspace:*",
+    "@media-platform/plugin-examplevideo": "workspace:*",
+    "hls.js": "^1.5.20",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.5"
+  }
+}

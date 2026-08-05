@@ -1,0 +1,27 @@
+{
+  "name": "@media-platform/plugin-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "media-plugin-build": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/cli.js",
+    "./build": "./dist/build.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@media-platform/core": "workspace:*",
+    "esbuild": "^0.28.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  }
+}

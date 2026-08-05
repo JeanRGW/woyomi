@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.plugin.js
+*.plugin.json
+*.log
+target/
+.env
+.DS_Store
+apps/app/src-tauri/target/
+apps/app/dist/
+.turbo/
+apps/server/data/
