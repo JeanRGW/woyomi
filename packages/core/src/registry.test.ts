@@ -57,6 +57,23 @@ describe('PluginRegistry', () => {
     expect(() => validateManifest({ ...reg.manifest, id: 'Bad ID!' })).toThrow()
     expect(validateManifest(reg.manifest).id).toBe('p1')
   })
+
+  it('accepts a multi-select pref with an array default', () => {
+    const manifest = validateManifest({
+      ...reg.manifest,
+      prefs: [{ key: 'lang', label: 'Language', type: 'multi', defaultValue: ['en', 'pt-br'], options: [{ value: 'en', label: 'English' }] }]
+    })
+    expect(manifest.prefs?.[0]?.type).toBe('multi')
+  })
+
+  it('rejects a multi pref whose default is not an array', () => {
+    expect(() =>
+      validateManifest({
+        ...reg.manifest,
+        prefs: [{ key: 'lang', label: 'Language', type: 'multi', defaultValue: 'en' }]
+      })
+    ).toThrow()
+  })
 })
 
 describe('loadBundle', () => {

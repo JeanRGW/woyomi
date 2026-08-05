@@ -105,8 +105,8 @@ export interface SourcePrefs {
 export interface SourcePref {
   key: string
   label: string
-  type: 'boolean' | 'select' | 'string'
-  defaultValue?: string | boolean
+  type: 'boolean' | 'select' | 'string' | 'multi'
+  defaultValue?: string | boolean | string[]
   options?: { value: string; label: string }[]
   description?: string
 }

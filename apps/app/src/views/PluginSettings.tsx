@@ -47,6 +47,25 @@ function PrefControl({ runtime, pluginId, pref }: { runtime: AppRuntime; pluginI
             </option>
           ))}
         </select>
+      ) : pref.type === 'multi' ? (
+        <span className="multi-opts">
+          {(pref.options ?? []).map((o) => {
+            const current = Array.isArray(value) ? value : []
+            const checked = current.includes(o.value)
+            return (
+              <label key={o.value} className="multi-opt">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() =>
+                    update(checked ? current.filter((v) => v !== o.value) : [...current, o.value])
+                  }
+                />
+                {o.label}
+              </label>
+            )
+          })}
+        </span>
       ) : (
         <input type="text" value={String(value ?? '')} onChange={(e) => update(e.target.value)} />
       )}

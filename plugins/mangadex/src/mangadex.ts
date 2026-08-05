@@ -8,8 +8,10 @@ const API = {
   search: (q: string, page: number) =>
     `${BASE}/manga?limit=20&offset=${(page - 1) * 20}&title=${encodeURIComponent(q)}&includes[]=cover_art`,
   media: (id: string) => `${BASE}/manga/${id}?includes[]=cover_art`,
-  chapters: (id: string, offset: number, lang: string) =>
-    `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=${encodeURIComponent(lang)}&includes[]=user&includes[]=scanlation_group`,
+  chapters: (id: string, offset: number, langs: string[]) => {
+    const langParams = [...new Set(langs)].map((l) => `translatedLanguage[]=${encodeURIComponent(l)}`).join('&')
+    return `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&${langParams}&includes[]=user&includes[]=scanlation_group`
+  },
   chapter: (id: string) => `${BASE}/at-home/server/${id}`,
   pages: (base: string, hash: string) => `${base}/data/${hash}`,
   dataSaver: (base: string, hash: string) => `${base}/data-saver/${hash}`
@@ -106,12 +108,14 @@ export const mangaDexSource: Source = {
   },
 
   async getEpisodes(ctx, mediaId): Promise<Episode[]> {
-    const lang = await ctx.preferences.getWithDefault('lang', 'en')
-    return ctx.cache.withCache(`mangadex:episodes:${mediaId}:${lang}`, 30 * 60_000, async () => {
+    const langs = await ctx.preferences.getWithDefault<string[]>('lang', ['en'])
+    // sort + dedupe so the cache key is canonical regardless of order/dupes
+    const keyLangs = [...new Set(langs)].sort()
+    return ctx.cache.withCache(`mangadex:episodes:${mediaId}:${keyLangs.join('+')}`, 30 * 60_000, async () => {
       const seen = new Set<string>()
       const episodes: Episode[] = []
       for (let offset = 0; offset < 1000; offset += 96) {
-        const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, lang), { headers: jsonHeaders() })
+        const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, langs), { headers: jsonHeaders() })
         if (json.data.length === 0) break
         for (const ch of json.data) {
           const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN

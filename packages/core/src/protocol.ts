@@ -51,14 +51,25 @@ export const HistoryEntrySchema = z.object({
   openedAt: z.number()
 })
 
-export const SourcePrefSchema = z.object({
-  key: z.string(),
-  label: z.string(),
-  type: z.enum(['boolean', 'select', 'string']),
-  defaultValue: z.union([z.string(), z.boolean()]).optional(),
-  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
-  description: z.string().optional()
-})
+export const SourcePrefSchema = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    type: z.enum(['boolean', 'select', 'string', 'multi']),
+    defaultValue: z.union([z.string(), z.boolean(), z.array(z.string())]).optional(),
+    options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
+    description: z.string().optional()
+  })
+  .superRefine((pref, ctx) => {
+    if (pref.defaultValue === undefined) return
+    const isArray = Array.isArray(pref.defaultValue)
+    if ((pref.type === 'multi') !== isArray) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `defaultValue for '${pref.type}' pref must be ${pref.type === 'multi' ? 'an array' : 'a scalar'}`
+      })
+    }
+  })
 
 export const PluginManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),

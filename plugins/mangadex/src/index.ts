@@ -26,9 +26,9 @@ const registration: PluginRegistration = {
       {
         key: 'lang',
         label: 'Language',
-        type: 'select',
-        defaultValue: 'en',
-        description: 'Translated chapters language filter',
+        type: 'multi',
+        defaultValue: ['en'],
+        description: 'Translated chapters language filter (one or more)',
         options: [
           { value: 'en', label: 'English' },
           { value: 'fr', label: 'French' },

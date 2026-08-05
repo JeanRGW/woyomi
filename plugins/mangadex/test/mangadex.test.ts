@@ -136,12 +136,26 @@ describe('mangadex source', () => {
   })
 
   it('uses the language preference in the feed request', async () => {
-    prefOverrides.lang = 'fr'
+    prefOverrides.lang = ['fr']
     const fetch = fixtureFetch({ '/feed?': chaptersFixture })
     const spy = vi.fn(fetch)
     await mangaDexSource.getEpisodes({ ...ctx, fetch: spy }, 'abc-123')
     const urls = spy.mock.calls.map(([u]) => String(u))
     expect(urls.some((u) => u.includes('translatedLanguage[]=fr'))).toBe(true)
+    delete prefOverrides.lang
+  })
+
+  it('emits one translatedLanguage param per selected language (deduped)', async () => {
+    prefOverrides.lang = ['en', 'pt-br', 'en']
+    const fetch = fixtureFetch({ '/feed?': chaptersFixture })
+    const spy = vi.fn(fetch)
+    await mangaDexSource.getEpisodes({ ...ctx, fetch: spy }, 'abc-123')
+    const urls = spy.mock.calls.map(([u]) => String(u))
+    const first = urls[0]!
+    expect(first).toContain('translatedLanguage[]=en')
+    expect(first).toContain('translatedLanguage[]=pt-br')
+    // deduped: 'en' appears once, 'pt-br' once
+    expect(first.match(/translatedLanguage\[\]=/g)).toHaveLength(2)
     delete prefOverrides.lang
   })
 
