@@ -9,13 +9,15 @@
     "build:plugin-mangadex": "pnpm --filter @media-platform/plugin-mangadex build:plugin",
     "build:plugin-examplevideo": "pnpm --filter @media-platform/plugin-examplevideo build:plugin",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
     "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
     "@media-platform/core": "workspace:*",
-    "@media-platform/plugin-mangadex": "workspace:*",
     "@media-platform/plugin-examplevideo": "workspace:*",
+    "@media-platform/plugin-mangadex": "workspace:*",
+    "@tauri-apps/plugin-sql": "^2.4.0",
     "hls.js": "^1.5.20",
     "marked": "^14.0.0",
     "react": "^18.3.1",
@@ -23,10 +25,17 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.9.0",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.66.0",
     "vite": "^6.0.7",
     "vitest": "^3.0.5"
   }

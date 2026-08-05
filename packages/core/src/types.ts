@@ -80,9 +80,20 @@ export interface CacheApi {
   withCache<T>(key: string, ttlMs: number, compute: () => Promise<T>): Promise<T>
 }
 
+/** Source-scoped settings; persisted by the store. Values are scalars/arrays. */
+export type PreferenceValue = string | number | boolean | (string | number | boolean)[]
+
+export interface PreferencesApi {
+  get<T extends PreferenceValue>(sourceId: string, key: string): Promise<T | undefined>
+  /** Reads the persisted value or `fallback` when unset; never throws. */
+  getWithDefault<T extends PreferenceValue>(sourceId: string, key: string, fallback: T): Promise<T>
+  set(sourceId: string, key: string, value: PreferenceValue): Promise<void>
+}
+
 export interface SourceContext {
   fetch: FetchFn
   cache: CacheApi
+  preferences: PreferencesApi
 }
 
 export interface Source {
@@ -134,6 +145,26 @@ export interface HistoryEntry {
   media: Media
   episode: Episode
   openedAt: number
+}
+
+/** An externally-installed plugin persisted for rehydration across restarts. */
+export interface PluginStoredBundle {
+  /** plugin id */
+  id: string
+  /** the code bundle as a self-contained IIFE string */
+  code: string
+  /** sha256 hex of `code`, verified at install time */
+  sha256: string
+  /** plugin manifest (mirrors what loadBundle returns) */
+  manifest: PluginManifest
+}
+
+export interface PluginStore {
+  list(): Promise<PluginStoredBundle[]>
+  /** Returns the previously stored bundle for this id, if any. */
+  get(id: string): Promise<PluginStoredBundle | undefined>
+  save(bundle: PluginStoredBundle): Promise<void>
+  remove(id: string): Promise<void>
 }
 
 export interface LibraryStore {

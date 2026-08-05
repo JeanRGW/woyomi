@@ -1,5 +1,5 @@
 import type { ChapterContent, Episode, Media, SearchResults, Source, SourceContext } from '@media-platform/core'
-import { API_VERSION, fetchJson, jsonHeaders } from '@media-platform/core'
+import { fetchJson, jsonHeaders } from '@media-platform/core'
 
 const BASE = 'https://api.mangadex.org'
 const IMG_BASE = 'https://uploads.mangadex.org'
@@ -133,7 +133,16 @@ export const mangaDexSource: Source = {
     const chapterUuid = episodeId.split('/').pop() ?? episodeId
     const server = await fetchJson<ChapterServer>(ctx.fetch, API.chapter(chapterUuid), { headers: jsonHeaders() })
     const hash = server.chapter.hash
-    const pages = server.chapter.data.map((f) => `${API.pages(server.baseUrl, hash)}/${f}`)
-    return { type: 'pages', images: pages }
+    const files = server.chapter.data
+    // MangaDex's at-home returns the real image pages for a chapter; data-saver
+    // returns lower-quality `.jpg` images. Text/novel chapters have no image
+    // files, so the reader falls back to a placeholder text view.
+    if (!files.length) {
+      return { type: 'text', html: '' }
+    }
+    const useDataSaver = await ctx.preferences.getWithDefault('mangadex', 'dataSaver', true)
+    const base = useDataSaver ? API.dataSaver(server.baseUrl, hash) : API.pages(server.baseUrl, hash)
+    const images = useDataSaver ? server.chapter.dataSaver.map((f) => `${base}/${f}`) : files.map((f) => `${base}/${f}`)
+    return { type: 'pages', images }
   }
 }

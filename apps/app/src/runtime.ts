@@ -1,7 +1,6 @@
 import {
   Engine,
   IndexedDbStore,
-  MemoryStore,
   PluginRegistry,
   TTLCache,
   loadBundle,
@@ -11,8 +10,12 @@ import {
   type FetchInit,
   type FetchResult,
   type LibraryStore,
-  type PluginRegistration
+  type PluginRegistration,
+  type PluginStore,
+  type PluginStoredBundle,
+  type PreferencesApi
 } from '@media-platform/core'
+import { SqliteStore } from './sqlite-store'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
 declare global {
@@ -65,6 +68,7 @@ export interface AppRuntime {
   engine: Engine
   registry: PluginRegistry
   store: LibraryStore
+  plugins: PluginStore
   installed: Map<string, string> // pluginId -> version
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
@@ -83,11 +87,26 @@ export function getRuntime(): Promise<AppRuntime> {
 }
 
 async function initRuntime(): Promise<AppRuntime> {
-  const store: LibraryStore = isTauri() ? new MemoryStore() : new IndexedDbStore()
+  const native = isTauri()
+  let store: LibraryStore
+  let plugins: PluginStore
+  let prefs: PreferencesApi
+
+  if (native) {
+    const sqlite = new SqliteStore()
+    store = sqlite
+    plugins = sqlite.pluginStore()
+    prefs = sqlite.preferencesApi()
+  } else {
+    const idb = new IndexedDbStore()
+    store = idb
+    plugins = idb.pluginStore()
+    prefs = idb.preferencesApi()
+  }
 
   const installed = new Map<string, string>()
 
-  const engine = new Engine({ fetch: createFetchProvider(), cache: new TTLCache(), sourceThrottleMs: 300 })
+  const engine = new Engine({ fetch: createFetchProvider(), cache: new TTLCache(), sourceThrottleMs: 300, sourcePrefs: prefs })
   const registry = new PluginRegistry()
 
   async function loadFromBundle(code: string, origin: 'bundled' | 'external'): Promise<void> {
@@ -97,16 +116,36 @@ async function initRuntime(): Promise<AppRuntime> {
     for (const source of registration.sources) engine.registerSource(source)
   }
 
+  async function loadInstalled(plugin: PluginStoredBundle): Promise<void> {
+    try {
+      const registration = loadBundle(plugin.code)
+      if (registration.manifest.id !== plugin.id) return
+      registry.registerExternal(registration)
+      for (const source of registration.sources) engine.registerSource(source)
+      installed.set(plugin.id, plugin.manifest.version)
+    } catch (e) {
+      // A plugin whose code no longer matches its stored manifest is dropped
+      // rather than blocking app boot.
+      console.warn(`dropping stored plugin ${plugin.id}:`, e)
+    }
+  }
+
   // First-party plugins are compiled into the app (bundle format, same loader).
   const mangadexBuilt = await import('@media-platform/plugin-mangadex/dist/mangadex.plugin.js?raw')
   await loadFromBundle(mangadexBuilt.default, 'bundled')
   const videoBuilt = await import('@media-platform/plugin-examplevideo/dist/examplevideo.plugin.js?raw')
   await loadFromBundle(videoBuilt.default, 'bundled')
 
+  // Rehydrate externally-installed plugins across restarts.
+  for (const plugin of await plugins.list()) {
+    await loadInstalled(plugin)
+  }
+
   return {
     engine,
     registry,
     store,
+    plugins,
     installed,
     setInstalled(id, version) {
       installed.set(id, version)
@@ -114,6 +153,7 @@ async function initRuntime(): Promise<AppRuntime> {
     uninstall(id) {
       installed.delete(id)
       registry.unregister(id)
+      void plugins.remove(id)
     },
     async installExternal(plugin) {
       const provider = createFetchProvider()
@@ -140,6 +180,8 @@ async function initRuntime(): Promise<AppRuntime> {
       registry.registerExternal(registration)
       for (const source of registration.sources) engine.registerSource(source)
       installed.set(plugin.id, plugin.version)
+
+      await plugins.save({ id: plugin.id, code, sha256: actual, manifest })
     }
   }
 }

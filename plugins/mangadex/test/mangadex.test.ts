@@ -39,6 +39,11 @@ const serverFixture = {
   chapter: { hash: 'HASH', data: ['1.png', '2.png'], dataSaver: ['1-s.png', '2-s.png'] }
 }
 
+const emptyServerFixture = {
+  baseUrl: 'https://uploads.mangadex.org',
+  chapter: { hash: 'HASH', data: [], dataSaver: [] }
+}
+
 function fixtureFetch(routes: Record<string, unknown>): FetchFn {
   return async (url) => {
     const entry = Object.entries(routes).find(([key]) => url.includes(key))
@@ -52,6 +57,15 @@ const ctx = {
     async withCache<T>(_k: string, _t: number, compute: () => Promise<T>): Promise<T> {
       return compute()
     }
+  },
+  preferences: {
+    async getWithDefault<T>(_s: string, _k: string, fallback: T): Promise<T> {
+      return fallback
+    },
+    async get() {
+      return undefined
+    },
+    async set() {}
   }
 }
 
@@ -92,12 +106,48 @@ describe('mangadex source', () => {
     expect(eps[2]?.number).toBe(42.5)
   })
 
-  it('builds page URLs from the at-home server', async () => {
-    const content = await mangaDexSource.getChapterContent({ ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }) }, 'abc-123', 'ch-1')
+  it('uses data-saver URLs when the preference is on (default)', async () => {
+    const prefs = { on: true }
+    const prefApi = {
+      async getWithDefault(_s: string, _k: string, fallback: boolean) {
+        return prefs.on
+      }
+    }
+    const content = await mangaDexSource.getChapterContent(
+      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }), preferences: prefApi },
+      'abc-123',
+      'ch-1'
+    )
+    expect(content).toEqual({
+      type: 'pages',
+      images: ['https://uploads.mangadex.org/data-saver/HASH/1-s.png', 'https://uploads.mangadex.org/data-saver/HASH/2-s.png']
+    })
+  })
+
+  it('uses full-res URLs when data-saver is off', async () => {
+    const prefApi = {
+      async getWithDefault(_s: string, _k: string, fallback: boolean) {
+        return false
+      }
+    }
+    const content = await mangaDexSource.getChapterContent(
+      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }), preferences: prefApi },
+      'abc-123',
+      'ch-1'
+    )
     expect(content).toEqual({
       type: 'pages',
       images: ['https://uploads.mangadex.org/data/HASH/1.png', 'https://uploads.mangadex.org/data/HASH/2.png']
     })
+  })
+
+  it('returns a text view for a chapter with no images (novel)', async () => {
+    const content = await mangaDexSource.getChapterContent(
+      { ...ctx, fetch: fixtureFetch({ '/at-home': emptyServerFixture }) },
+      'abc-123',
+      'ch-1'
+    )
+    expect(content.type).toBe('text')
   })
 
   it('parses getMedia when data is a single entity (not an array)', async () => {

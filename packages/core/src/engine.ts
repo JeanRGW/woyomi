@@ -1,4 +1,16 @@
-import type { ChapterContent, CacheApi, Episode, FetchFn, FetchInit, FetchResult, Media, SearchResults, Source, StreamSource } from './types.js'
+import type {
+  ChapterContent,
+  CacheApi,
+  Episode,
+  FetchFn,
+  FetchInit,
+  FetchResult,
+  Media,
+  PreferencesApi,
+  SearchResults,
+  Source,
+  StreamSource
+} from './types.js'
 import { TTLCache } from './cache.js'
 
 export interface EngineOptions {
@@ -6,6 +18,8 @@ export interface EngineOptions {
   cache?: CacheApi
   /** minimum gap between fetches to the same source (anti-ban). default 300ms */
   sourceThrottleMs?: number
+  /** optional per-source preferences; absent sources get a no-op backend */
+  sourcePrefs?: PreferencesApi
 }
 
 /**
@@ -43,10 +57,12 @@ export class ThrottledFetch {
 export class Engine {
   private sources = new Map<string, Source>()
   readonly cache: CacheApi
+  readonly prefs: PreferencesApi
   private throttles = new Map<string, ThrottledFetch>()
 
   constructor(private opts: EngineOptions) {
     this.cache = opts.cache ?? new TTLCache()
+    this.prefs = opts.sourcePrefs ?? noopPrefs
   }
 
   registerSource(source: Source): void {
@@ -65,7 +81,7 @@ export class Engine {
     const throttle = this.throttles.get(sourceId) ?? new ThrottledFetch(this.opts.fetch, this.opts.sourceThrottleMs ?? 300)
     this.throttles.set(sourceId, throttle)
     const fetch: FetchFn = (url, init) => throttle.call(sourceId, url, init)
-    return { fetch, cache: this.cache }
+    return { fetch, cache: this.cache, preferences: this.prefs }
   }
 
   async search(sourceId: string, query: string, page: number): Promise<SearchResults> {
@@ -99,4 +115,14 @@ export class Engine {
     if (!source) throw new Error(`unknown source: ${id}`)
     return source
   }
+}
+
+const noopPrefs: PreferencesApi = {
+  async get() {
+    return undefined
+  },
+  async getWithDefault(_sourceId, _key, fallback) {
+    return fallback
+  },
+  async set() {}
 }

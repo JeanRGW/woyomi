@@ -1,4 +1,16 @@
-import type { Episode, HistoryEntry, LibraryEntry, LibraryStatus, LibraryStore, Media, ProgressEntry } from './types.js'
+import type {
+  Episode,
+  HistoryEntry,
+  LibraryEntry,
+  LibraryStatus,
+  LibraryStore,
+  Media,
+  PluginStoredBundle,
+  PluginStore,
+  PreferencesApi,
+  PreferenceValue,
+  ProgressEntry
+} from './types.js'
 
 /** In-memory store used for tests and non-persistent scenarios. */
 export class MemoryStore implements LibraryStore {
@@ -84,14 +96,63 @@ export class MemoryStore implements LibraryStore {
   }
 }
 
+/** In-memory plugin store used for tests and non-persistent scenarios. */
+export class MemoryPluginStore implements PluginStore {
+  private bundles = new Map<string, PluginStoredBundle>()
+
+  async list(): Promise<PluginStoredBundle[]> {
+    return [...this.bundles.values()]
+  }
+
+  async get(id: string): Promise<PluginStoredBundle | undefined> {
+    return this.bundles.get(id)
+  }
+
+  async save(bundle: PluginStoredBundle): Promise<void> {
+    this.bundles.set(bundle.id, bundle)
+  }
+
+  async remove(id: string): Promise<void> {
+    this.bundles.delete(id)
+  }
+}
+
+/** In-memory per-source preferences; the default backend when none is configured. */
+export class MemoryPreferencesApi implements PreferencesApi {
+  private prefs = new Map<string, PreferenceValue>()
+
+  async get<T extends PreferenceValue>(sourceId: string, key: string): Promise<T | undefined> {
+    return this.prefs.get(`${sourceId}\u0000${key}`) as T | undefined
+  }
+
+  async getWithDefault<T extends PreferenceValue>(sourceId: string, key: string, fallback: T): Promise<T> {
+    return (await this.get<T>(sourceId, key)) ?? fallback
+  }
+
+  async set(sourceId: string, key: string, value: PreferenceValue): Promise<void> {
+    this.prefs.set(`${sourceId}\u0000${key}`, value)
+  }
+}
+
+function indexDBOpen(name: string, version: number): IDBOpenDBRequest {
+  return (globalThis.indexedDB as IDBFactory).open(name, version)
+}
+
+function request<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
 /**
  * IndexedDB-backed store used by the web (no-server) build.
  * Object stores: `library` (key = media id), `progress` (key = media id),
- * `history` (key = `${mediaId}/${episodeId}`).
+ * `history` (key = `${mediaId}/${episodeId}`), `preferences`, `plugins`.
  */
 export class IndexedDbStore implements LibraryStore {
   static readonly DB_NAME = 'media-platform'
-  static readonly VERSION = 2
+  static readonly VERSION = 3
 
   private dbPromise: Promise<IDBDatabase> | undefined
 
@@ -108,10 +169,22 @@ export class IndexedDbStore implements LibraryStore {
           if (!db.objectStoreNames.contains('library')) db.createObjectStore('library', { keyPath: 'id' })
           if (!db.objectStoreNames.contains('progress')) db.createObjectStore('progress', { keyPath: 'mediaId' })
           if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'key' })
+          if (!db.objectStoreNames.contains('preferences')) db.createObjectStore('preferences', { keyPath: 'key' })
+          if (!db.objectStoreNames.contains('plugins')) db.createObjectStore('plugins', { keyPath: 'id' })
         }
       })
     }
     return this.dbPromise
+  }
+
+  /** Reuses this store's open IndexedDB handle; shares the library DB file. */
+  pluginStore(): IndexedDbPluginStore {
+    return new IndexedDbPluginStore(this.db.bind(this))
+  }
+
+  /** Reuses this store's open IndexedDB handle; shares the library DB file. */
+  preferencesApi(): IndexedDbPreferencesApi {
+    return new IndexedDbPreferencesApi(this.db.bind(this))
   }
 
   async add(media: Media, status: LibraryStatus): Promise<void> {
@@ -235,13 +308,52 @@ export class IndexedDbStore implements LibraryStore {
   }
 }
 
-function indexDBOpen(name: string, version: number): IDBOpenDBRequest {
-  return (globalThis.indexedDB as IDBFactory).open(name, version)
+/** `PluginStore` over the `plugins` object store of the same IndexedDB database. */
+export class IndexedDbPluginStore implements PluginStore {
+  constructor(private db: () => Promise<IDBDatabase>) {}
+
+  async list(): Promise<PluginStoredBundle[]> {
+    const db = await this.db()
+    const rows = await request<PluginStoredBundle[]>(db.transaction('plugins', 'readonly').objectStore('plugins').getAll())
+    return rows
+  }
+
+  async get(id: string): Promise<PluginStoredBundle | undefined> {
+    const db = await this.db()
+    return request<PluginStoredBundle | undefined>(db.transaction('plugins', 'readonly').objectStore('plugins').get(id))
+  }
+
+  async save(bundle: PluginStoredBundle): Promise<void> {
+    const db = await this.db()
+    return request(db.transaction('plugins', 'readwrite').objectStore('plugins').put(bundle)).then(() => undefined)
+  }
+
+  async remove(id: string): Promise<void> {
+    const db = await this.db()
+    return request(db.transaction('plugins', 'readwrite').objectStore('plugins').delete(id)).then(() => undefined)
+  }
 }
 
-function request<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
+/** `PreferencesApi` over the `preferences` object store of the same IndexedDB database. */
+export class IndexedDbPreferencesApi implements PreferencesApi {
+  constructor(private db: () => Promise<IDBDatabase>) {}
+
+  async get<T extends PreferenceValue>(sourceId: string, key: string): Promise<T | undefined> {
+    const db = await this.db()
+    const row = await request<{ value: PreferenceValue } | undefined>(
+      db.transaction('preferences', 'readonly').objectStore('preferences').get(`${sourceId}/${key}`)
+    )
+    return row?.value as T | undefined
+  }
+
+  async getWithDefault<T extends PreferenceValue>(sourceId: string, key: string, fallback: T): Promise<T> {
+    return (await this.get<T>(sourceId, key)) ?? fallback
+  }
+
+  async set(sourceId: string, key: string, value: PreferenceValue): Promise<void> {
+    const db = await this.db()
+    return request(db.transaction('preferences', 'readwrite').objectStore('preferences').put({ key: `${sourceId}/${key}`, value })).then(
+      () => undefined
+    )
+  }
 }

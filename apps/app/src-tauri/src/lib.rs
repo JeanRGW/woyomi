@@ -31,7 +31,7 @@ pub struct FetchResult {
 /// sites can be reached without a proxy. `mode:'dom'` is a stub for future
 /// headless rendering (returns a 501-style payload).
 #[tauri::command]
-pub async fn fetch_url(
+async fn fetch_url(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     args: FetchArgs,
