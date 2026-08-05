@@ -7,8 +7,10 @@ import type {
   FetchResult,
   Media,
   PreferencesApi,
+  PreferenceValue,
   SearchResults,
   Source,
+  SourcePrefs,
   StreamSource
 } from './types.js'
 import { TTLCache } from './cache.js'
@@ -18,7 +20,7 @@ export interface EngineOptions {
   cache?: CacheApi
   /** minimum gap between fetches to the same source (anti-ban). default 300ms */
   sourceThrottleMs?: number
-  /** optional per-source preferences; absent sources get a no-op backend */
+  /** optional preferences backend keyed by plugin id; absent sources use a no-op */
   sourcePrefs?: PreferencesApi
 }
 
@@ -56,6 +58,7 @@ export class ThrottledFetch {
 
 export class Engine {
   private sources = new Map<string, Source>()
+  private sourcePlugins = new Map<string, string>()
   readonly cache: CacheApi
   readonly prefs: PreferencesApi
   private throttles = new Map<string, ThrottledFetch>()
@@ -65,8 +68,10 @@ export class Engine {
     this.prefs = opts.sourcePrefs ?? noopPrefs
   }
 
-  registerSource(source: Source): void {
+  /** Registers a source, optionally under a plugin id (defaults to the source id). */
+  registerSource(source: Source, pluginId?: string): void {
     this.sources.set(source.id, source)
+    this.sourcePlugins.set(source.id, pluginId ?? source.id)
   }
 
   getSource(id: string): Source | undefined {
@@ -81,7 +86,8 @@ export class Engine {
     const throttle = this.throttles.get(sourceId) ?? new ThrottledFetch(this.opts.fetch, this.opts.sourceThrottleMs ?? 300)
     this.throttles.set(sourceId, throttle)
     const fetch: FetchFn = (url, init) => throttle.call(sourceId, url, init)
-    return { fetch, cache: this.cache, preferences: this.prefs }
+    const pluginId = this.sourcePlugins.get(sourceId) ?? sourceId
+    return { fetch, cache: this.cache, preferences: bindPrefs(this.prefs, pluginId) }
   }
 
   async search(sourceId: string, query: string, page: number): Promise<SearchResults> {
@@ -121,8 +127,23 @@ const noopPrefs: PreferencesApi = {
   async get() {
     return undefined
   },
-  async getWithDefault(_sourceId, _key, fallback) {
+  async getWithDefault(_pluginId, _key, fallback) {
     return fallback
   },
   async set() {}
+}
+
+/** Wraps a PreferencesApi so a plugin reads/writes its own plugin id's keys. */
+function bindPrefs(prefs: PreferencesApi, pluginId: string): SourcePrefs {
+  return {
+    get<T extends PreferenceValue>(key: string): Promise<T | undefined> {
+      return prefs.get(pluginId, key)
+    },
+    getWithDefault<T extends PreferenceValue>(key: string, fallback: T): Promise<T> {
+      return prefs.getWithDefault(pluginId, key, fallback)
+    },
+    set(key: string, value: PreferenceValue): Promise<void> {
+      return prefs.set(pluginId, key, value)
+    }
+  }
 }

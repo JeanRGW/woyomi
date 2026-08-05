@@ -84,16 +84,37 @@ export interface CacheApi {
 export type PreferenceValue = string | number | boolean | (string | number | boolean)[]
 
 export interface PreferencesApi {
-  get<T extends PreferenceValue>(sourceId: string, key: string): Promise<T | undefined>
+  get<T extends PreferenceValue>(pluginId: string, key: string): Promise<T | undefined>
   /** Reads the persisted value or `fallback` when unset; never throws. */
-  getWithDefault<T extends PreferenceValue>(sourceId: string, key: string, fallback: T): Promise<T>
-  set(sourceId: string, key: string, value: PreferenceValue): Promise<void>
+  getWithDefault<T extends PreferenceValue>(pluginId: string, key: string, fallback: T): Promise<T>
+  set(pluginId: string, key: string, value: PreferenceValue): Promise<void>
+}
+
+/**
+ * Plugin-scoped preferences: the engine binds these to the plugin that owns the
+ * current source, so a plugin reads/writes settings by key without knowing its
+ * own id. Persisted keyed by plugin id by the store backend.
+ */
+export interface SourcePrefs {
+  get<T extends PreferenceValue>(key: string): Promise<T | undefined>
+  getWithDefault<T extends PreferenceValue>(key: string, fallback: T): Promise<T>
+  set(key: string, value: PreferenceValue): Promise<void>
+}
+
+/** A setting a plugin exposes in the Settings UI. */
+export interface SourcePref {
+  key: string
+  label: string
+  type: 'boolean' | 'select' | 'string'
+  defaultValue?: string | boolean
+  options?: { value: string; label: string }[]
+  description?: string
 }
 
 export interface SourceContext {
   fetch: FetchFn
   cache: CacheApi
-  preferences: PreferencesApi
+  preferences: SourcePrefs
 }
 
 export interface Source {
@@ -121,6 +142,8 @@ export interface PluginManifest {
   /** file name of the executable bundle inside the plugin directory */
   entry: string
   sourceIds: string[]
+  /** settings exposed in the Settings UI, keyed by plugin on the store */
+  prefs?: SourcePref[]
 }
 
 export interface PluginRegistration {

@@ -51,6 +51,15 @@ export const HistoryEntrySchema = z.object({
   openedAt: z.number()
 })
 
+export const SourcePrefSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(['boolean', 'select', 'string']),
+  defaultValue: z.union([z.string(), z.boolean()]).optional(),
+  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
+  description: z.string().optional()
+})
+
 export const PluginManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
   name: z.string(),
@@ -61,7 +70,8 @@ export const PluginManifestSchema = z.object({
   description: z.string().optional(),
   mediaTypes: z.array(MediaTypeSchema),
   entry: z.string(),
-  sourceIds: z.array(z.string())
+  sourceIds: z.array(z.string()),
+  prefs: z.array(SourcePrefSchema).optional()
 })
 
 export const StreamSourceSchemaArray = z.array(StreamSourceSchema)

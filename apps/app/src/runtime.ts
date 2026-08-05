@@ -113,7 +113,7 @@ async function initRuntime(): Promise<AppRuntime> {
     const registration = loadBundle(code)
     if (origin === 'bundled') registry.registerBundled(registration)
     else registry.registerExternal(registration)
-    for (const source of registration.sources) engine.registerSource(source)
+    for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
   }
 
   async function loadInstalled(plugin: PluginStoredBundle): Promise<void> {
@@ -121,7 +121,7 @@ async function initRuntime(): Promise<AppRuntime> {
       const registration = loadBundle(plugin.code)
       if (registration.manifest.id !== plugin.id) return
       registry.registerExternal(registration)
-      for (const source of registration.sources) engine.registerSource(source)
+      for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
       installed.set(plugin.id, plugin.manifest.version)
     } catch (e) {
       // A plugin whose code no longer matches its stored manifest is dropped
@@ -178,7 +178,7 @@ async function initRuntime(): Promise<AppRuntime> {
       if (manifest.id !== plugin.id) throw new Error(`manifest id ${manifest.id} != ${plugin.id}`)
       if (manifest.apiVersion !== registration.manifest.apiVersion) throw new Error('internal manifest mismatch')
       registry.registerExternal(registration)
-      for (const source of registration.sources) engine.registerSource(source)
+      for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
       installed.set(plugin.id, plugin.version)
 
       await plugins.save({ id: plugin.id, code, sha256: actual, manifest })

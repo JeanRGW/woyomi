@@ -163,4 +163,9 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .plugin-row { display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .plugin-icon { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: var(--panel-2); }
 .grow { flex: 1; }
+.pref-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.pref-row > span { display: flex; flex-direction: column; gap: 2px; }
+.pref-row input[type="checkbox"] { width: auto; min-width: 0; }
+.pref-row select { min-width: 160px; }
+.pref-row input[type="text"] { max-width: 220px; }
 .file-label { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 14px; cursor: pointer; }

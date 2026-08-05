@@ -21,7 +21,33 @@ const registration: PluginRegistration = {
     description: 'MangaDex — manga & light-novel source',
     mediaTypes: ['manga', 'novel'],
     entry: 'mangadex.plugin.js',
-    sourceIds: ['mangadex']
+    sourceIds: ['mangadex'],
+    prefs: [
+      {
+        key: 'lang',
+        label: 'Language',
+        type: 'select',
+        defaultValue: 'en',
+        description: 'Translated chapters language filter',
+        options: [
+          { value: 'en', label: 'English' },
+          { value: 'fr', label: 'French' },
+          { value: 'de', label: 'German' },
+          { value: 'es', label: 'Spanish' },
+          { value: 'pt-br', label: 'Portuguese (BR)' },
+          { value: 'ja', label: 'Japanese' },
+          { value: 'ko', label: 'Korean' },
+          { value: 'zh', label: 'Chinese' }
+        ]
+      },
+      {
+        key: 'dataSaver',
+        label: 'Use data-saver images',
+        type: 'boolean',
+        defaultValue: true,
+        description: 'Smaller, lower-quality images (MangaDex data-saver)'
+      }
+    ]
   },
   sources: [mangaDexSource]
 }

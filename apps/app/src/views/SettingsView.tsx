@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppRuntime } from '../runtime'
+import { PluginSettings } from './PluginSettings'
 
 export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   const [plugins, setPlugins] = useState(runtime.registry.list())
@@ -52,6 +53,26 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
           </div>
         ))}
       </div>
+
+      <h2>Source settings</h2>
+      {plugins.every((p) => !p.registration.manifest.prefs?.length) ? (
+        <p className="muted">No configurable settings exposed by installed plugins.</p>
+      ) : (
+        <div className="plugin-list">
+          {plugins.map((p) =>
+            p.registration.manifest.prefs?.length ? (
+              <div key={p.registration.manifest.id} className="plugin-row">
+                <div className="grow">
+                  <div>
+                    <strong>{p.registration.manifest.name}</strong>
+                  </div>
+                  <PluginSettings runtime={runtime} pluginId={p.registration.manifest.id} />
+                </div>
+              </div>
+            ) : null
+          )}
+        </div>
+      )}
 
       <h2>Data</h2>
       <div className="row wrap">

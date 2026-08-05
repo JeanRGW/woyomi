@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mangaDexSource } from '../src/mangadex.js'
 import type { FetchFn } from '@media-platform/core'
 
@@ -59,8 +59,8 @@ const ctx = {
     }
   },
   preferences: {
-    async getWithDefault<T>(_s: string, _k: string, fallback: T): Promise<T> {
-      return fallback
+    async getWithDefault<T>(key: string, fallback: T): Promise<T> {
+      return (prefOverrides[key] as T | undefined) ?? fallback
     },
     async get() {
       return undefined
@@ -68,6 +68,9 @@ const ctx = {
     async set() {}
   }
 }
+
+/** test-time overrides consulted by the shared ctx.preferences fixture */
+const prefOverrides: Record<string, unknown> = {}
 
 describe('mangadex source', () => {
   it('parses search results', async () => {
@@ -107,14 +110,9 @@ describe('mangadex source', () => {
   })
 
   it('uses data-saver URLs when the preference is on (default)', async () => {
-    const prefs = { on: true }
-    const prefApi = {
-      async getWithDefault(_s: string, _k: string, fallback: boolean) {
-        return prefs.on
-      }
-    }
+    delete prefOverrides.dataSaver
     const content = await mangaDexSource.getChapterContent(
-      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }), preferences: prefApi },
+      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }) },
       'abc-123',
       'ch-1'
     )
@@ -125,13 +123,9 @@ describe('mangadex source', () => {
   })
 
   it('uses full-res URLs when data-saver is off', async () => {
-    const prefApi = {
-      async getWithDefault(_s: string, _k: string, fallback: boolean) {
-        return false
-      }
-    }
+    prefOverrides.dataSaver = false
     const content = await mangaDexSource.getChapterContent(
-      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }), preferences: prefApi },
+      { ...ctx, fetch: fixtureFetch({ '/at-home': serverFixture }) },
       'abc-123',
       'ch-1'
     )
@@ -139,6 +133,16 @@ describe('mangadex source', () => {
       type: 'pages',
       images: ['https://uploads.mangadex.org/data/HASH/1.png', 'https://uploads.mangadex.org/data/HASH/2.png']
     })
+  })
+
+  it('uses the language preference in the feed request', async () => {
+    prefOverrides.lang = 'fr'
+    const fetch = fixtureFetch({ '/feed?': chaptersFixture })
+    const spy = vi.fn(fetch)
+    await mangaDexSource.getEpisodes({ ...ctx, fetch: spy }, 'abc-123')
+    const urls = spy.mock.calls.map(([u]) => String(u))
+    expect(urls.some((u) => u.includes('translatedLanguage[]=fr'))).toBe(true)
+    delete prefOverrides.lang
   })
 
   it('returns a text view for a chapter with no images (novel)', async () => {

@@ -60,4 +60,30 @@ describe('Engine', () => {
     const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
     await expect(engine.search('nope', 'q', 1)).rejects.toThrow('unknown source')
   })
+
+  it('binds ctx.preferences to the owning plugin id', async () => {
+    const seen: string[] = []
+    const prefs = {
+      async get<T>(pluginId: string, key: string): Promise<T | undefined> {
+        seen.push(`get:${pluginId}:${key}`)
+        return undefined
+      },
+      async getWithDefault<T>(pluginId: string, key: string, fallback: T): Promise<T> {
+        seen.push(`default:${pluginId}:${key}`)
+        return fallback
+      },
+      async set() {}
+    }
+    const source = makeSource({
+      id: 'child',
+      async getMedia(ctx) {
+        await ctx.preferences.getWithDefault('foo', 'x')
+        return { id: 'child/1', title: 'c', mediaId: '1', sourceId: 'child', type: 'manga' }
+      }
+    })
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0, sourcePrefs: prefs })
+    engine.registerSource(source, 'my-plugin')
+    await engine.getMedia('child', '1')
+    expect(seen).toEqual(['default:my-plugin:foo'])
+  })
 })

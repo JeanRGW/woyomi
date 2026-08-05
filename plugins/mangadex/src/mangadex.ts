@@ -8,8 +8,8 @@ const API = {
   search: (q: string, page: number) =>
     `${BASE}/manga?limit=20&offset=${(page - 1) * 20}&title=${encodeURIComponent(q)}&includes[]=cover_art`,
   media: (id: string) => `${BASE}/manga/${id}?includes[]=cover_art`,
-  chapters: (id: string, offset: number) =>
-    `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=en&includes[]=user&includes[]=scanlation_group`,
+  chapters: (id: string, offset: number, lang: string) =>
+    `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=${encodeURIComponent(lang)}&includes[]=user&includes[]=scanlation_group`,
   chapter: (id: string) => `${BASE}/at-home/server/${id}`,
   pages: (base: string, hash: string) => `${base}/data/${hash}`,
   dataSaver: (base: string, hash: string) => `${base}/data-saver/${hash}`
@@ -90,7 +90,9 @@ export const mangaDexSource: Source = {
   lang: 'en',
 
   async search(ctx, query, page): Promise<SearchResults> {
-    const json = await fetchJson<MangaResult>(ctx.fetch, API.search(query, page), { headers: jsonHeaders() })
+    const json = await ctx.cache.withCache(`mangadex:search:${query}:${page}`, 10 * 60_000, () =>
+      fetchJson<MangaResult>(ctx.fetch, API.search(query, page), { headers: jsonHeaders() })
+    )
     const items = json.data.map((m) => mapMedia(m.id, m))
     return { page, hasNextPage: items.length === 20, items }
   },
@@ -104,29 +106,32 @@ export const mangaDexSource: Source = {
   },
 
   async getEpisodes(ctx, mediaId): Promise<Episode[]> {
-    const seen = new Set<string>()
-    const episodes: Episode[] = []
-    for (let offset = 0; offset < 1000; offset += 96) {
-      const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset), { headers: jsonHeaders() })
-      if (json.data.length === 0) break
-      for (const ch of json.data) {
-        const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN
-        const vol = ch.attributes.volume ? Number(ch.attributes.volume) : undefined
-        const numKey = `${num}`
-        if (Number.isNaN(num) || seen.has(numKey)) continue
-        seen.add(numKey)
-        episodes.push({
-          id: `mangadex/${mediaId}/${ch.id}`,
-          mediaId,
-          number: num,
-          season: vol,
-          title: ch.attributes.title ?? undefined,
-          publishedAt: ch.attributes.publishedAt
-        })
+    const lang = await ctx.preferences.getWithDefault('lang', 'en')
+    return ctx.cache.withCache(`mangadex:episodes:${mediaId}:${lang}`, 30 * 60_000, async () => {
+      const seen = new Set<string>()
+      const episodes: Episode[] = []
+      for (let offset = 0; offset < 1000; offset += 96) {
+        const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, lang), { headers: jsonHeaders() })
+        if (json.data.length === 0) break
+        for (const ch of json.data) {
+          const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN
+          const vol = ch.attributes.volume ? Number(ch.attributes.volume) : undefined
+          const numKey = `${num}`
+          if (Number.isNaN(num) || seen.has(numKey)) continue
+          seen.add(numKey)
+          episodes.push({
+            id: `mangadex/${mediaId}/${ch.id}`,
+            mediaId,
+            number: num,
+            season: vol,
+            title: ch.attributes.title ?? undefined,
+            publishedAt: ch.attributes.publishedAt
+          })
+        }
+        if ((json.total ?? 0) <= offset + (json.limit ?? 96)) break
       }
-      if ((json.total ?? 0) <= offset + (json.limit ?? 96)) break
-    }
-    return episodes.sort((a, b) => a.number - b.number)
+      return episodes.sort((a, b) => a.number - b.number)
+    })
   },
 
   async getChapterContent(ctx, mediaId, episodeId): Promise<ChapterContent> {
@@ -140,7 +145,7 @@ export const mangaDexSource: Source = {
     if (!files.length) {
       return { type: 'text', html: '' }
     }
-    const useDataSaver = await ctx.preferences.getWithDefault('mangadex', 'dataSaver', true)
+    const useDataSaver = await ctx.preferences.getWithDefault('dataSaver', true)
     const base = useDataSaver ? API.dataSaver(server.baseUrl, hash) : API.pages(server.baseUrl, hash)
     const images = useDataSaver ? server.chapter.dataSaver.map((f) => `${base}/${f}`) : files.map((f) => `${base}/${f}`)
     return { type: 'pages', images }
