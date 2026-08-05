@@ -187,6 +187,28 @@ describe('mangadex source', () => {
     expect(m.coverUrl).toContain('uploads.mangadex.org/covers/abc-123/abc-123.jpg')
   })
 
+  it('lists Latest and Top homepage sections', async () => {
+    const sections = await mangaDexSource.getHomeSections?.({ ...ctx, fetch: fixtureFetch({}) })
+    expect(sections?.map((s) => s.id)).toEqual(['latest', 'top'])
+  })
+
+  it('loads a homepage section with the right ordering and language filter', async () => {
+    const fetch = fixtureFetch({ '/manga?': searchFixture })
+    const spy = vi.fn(fetch)
+    const r = await mangaDexSource.getHomeSection?.({ ...ctx, fetch: spy }, 'latest', 2)
+    const urls = spy.mock.calls.map(([u]) => String(u))
+    const first = urls[0]!
+    expect(first).toContain('order[latestUploadedChapter]=desc')
+    expect(first).toContain('availableTranslatedLanguage[]=en')
+    expect(first).toContain('offset=20')
+    expect(r?.items).toHaveLength(1)
+    expect(r?.hasNextPage).toBe(false)
+  })
+
+  it('throws for an unknown homepage section', async () => {
+    await expect(mangaDexSource.getHomeSection?.({ ...ctx, fetch: fixtureFetch({}) }, 'nope', 1)).rejects.toThrow('unknown homepage section')
+  })
+
   it('throws on HTTP error', async () => {
     const fetch: FetchFn = async () => ({ status: 500, headers: {}, body: 'err' })
     await expect(mangaDexSource.search({ ...ctx, fetch }, 'q', 1)).rejects.toThrow(/HTTP 500/)

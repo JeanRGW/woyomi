@@ -73,7 +73,11 @@ export interface AppRuntime {
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
   /** Persist a per-source enable/disable toggle for a plugin. */
-  setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): void  /**
+  setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): void
+  /** Source ids pinned to the Home landing; empty = nothing pinned (hint shown). */
+  getLandingSources(): Promise<string[]>
+  setLandingSources(ids: string[]): Promise<void>
+  /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
    */
@@ -174,6 +178,8 @@ async function initRuntime(): Promise<AppRuntime> {
       void plugins.remove(id)
     },
     setSourceEnabled,
+    getLandingSources: async () => (await prefs.get<string[]>('__app', 'landing.sources')) ?? [],
+    setLandingSources: (ids: string[]) => prefs.set('__app', 'landing.sources', ids),
     async installExternal(plugin) {
       const provider = createFetchProvider()
       const codeRes = await provider(plugin.url)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Engine } from '../src/engine.js'
-import type { SearchResults, Source, SourceContext } from '../src/types.js'
+import type { HomeSection, SearchResults, Source, SourceContext } from '../src/types.js'
 
 function makeFetch(body: string, status = 200) {
   return async () => ({ status, headers: {}, body })
@@ -59,6 +59,79 @@ describe('Engine', () => {
   it('throws for unknown source', async () => {
     const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
     await expect(engine.search('nope', 'q', 1)).rejects.toThrow('unknown source')
+  })
+
+  it('searchAll groups results per source and tolerates failures', async () => {
+    const ok = makeSource({
+      id: 'ok',
+      async search() {
+        return { page: 1, hasNextPage: false, items: [{ id: 'ok/1', title: 'O', mediaId: '1', sourceId: 'ok', type: 'manga' }] }
+      }
+    })
+    const bad = makeSource({
+      id: 'bad',
+      name: 'Bad',
+      async search() {
+        throw new Error('boom')
+      }
+    })
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(ok)
+    engine.registerSource(bad)
+    const results = await engine.searchAll('q', 1)
+    expect(results).toHaveLength(2)
+    expect(results[0]).toMatchObject({ sourceId: 'ok', items: [{ title: 'O' }] })
+    expect(results[1]).toMatchObject({ sourceId: 'bad', items: [], hasNextPage: false })
+    expect(results[1]?.error).toContain('boom')
+  })
+
+  it('searchAll keeps a failing source from blocking the aggregate', async () => {
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(
+      makeSource({
+        id: 'a',
+        async search() {
+          return { page: 1, hasNextPage: false, items: [] }
+        }
+      })
+    )
+    engine.registerSource(
+      makeSource({
+        id: 'b',
+        async search() {
+          throw new Error('down')
+        }
+      })
+    )
+    const results = await engine.searchAll('q', 1)
+    expect(results[0]?.sourceId).toBe('a')
+    expect(results[1]?.error).toContain('down')
+  })
+
+  it('hasHome/getHomeSections/getHomeSection route through the source', async () => {
+    const home: HomeSection[] = [{ id: 'latest', title: 'Latest' }]
+    const source = makeSource({
+      async getHomeSections() {
+        return home
+      },
+      async getHomeSection(_ctx, sectionId) {
+        return { page: 1, hasNextPage: false, items: [{ id: 'test/x', title: sectionId, mediaId: 'x', sourceId: 'test', type: 'manga' }] }
+      }
+    })
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(source)
+    expect(engine.hasHome('test')).toBe(true)
+    expect(await engine.getHomeSections('test')).toEqual(home)
+    const r = await engine.getHomeSection('test', 'latest', 1)
+    expect(r.items[0]?.title).toBe('latest')
+  })
+
+  it('hasHome/getHomeSection throw for sources without a homepage', async () => {
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(makeSource())
+    expect(engine.hasHome('test')).toBe(false)
+    await expect(engine.getHomeSections('test')).rejects.toThrow('no homepage')
+    await expect(engine.getHomeSection('test', 'x', 1)).rejects.toThrow('no homepage')
   })
 
   it('binds ctx.preferences to the owning plugin id', async () => {

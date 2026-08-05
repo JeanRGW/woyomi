@@ -1,4 +1,4 @@
-import type { ChapterContent, Episode, Media, SearchResults, Source, SourceContext } from '@media-platform/core'
+import type { ChapterContent, Episode, HomeSection, Media, SearchResults, Source, SourceContext } from '@media-platform/core'
 import { fetchJson, jsonHeaders } from '@media-platform/core'
 
 const BASE = 'https://api.mangadex.org'
@@ -14,6 +14,8 @@ export interface MangadexLangDef {
 const API = {
   search: (q: string, page: number, lang: string) =>
     `${BASE}/manga?limit=20&offset=${(page - 1) * 20}&title=${encodeURIComponent(q)}&availableTranslatedLanguage[]=${encodeURIComponent(lang)}&includes[]=cover_art`,
+  home: (lang: string, order: string, offset: number) =>
+    `${BASE}/manga?limit=20&offset=${offset}&order[${order}]=desc&availableTranslatedLanguage[]=${encodeURIComponent(lang)}&includes[]=cover_art`,
   media: (id: string) => `${BASE}/manga/${id}?includes[]=cover_art`,
   chapters: (id: string, offset: number, lang: string) =>
     `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=${encodeURIComponent(lang)}&includes[]=user&includes[]=scanlation_group`,
@@ -94,6 +96,12 @@ function makeSourceId(langCode: string): string {
   return `mangadex-${langCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`
 }
 
+/** Homepage discovery sections; each is a different MangaDex manga ordering. */
+const HOME_SECTIONS = [
+  { id: 'latest', title: 'Latest', order: 'latestUploadedChapter' },
+  { id: 'top', title: 'Top', order: 'followedCount' }
+] as const
+
 /**
  * One MangaDex source per language. Search filters by availability so every
  * result is guaranteed to have chapters in this language; the feed requests
@@ -126,6 +134,20 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       const m = Array.isArray(json.data) ? json.data[0] : json.data
       if (!m) throw new Error(`media ${mediaId} not found`)
       return mapMedia(sourceId, mediaId, m)
+    },
+
+    async getHomeSections(ctx): Promise<HomeSection[]> {
+      return HOME_SECTIONS.map((s) => ({ id: s.id, title: s.title }))
+    },
+
+    async getHomeSection(ctx, sectionId, page): Promise<SearchResults> {
+      const section = HOME_SECTIONS.find((s) => s.id === sectionId)
+      if (!section) throw new Error(`unknown homepage section: ${sectionId}`)
+      const json = await ctx.cache.withCache(`mangadex:${sourceId}:home:${sectionId}:${page}`, 10 * 60_000, () =>
+        fetchJson<MangaResult>(ctx.fetch, API.home(lang, section.order, (page - 1) * 20), { headers: jsonHeaders() })
+      )
+      const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
+      return { page, hasNextPage: items.length === 20, items }
     },
 
     async getEpisodes(ctx, mediaId): Promise<Episode[]> {

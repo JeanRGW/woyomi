@@ -61,6 +61,12 @@ export interface SearchResults {
   items: Media[]
 }
 
+/** A discovery section on a source's homepage (e.g. Latest, Top). */
+export interface HomeSection {
+  id: string
+  title: string
+}
+
 export interface FetchInit {
   method?: string
   headers?: Record<string, string>
@@ -129,6 +135,9 @@ export interface Source {
   getEpisodes(ctx: SourceContext, mediaId: string): Promise<Episode[]>
   getChapterContent(ctx: SourceContext, mediaId: string, episodeId: string): Promise<ChapterContent>
   getStreams?(ctx: SourceContext, media: Media, episode: Episode): Promise<StreamSource[]>
+  /** optional homepage discovery sections (e.g. Latest, Top); if present, getHomeSection must be too */
+  getHomeSections?(ctx: SourceContext): Promise<HomeSection[]>
+  getHomeSection?(ctx: SourceContext, sectionId: string, page: number): Promise<SearchResults>
 }
 
 export interface PluginManifest {

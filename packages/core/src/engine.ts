@@ -5,6 +5,7 @@ import type {
   FetchFn,
   FetchInit,
   FetchResult,
+  HomeSection,
   Media,
   PreferencesApi,
   PreferenceValue,
@@ -22,6 +23,16 @@ export interface EngineOptions {
   sourceThrottleMs?: number
   /** optional preferences backend keyed by plugin id; absent sources use a no-op */
   sourcePrefs?: PreferencesApi
+}
+
+/** Per-source slice of a multi-source search; a failing source sets `error` only. */
+export interface SourceResults {
+  sourceId: string
+  sourceName: string
+  page: number
+  hasNextPage: boolean
+  items: Media[]
+  error?: string
 }
 
 /**
@@ -93,6 +104,40 @@ export class Engine {
   async search(sourceId: string, query: string, page: number): Promise<SearchResults> {
     const source = this.require(sourceId)
     return source.search(this.ctxFor(sourceId), query, page)
+  }
+
+  /**
+   * Searches every enabled source in parallel, split per source. A source that
+   * throws is captured as `error` and never blocks the aggregate.
+   */
+  async searchAll(query: string, page: number): Promise<SourceResults[]> {
+    const sources = [...this.sources.values()]
+    const settled = await Promise.allSettled(sources.map((s) => s.search(this.ctxFor(s.id), query, page)))
+    return sources.map((s, i) => {
+      const r = settled[i]
+      if (!r || r.status === 'rejected') {
+        return { sourceId: s.id, sourceName: s.name, page, hasNextPage: false, items: [], error: r && r.status === 'rejected' ? String(r.reason) : 'failed' }
+      }
+      return { sourceId: s.id, sourceName: s.name, page, hasNextPage: r.value.hasNextPage, items: r.value.items }
+    })
+  }
+
+  /** True when the source exposes a homepage. */
+  hasHome(sourceId: string): boolean {
+    const source = this.require(sourceId)
+    return !!source.getHomeSections && !!source.getHomeSection
+  }
+
+  async getHomeSections(sourceId: string): Promise<HomeSection[]> {
+    const source = this.require(sourceId)
+    if (!source.getHomeSections) throw new Error(`source ${sourceId} has no homepage`)
+    return source.getHomeSections(this.ctxFor(sourceId))
+  }
+
+  async getHomeSection(sourceId: string, sectionId: string, page: number): Promise<SearchResults> {
+    const source = this.require(sourceId)
+    if (!source.getHomeSection) throw new Error(`source ${sourceId} has no homepage`)
+    return source.getHomeSection(this.ctxFor(sourceId), sectionId, page)
   }
 
   async getMedia(sourceId: string, mediaId: string): Promise<Media> {

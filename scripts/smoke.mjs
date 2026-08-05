@@ -32,6 +32,11 @@ console.log(`search "${query}": ${results.items.length} hits, first = ${results.
 const media = results.items[0]
 if (!media) throw new Error('no results')
 
+const sections = await engine.getHomeSections(sourceId)
+if (sections.length === 0) throw new Error('no home sections')
+const home = await engine.getHomeSection(sourceId, sections[0].id, 1)
+console.log(`home "${sections[0].title}": ${home.items.length} items, first = ${home.items[0]?.title}`)
+
 const episodes = await engine.getEpisodes(sourceId, media.mediaId)
 console.log(`episodes: ${episodes.length}`)
 const chapter = episodes.find((e) => Number.isInteger(e.number) && e.number >= 1)
