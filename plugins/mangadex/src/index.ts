@@ -1,6 +1,6 @@
 import type { PluginRegistration } from '@media-platform/core'
 import { API_VERSION } from '@media-platform/core'
-import { mangaDexSource } from './mangadex.js'
+import { makeMangadexSource, type MangadexLangDef } from './mangadex.js'
 
 declare global {
   interface Window {
@@ -11,6 +11,25 @@ declare global {
   var __media_plugin_register: any
 }
 
+const LANGS: MangadexLangDef[] = [
+  { code: 'en', label: 'EN' },
+  { code: 'pt-br', label: 'PT-BR' },
+  { code: 'es', label: 'ES' },
+  { code: 'es-la', label: 'ES-LA' },
+  { code: 'fr', label: 'FR' },
+  { code: 'de', label: 'DE' },
+  { code: 'it', label: 'IT' },
+  { code: 'ru', label: 'RU' },
+  { code: 'ja', label: 'JA' },
+  { code: 'ko', label: 'KO' },
+  { code: 'zh', label: 'ZH' },
+  { code: 'zh-hk', label: 'ZH-HK' },
+  { code: 'id', label: 'ID' },
+  { code: 'tr', label: 'TR' }
+]
+
+const sources = LANGS.map(makeMangadexSource)
+
 const registration: PluginRegistration = {
   manifest: {
     id: 'mangadex',
@@ -18,28 +37,11 @@ const registration: PluginRegistration = {
     version: '0.1.0',
     apiVersion: API_VERSION,
     lang: 'en',
-    description: 'MangaDex — manga & light-novel source',
+    description: 'MangaDex — manga & light-novel source (one source per language)',
     mediaTypes: ['manga', 'novel'],
     entry: 'mangadex.plugin.js',
-    sourceIds: ['mangadex'],
+    sourceIds: sources.map((s) => s.id),
     prefs: [
-      {
-        key: 'lang',
-        label: 'Language',
-        type: 'multi',
-        defaultValue: ['en'],
-        description: 'Translated chapters language filter (one or more)',
-        options: [
-          { value: 'en', label: 'English' },
-          { value: 'fr', label: 'French' },
-          { value: 'de', label: 'German' },
-          { value: 'es', label: 'Spanish' },
-          { value: 'pt-br', label: 'Portuguese (BR)' },
-          { value: 'ja', label: 'Japanese' },
-          { value: 'ko', label: 'Korean' },
-          { value: 'zh', label: 'Chinese' }
-        ]
-      },
       {
         key: 'dataSaver',
         label: 'Use data-saver images',
@@ -49,7 +51,7 @@ const registration: PluginRegistration = {
       }
     ]
   },
-  sources: [mangaDexSource]
+  sources
 }
 
 ;(globalThis as Record<string, unknown>).__media_plugin_register?.(registration)

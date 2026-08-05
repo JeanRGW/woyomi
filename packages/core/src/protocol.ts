@@ -24,6 +24,7 @@ export const EpisodeSchema = z.object({
   title: z.string().optional(),
   publishedAt: z.string().optional(),
   imageUrl: z.string().optional(),
+  lang: z.string().optional(),
   mediaId: z.string()
 })
 

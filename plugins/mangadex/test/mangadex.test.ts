@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mangaDexSource } from '../src/mangadex.js'
+import { makeMangadexSource } from '../src/mangadex.js'
 import type { FetchFn } from '@media-platform/core'
+
+const mangaDexSource = makeMangadexSource({ code: 'en', label: 'EN' })
 
 const searchFixture = {
   data: [
@@ -77,7 +79,7 @@ describe('mangadex source', () => {
     const res = await mangaDexSource.search({ ...ctx, fetch: fixtureFetch({ '/manga?': searchFixture }) }, 'hero', 1)
     expect(res.items).toHaveLength(1)
     const m = res.items[0]!
-    expect(m.id).toBe('mangadex/abc-123')
+    expect(m.id).toBe('mangadex-en/abc-123')
     expect(m.title).toBe('My Hero Academia')
     expect(m.altTitles).toContain('僕のヒーローアカデミア')
     expect(m.coverUrl).toContain('uploads.mangadex.org/covers/abc-123/abc-123.jpg')
@@ -135,28 +137,36 @@ describe('mangadex source', () => {
     })
   })
 
-  it('uses the language preference in the feed request', async () => {
-    prefOverrides.lang = ['fr']
-    const fetch = fixtureFetch({ '/feed?': chaptersFixture })
-    const spy = vi.fn(fetch)
-    await mangaDexSource.getEpisodes({ ...ctx, fetch: spy }, 'abc-123')
-    const urls = spy.mock.calls.map(([u]) => String(u))
-    expect(urls.some((u) => u.includes('translatedLanguage[]=fr'))).toBe(true)
-    delete prefOverrides.lang
+  it('has per-language ids and names', () => {
+    const en = makeMangadexSource({ code: 'en', label: 'EN' })
+    const pt = makeMangadexSource({ code: 'pt-br', label: 'PT-BR' })
+    expect(en.id).toBe('mangadex-en')
+    expect(pt.id).toBe('mangadex-ptbr')
+    expect(en.name).toBe('MangaDex (EN)')
+    expect(en.lang).toBe('en')
   })
 
-  it('emits one translatedLanguage param per selected language (deduped)', async () => {
-    prefOverrides.lang = ['en', 'pt-br', 'en']
+  it('filters search by the source language availability', async () => {
+    const fetch = fixtureFetch({ '/manga?': searchFixture })
+    const spy = vi.fn(fetch)
+    await mangaDexSource.search({ ...ctx, fetch: spy }, 'hero', 1)
+    const urls = spy.mock.calls.map(([u]) => String(u))
+    expect(urls.some((u) => u.includes('availableTranslatedLanguage[]=en'))).toBe(true)
+  })
+
+  it('requests only its own language in the feed (no cross-lang mixing)', async () => {
     const fetch = fixtureFetch({ '/feed?': chaptersFixture })
     const spy = vi.fn(fetch)
     await mangaDexSource.getEpisodes({ ...ctx, fetch: spy }, 'abc-123')
     const urls = spy.mock.calls.map(([u]) => String(u))
     const first = urls[0]!
     expect(first).toContain('translatedLanguage[]=en')
-    expect(first).toContain('translatedLanguage[]=pt-br')
-    // deduped: 'en' appears once, 'pt-br' once
-    expect(first.match(/translatedLanguage\[\]=/g)).toHaveLength(2)
-    delete prefOverrides.lang
+    expect(first).not.toContain('translatedLanguage[]=pt-br')
+  })
+
+  it('tags each episode with its source language', async () => {
+    const eps = await mangaDexSource.getEpisodes({ ...ctx, fetch: fixtureFetch({ '/feed?': chaptersFixture }) }, 'abc-123')
+    expect(eps.every((e) => e.lang === 'en')).toBe(true)
   })
 
   it('returns a text view for a chapter with no images (novel)', async () => {
@@ -171,7 +181,8 @@ describe('mangadex source', () => {
   it('parses getMedia when data is a single entity (not an array)', async () => {
     const entity = { ...searchFixture.data[0]! }
     const m = await mangaDexSource.getMedia({ ...ctx, fetch: fixtureFetch({ '/manga/abc-123': { data: entity } }) }, 'abc-123')
-    expect(m.id).toBe('mangadex/abc-123')
+    expect(m.id).toBe('mangadex-en/abc-123')
+    expect(m.sourceId).toBe('mangadex-en')
     expect(m.title).toBe('My Hero Academia')
     expect(m.coverUrl).toContain('uploads.mangadex.org/covers/abc-123/abc-123.jpg')
   })

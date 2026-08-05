@@ -72,7 +72,8 @@ export interface AppRuntime {
   installed: Map<string, string> // pluginId -> version
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
-  /**
+  /** Persist a per-source enable/disable toggle for a plugin. */
+  setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): void  /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
    */
@@ -141,6 +142,23 @@ async function initRuntime(): Promise<AppRuntime> {
     await loadInstalled(plugin)
   }
 
+  // Apply persisted per-source toggles (keyed per plugin under 'sources.enabled').
+  for (const plugin of registry.list()) {
+    const disabled = await prefs.get<string[]>(plugin.registration.manifest.id, 'sources.disabled')
+    if (disabled) {
+      for (const source of plugin.registration.sources) {
+        registry.setSourceEnabled(source.id, !disabled.includes(source.id))
+      }
+    }
+  }
+
+  async function setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): Promise<void> {
+    registry.setSourceEnabled(sourceId, enabled)
+    const disabled = (await prefs.get<string[]>(pluginId, 'sources.disabled')) ?? []
+    const next = enabled ? disabled.filter((s) => s !== sourceId) : [...new Set([...disabled, sourceId])]
+    await prefs.set(pluginId, 'sources.disabled', next)
+  }
+
   return {
     engine,
     registry,
@@ -155,6 +173,7 @@ async function initRuntime(): Promise<AppRuntime> {
       registry.unregister(id)
       void plugins.remove(id)
     },
+    setSourceEnabled,
     async installExternal(plugin) {
       const provider = createFetchProvider()
       const codeRes = await provider(plugin.url)

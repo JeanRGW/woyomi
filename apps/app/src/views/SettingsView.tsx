@@ -37,6 +37,23 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
                 <strong>{p.registration.manifest.name}</strong> <span className="muted">v{p.registration.manifest.version}</span> · {p.origin}
               </div>
               <div className="muted small">{p.registration.manifest.description ?? ''}</div>
+              {p.registration.sources.length > 1 && (
+                <div className="source-toggles">
+                  {p.registration.sources.map((s) => (
+                    <label key={s.id} className="multi-opt">
+                      <input
+                        type="checkbox"
+                        checked={runtime.registry.isSourceEnabled(s.id)}
+                        onChange={(e) => {
+                          runtime.setSourceEnabled(p.registration.manifest.id, s.id, e.target.checked)
+                          refresh()
+                        }}
+                      />
+                      {s.name}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             <button onClick={() => { runtime.registry.setEnabled(p.registration.manifest.id, !p.enabled); refresh(); }}>{p.enabled ? 'Disable' : 'Enable'}</button>
             {p.origin === 'external' && (

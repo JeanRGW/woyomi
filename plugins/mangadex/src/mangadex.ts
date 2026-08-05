@@ -4,14 +4,19 @@ import { fetchJson, jsonHeaders } from '@media-platform/core'
 const BASE = 'https://api.mangadex.org'
 const IMG_BASE = 'https://uploads.mangadex.org'
 
+export interface MangadexLangDef {
+  /** lang code as MangaDex knows it */
+  code: string
+  /** display name, e.g. 'Portuguese (BR)' */
+  label: string
+}
+
 const API = {
-  search: (q: string, page: number) =>
-    `${BASE}/manga?limit=20&offset=${(page - 1) * 20}&title=${encodeURIComponent(q)}&includes[]=cover_art`,
+  search: (q: string, page: number, lang: string) =>
+    `${BASE}/manga?limit=20&offset=${(page - 1) * 20}&title=${encodeURIComponent(q)}&availableTranslatedLanguage[]=${encodeURIComponent(lang)}&includes[]=cover_art`,
   media: (id: string) => `${BASE}/manga/${id}?includes[]=cover_art`,
-  chapters: (id: string, offset: number, langs: string[]) => {
-    const langParams = [...new Set(langs)].map((l) => `translatedLanguage[]=${encodeURIComponent(l)}`).join('&')
-    return `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&${langParams}&includes[]=user&includes[]=scanlation_group`
-  },
+  chapters: (id: string, offset: number, lang: string) =>
+    `${BASE}/manga/${id}/feed?limit=96&offset=${offset}&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=${encodeURIComponent(lang)}&includes[]=user&includes[]=scanlation_group`,
   chapter: (id: string) => `${BASE}/at-home/server/${id}`,
   pages: (base: string, hash: string) => `${base}/data/${hash}`,
   dataSaver: (base: string, hash: string) => `${base}/data-saver/${hash}`
@@ -68,13 +73,13 @@ function pickLocale(map?: Record<string, string>): string | undefined {
   return map.en ?? Object.values(map)[0]
 }
 
-function mapMedia(id: string, raw: MangaResult['data'][number]): Media {
+function mapMedia(sourceId: string, id: string, raw: MangaResult['data'][number]): Media {
   const attrs = raw.attributes
   const title = Object.values(attrs.title)[0] ?? attrs.title.en ?? 'Untitled'
   return {
-    id: `mangadex/${id}`,
+    id: `${sourceId}/${id}`,
     mediaId: id,
-    sourceId: 'mangadex',
+    sourceId,
     title,
     altTitles: (attrs.altTitles ?? []).flatMap((t) => Object.values(t)),
     type: 'manga',
@@ -85,73 +90,88 @@ function mapMedia(id: string, raw: MangaResult['data'][number]): Media {
   }
 }
 
-export const mangaDexSource: Source = {
-  id: 'mangadex',
-  name: 'MangaDex',
-  mediaTypes: ['manga', 'novel'],
-  lang: 'en',
+function makeSourceId(langCode: string): string {
+  return `mangadex-${langCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+}
 
-  async search(ctx, query, page): Promise<SearchResults> {
-    const json = await ctx.cache.withCache(`mangadex:search:${query}:${page}`, 10 * 60_000, () =>
-      fetchJson<MangaResult>(ctx.fetch, API.search(query, page), { headers: jsonHeaders() })
-    )
-    const items = json.data.map((m) => mapMedia(m.id, m))
-    return { page, hasNextPage: items.length === 20, items }
-  },
+/**
+ * One MangaDex source per language. Search filters by availability so every
+ * result is guaranteed to have chapters in this language; the feed requests
+ * only this language so chapter lists never mix languages.
+ * ponytail: no per-source dedupe across languages — accepted (fragmented
+ * library is intentional). If unification is ever wanted, key library rows by
+ * the manga UUID instead of `${sourceId}/${mediaId}`.
+ */
+export function makeMangadexSource(def: MangadexLangDef): Source {
+  const { code: lang, label } = def
+  const sourceId = makeSourceId(lang)
 
-  async getMedia(ctx, mediaId): Promise<Media> {
-    const json = await fetchJson<MangaResult>(ctx.fetch, API.media(mediaId), { headers: jsonHeaders() })
-    // the single-manga endpoint returns `data` as one entity, not an array
-    const m = Array.isArray(json.data) ? json.data[0] : json.data
-    if (!m) throw new Error(`media ${mediaId} not found`)
-    return mapMedia(mediaId, m)
-  },
+  return {
+    id: sourceId,
+    name: `MangaDex (${label})`,
+    mediaTypes: ['manga', 'novel'],
+    lang,
 
-  async getEpisodes(ctx, mediaId): Promise<Episode[]> {
-    const langs = await ctx.preferences.getWithDefault<string[]>('lang', ['en'])
-    // sort + dedupe so the cache key is canonical regardless of order/dupes
-    const keyLangs = [...new Set(langs)].sort()
-    return ctx.cache.withCache(`mangadex:episodes:${mediaId}:${keyLangs.join('+')}`, 30 * 60_000, async () => {
-      const seen = new Set<string>()
-      const episodes: Episode[] = []
-      for (let offset = 0; offset < 1000; offset += 96) {
-        const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, langs), { headers: jsonHeaders() })
-        if (json.data.length === 0) break
-        for (const ch of json.data) {
-          const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN
-          const vol = ch.attributes.volume ? Number(ch.attributes.volume) : undefined
-          const numKey = `${num}`
-          if (Number.isNaN(num) || seen.has(numKey)) continue
-          seen.add(numKey)
-          episodes.push({
-            id: `mangadex/${mediaId}/${ch.id}`,
-            mediaId,
-            number: num,
-            season: vol,
-            title: ch.attributes.title ?? undefined,
-            publishedAt: ch.attributes.publishedAt
-          })
+    async search(ctx, query, page): Promise<SearchResults> {
+      const json = await ctx.cache.withCache(`mangadex:${sourceId}:search:${query}:${page}`, 10 * 60_000, () =>
+        fetchJson<MangaResult>(ctx.fetch, API.search(query, page, lang), { headers: jsonHeaders() })
+      )
+      const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
+      return { page, hasNextPage: items.length === 20, items }
+    },
+
+    async getMedia(ctx, mediaId): Promise<Media> {
+      const json = await fetchJson<MangaResult>(ctx.fetch, API.media(mediaId), { headers: jsonHeaders() })
+      // the single-manga endpoint returns `data` as one entity, not an array
+      const m = Array.isArray(json.data) ? json.data[0] : json.data
+      if (!m) throw new Error(`media ${mediaId} not found`)
+      return mapMedia(sourceId, mediaId, m)
+    },
+
+    async getEpisodes(ctx, mediaId): Promise<Episode[]> {
+      return ctx.cache.withCache(`mangadex:${sourceId}:episodes:${mediaId}`, 30 * 60_000, async () => {
+        const seen = new Set<string>()
+        const episodes: Episode[] = []
+        for (let offset = 0; offset < 1000; offset += 96) {
+          const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, lang), { headers: jsonHeaders() })
+          if (json.data.length === 0) break
+          for (const ch of json.data) {
+            const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN
+            const vol = ch.attributes.volume ? Number(ch.attributes.volume) : undefined
+            const numKey = `${num}`
+            if (Number.isNaN(num) || seen.has(numKey)) continue
+            seen.add(numKey)
+            episodes.push({
+              id: `mangadex/${mediaId}/${ch.id}`,
+              mediaId,
+              number: num,
+              season: vol,
+              title: ch.attributes.title ?? undefined,
+              publishedAt: ch.attributes.publishedAt,
+              lang
+            })
+          }
+          if ((json.total ?? 0) <= offset + (json.limit ?? 96)) break
         }
-        if ((json.total ?? 0) <= offset + (json.limit ?? 96)) break
-      }
-      return episodes.sort((a, b) => a.number - b.number)
-    })
-  },
+        return episodes.sort((a, b) => a.number - b.number)
+      })
+    },
 
-  async getChapterContent(ctx, mediaId, episodeId): Promise<ChapterContent> {
-    const chapterUuid = episodeId.split('/').pop() ?? episodeId
-    const server = await fetchJson<ChapterServer>(ctx.fetch, API.chapter(chapterUuid), { headers: jsonHeaders() })
-    const hash = server.chapter.hash
-    const files = server.chapter.data
-    // MangaDex's at-home returns the real image pages for a chapter; data-saver
-    // returns lower-quality `.jpg` images. Text/novel chapters have no image
-    // files, so the reader falls back to a placeholder text view.
-    if (!files.length) {
-      return { type: 'text', html: '' }
+    async getChapterContent(ctx, mediaId, episodeId): Promise<ChapterContent> {
+      const chapterUuid = episodeId.split('/').pop() ?? episodeId
+      const server = await fetchJson<ChapterServer>(ctx.fetch, API.chapter(chapterUuid), { headers: jsonHeaders() })
+      const hash = server.chapter.hash
+      const files = server.chapter.data
+      // MangaDex's at-home returns the real image pages for a chapter; data-saver
+      // returns lower-quality `.jpg` images. Text/novel chapters have no image
+      // files, so the reader falls back to a placeholder text view.
+      if (!files.length) {
+        return { type: 'text', html: '' }
+      }
+      const useDataSaver = await ctx.preferences.getWithDefault('dataSaver', true)
+      const base = useDataSaver ? API.dataSaver(server.baseUrl, hash) : API.pages(server.baseUrl, hash)
+      const images = useDataSaver ? server.chapter.dataSaver.map((f) => `${base}/${f}`) : files.map((f) => `${base}/${f}`)
+      return { type: 'pages', images }
     }
-    const useDataSaver = await ctx.preferences.getWithDefault('dataSaver', true)
-    const base = useDataSaver ? API.dataSaver(server.baseUrl, hash) : API.pages(server.baseUrl, hash)
-    const images = useDataSaver ? server.chapter.dataSaver.map((f) => `${base}/${f}`) : files.map((f) => `${base}/${f}`)
-    return { type: 'pages', images }
   }
 }

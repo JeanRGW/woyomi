@@ -39,6 +39,8 @@ export interface Episode {
   publishedAt?: string
   /** per-episode artwork (anime) */
   imageUrl?: string
+  /** language/locale this episode's content is in (video/read sources) */
+  lang?: string
   mediaId: string
 }
 

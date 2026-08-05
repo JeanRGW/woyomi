@@ -11,6 +11,7 @@ export interface LoadedPlugin {
 
 export class PluginRegistry {
   private plugins = new Map<string, LoadedPlugin>()
+  private disabledSources = new Set<string>()
 
   /** Register a statically-imported plugin (ships with the app). */
   registerBundled(registration: PluginRegistration): void {
@@ -44,6 +45,16 @@ export class PluginRegistry {
     return this.plugins.get(pluginId)?.enabled ?? false
   }
 
+  /** Enable/disable a single source inside a plugin (e.g. per-language sources). */
+  setSourceEnabled(sourceId: string, enabled: boolean): void {
+    if (enabled) this.disabledSources.delete(sourceId)
+    else this.disabledSources.add(sourceId)
+  }
+
+  isSourceEnabled(sourceId: string): boolean {
+    return !this.disabledSources.has(sourceId)
+  }
+
   list(): LoadedPlugin[] {
     return [...this.plugins.values()]
   }
@@ -57,6 +68,7 @@ export class PluginRegistry {
     for (const plugin of this.plugins.values()) {
       if (!plugin.enabled) continue
       for (const source of plugin.registration.sources) {
+        if (this.disabledSources.has(source.id)) continue
         out.push(source)
       }
     }

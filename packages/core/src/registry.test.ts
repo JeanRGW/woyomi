@@ -52,6 +52,25 @@ describe('PluginRegistry', () => {
     expect(registry.sources()).toHaveLength(0)
   })
 
+  it('filters sources by per-source toggle and resets on plugin re-enable', () => {
+    const multi = {
+      ...reg,
+      manifest: { ...reg.manifest, id: 'p2', sourceIds: ['s1', 's2'] },
+      sources: [
+        { ...reg.sources[0]! },
+        { ...reg.sources[0]!, id: 's2', name: 'Source 2' }
+      ]
+    }
+    const registry = new PluginRegistry()
+    registry.registerBundled(multi)
+    expect(registry.sources().map((s) => s.id)).toEqual(['s1', 's2'])
+    registry.setSourceEnabled('s1', false)
+    expect(registry.sources().map((s) => s.id)).toEqual(['s2'])
+    expect(registry.isSourceEnabled('s1')).toBe(false)
+    registry.setSourceEnabled('s1', true)
+    expect(registry.sources().map((s) => s.id)).toEqual(['s1', 's2'])
+  })
+
   it('validates manifests', () => {
     expect(() => validateManifest({ ...reg.manifest, apiVersion: 'x' })).toThrow()
     expect(() => validateManifest({ ...reg.manifest, id: 'Bad ID!' })).toThrow()

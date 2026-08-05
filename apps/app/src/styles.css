@@ -171,4 +171,5 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .multi-opts { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: flex-end; max-width: 260px; }
 .multi-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text); }
 .multi-opt input[type="checkbox"] { width: auto; min-width: 0; }
+.source-toggles { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
 .file-label { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 14px; cursor: pointer; }
