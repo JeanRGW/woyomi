@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HomeSection, SearchResults, Source } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
 import type { SourceResults } from '@media-platform/core'
-import { MediaCard } from '../components'
+import { Banner, Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader, SectionHeading, SelectInput, TextInput } from '../components'
+import { Icon } from '../icons'
 
 /** Runs tasks one at a time; a rejected task never blocks the next. */
 type SectionQueue = <T>(task: () => Promise<T>) => Promise<T>
@@ -44,6 +45,32 @@ function useNearViewport<T extends HTMLElement>(rootMargin = '800px') {
   return [ref, near] as const
 }
 
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange
+}: {
+  options: Array<{ value: T; label: string }>
+  value: T
+  onChange: (v: T) => void
+}) {
+  return (
+    <div className="inline-flex rounded-xl bg-surface-2 p-1">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          className={`min-h-8 cursor-pointer rounded-lg px-4 text-[13px] font-bold transition-all ${
+            value === o.value ? 'bg-surface text-fg shadow-sm' : 'text-muted hover:text-fg'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function BrowseView({ runtime }: { runtime: AppRuntime }) {
   const [mode, setMode] = useState<'home' | 'search'>('home')
   const [sources, setSources] = useState<Source[]>(runtime.registry.sources())
@@ -53,18 +80,12 @@ export function BrowseView({ runtime }: { runtime: AppRuntime }) {
   }, [runtime])
 
   return (
-    <div className="view">
-      <h1>Browse</h1>
-      <div className="row">
-        <button className={`nav-btn ${mode === 'home' ? 'active' : ''}`} onClick={() => setMode('home')}>
-          Home
-        </button>
-        <button className={`nav-btn ${mode === 'search' ? 'active' : ''}`} onClick={() => setMode('search')}>
-          Search
-        </button>
-      </div>
+    <Page wide>
+      <PageHeader title="Browse">
+        <Segmented options={[{ value: 'home', label: 'Home' }, { value: 'search', label: 'Search' }]} value={mode} onChange={setMode} />
+      </PageHeader>
       {mode === 'home' ? <HomeTab runtime={runtime} sources={sources} /> : <SearchTab runtime={runtime} sources={sources} />}
-    </div>
+    </Page>
   )
 }
 
@@ -94,7 +115,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
     await runtime.setLandingSources(next)
   }
 
-  if (pinned === null) return <p className="muted">Loading…</p>
+  if (pinned === null) return <p className="text-sm text-muted">Loading…</p>
 
   const pinnedSources = avail.filter((s) => pinned.includes(s.id))
   const selectedSource = avail.find((s) => s.id === selected)
@@ -102,7 +123,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
   return (
     <div>
       {pinnedSources.length === 0 && !selectedSource && (
-        <p className="muted">Your landing is empty — pick a source below and pin it to show its sections here.</p>
+        <EmptyState icon="pin" title="Your home is empty" hint="Pin a source below and its sections will land here." />
       )}
       {pinnedSources.map((s) => (
         <HomeSource key={s.id} runtime={runtime} source={s} pinned onTogglePin={() => togglePin(s.id)} queue={queue} />
@@ -111,19 +132,18 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
         <HomeSource key={selectedSource.id} runtime={runtime} source={selectedSource} pinned={false} onTogglePin={() => togglePin(selectedSource.id)} queue={queue} />
       )}
 
-      <h2>All sources</h2>
-      <div className="source-toggles">
-        {avail.map((s) => (
-          <button
-            key={s.id}
-            className={`chip-btn ${pinned.includes(s.id) ? 'pinned' : ''} ${selected === s.id ? 'active' : ''}`}
-            onClick={() => setSelected(selected === s.id ? null : s.id)}
-          >
-            {s.name}
-            {pinned.includes(s.id) ? ' ★' : ''}
-          </button>
-        ))}
-        {avail.length === 0 && <p className="muted">No sources expose a homepage.</p>}
+      <SectionHeading title="All sources" />
+      <div className="flex flex-wrap gap-2">
+        {avail.map((s) => {
+          const isPinned = pinned.includes(s.id)
+          return (
+            <Chip key={s.id} active={selected === s.id} onClick={() => setSelected(selected === s.id ? null : s.id)}>
+              {isPinned && <Icon name="pin" size={13} className="text-accent" />}
+              {s.name}
+            </Chip>
+          )
+        })}
+        {avail.length === 0 && <p className="text-sm text-muted">No sources expose a homepage.</p>}
       </div>
     </div>
   )
@@ -156,21 +176,22 @@ function HomeSource({
   }, [runtime, source.id])
 
   return (
-    <div className="home-source">
-      <div className="row">
-        <h2>{source.name}</h2>
-        <button className="small-btn" onClick={onTogglePin}>
+    <div className="mb-2">
+      <div className="mb-1 mt-6 flex items-center gap-3">
+        <h2 className="text-lg font-extrabold tracking-tight">{source.name}</h2>
+        <Btn variant="ghost" className="min-h-8 px-2.5 text-xs" onClick={onTogglePin}>
+          <Icon name="pin" size={13} className={pinned ? 'text-accent' : ''} />
           {pinned ? 'Unpin' : 'Pin'}
-        </button>
+        </Btn>
       </div>
       {sections.map((sec) => (
-        <SectionGrid key={sec.id} runtime={runtime} source={source} section={sec} queue={queue} />
+        <SectionRail key={sec.id} runtime={runtime} source={source} section={sec} queue={queue} />
       ))}
     </div>
   )
 }
 
-function SectionGrid({
+function SectionRail({
   runtime,
   source,
   section,
@@ -215,15 +236,33 @@ function SectionGrid({
   }
 
   return (
-    <div>
-      <h3>{section.title}</h3>
-      {error && <div className="error">{error}</div>}
-      <div className="grid">{result?.items.map((m) => <MediaCard key={m.id} media={m} />)}</div>
-      {result?.hasNextPage && (
-        <button className="wide" onClick={loadMore} disabled={loading}>
-          {loading ? 'Loading…' : 'Load more'}
-        </button>
-      )}
+    <div className="rise-in">
+      <h3 className="mb-2 mt-4 text-sm font-bold text-muted">{section.title}</h3>
+      {error && <Banner tone="error">{error}</Banner>}
+      <div className="rail no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-8 md:px-8">
+        {result
+          ? result.items.map((m) => <MediaCard key={m.id} media={m} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36" />)
+          : !error &&
+            Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36">
+                <div className="aspect-[2/3] w-full animate-pulse rounded-xl bg-surface-2" />
+                <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2" />
+              </div>
+            ))}
+        {result?.hasNextPage && (
+          <button
+            onClick={loadMore}
+            disabled={loading}
+            className="grid w-[7.5rem] shrink-0 cursor-pointer place-items-center self-start rounded-xl bg-surface-2 text-muted transition-colors hover:bg-surface-3 hover:text-accent disabled:opacity-40 sm:w-32 md:w-36"
+            style={{ aspectRatio: '2/3' }}
+          >
+            <span className="flex flex-col items-center gap-1 text-xs font-bold">
+              <Icon name="chevronRight" size={20} />
+              {loading ? 'Loading…' : 'More'}
+            </span>
+          </button>
+        )}
+      </div>
       <div ref={sentinel} />
     </div>
   )
@@ -259,55 +298,72 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
     }
   }
 
+  const hasResults = mode === 'all' ? allResults.length > 0 : (single?.items.length ?? 0) > 0
+
   return (
     <div>
-      <div className="row wrap">
-        <button className={`nav-btn ${mode === 'all' ? 'active' : ''}`} onClick={() => setMode('all')}>
-          All sources
-        </button>
-        <button className={`nav-btn ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>
-          Single source
-        </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmented
+          options={[{ value: 'all', label: 'All sources' }, { value: 'single', label: 'Single source' }]}
+          value={mode}
+          onChange={setMode}
+        />
         {mode === 'single' && (
-          <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+          <SelectInput value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
             {sources.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
             ))}
-          </select>
+          </SelectInput>
         )}
       </div>
-      <div className="row">
-        <input placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} />
-        <button onClick={() => run()} disabled={loading}>
-          Search
-        </button>
+      <div className="mt-3 flex gap-2">
+        <div className="relative flex-1">
+          <Icon name="search" size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+          <TextInput
+            className="pl-10"
+            placeholder="Search titles…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && run()}
+          />
+        </div>
+        <Btn variant="primary" onClick={() => run()} disabled={loading}>
+          {loading ? 'Searching…' : 'Search'}
+        </Btn>
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && <Banner tone="error">{error}</Banner>}
+      {!hasResults && !loading && !error && (
+        <div className="mt-6">
+          <EmptyState icon="search" title="Search every source at once" hint="Results are grouped per source. Pick a single source for paged results." />
+        </div>
+      )}
 
       {mode === 'all' ? (
         allResults.map((r) => (
           <div key={r.sourceId}>
-            <h2>
-              {r.sourceName}
-              {r.error && <span className="muted small"> — {r.error}</span>}
-            </h2>
-            <div className="grid">{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</div>
+            <SectionHeading
+              title={r.sourceName}
+              action={r.error ? <span className="text-xs font-normal normal-case text-danger">{r.error}</span> : undefined}
+            />
+            <MediaGrid>{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
             {r.hasNextPage && (
-              <button className="wide" onClick={() => run((r.page ?? 1) + 1)} disabled={loading}>
-                {loading ? 'Loading…' : `Load more (${r.sourceName})`}
-              </button>
+              <Btn variant="outline" className="mt-4 w-full" onClick={() => run((r.page ?? 1) + 1)} disabled={loading}>
+                {loading ? 'Loading…' : `Load more from ${r.sourceName}`}
+              </Btn>
             )}
           </div>
         ))
       ) : (
         <>
-          <div className="grid">{single?.items.map((m) => <MediaCard key={m.id} media={m} />)}</div>
+          <div className="mt-5">
+            <MediaGrid>{single?.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
+          </div>
           {single?.hasNextPage && (
-            <button className="wide" onClick={() => run((single.page ?? 1) + 1)} disabled={loading}>
+            <Btn variant="outline" className="mt-4 w-full" onClick={() => run((single.page ?? 1) + 1)} disabled={loading}>
               {loading ? 'Loading…' : 'Load more'}
-            </button>
+            </Btn>
           )}
         </>
       )}

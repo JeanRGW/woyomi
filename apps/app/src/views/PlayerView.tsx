@@ -3,6 +3,7 @@ import Hls from 'hls.js'
 import type { Episode, Media, StreamSource } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
 import { recordOpen } from '../hooks'
+import { BackButton, Banner, Page } from '../components'
 
 export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const [streams, setStreams] = useState<StreamSource[]>([])
@@ -51,24 +52,36 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
     }
   }, [stream])
 
-  if (error) return <div className="view"><div className="error">{error}</div></div>
+  if (error)
+    return (
+      <Page>
+        <BackButton />
+        <Banner tone="error">{error}</Banner>
+      </Page>
+    )
 
   return (
-    <div className="view">
-      <button className="back" onClick={() => history.back()}>← Back</button>
-      <h1>{media?.title ?? 'Playing…'}</h1>
-      <div className="muted">{episode ? `Episode ${episode.number}` : ''}</div>
-      <video ref={videoRef} controls autoPlay className="player" />
+    <div className="mx-auto w-full max-w-5xl px-4 py-5 md:py-8">
+      <BackButton />
+      <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{media?.title ?? 'Playing…'}</h1>
+      {episode && <div className="mt-1 text-sm font-medium text-muted">Episode {episode.number}</div>}
+      <video ref={videoRef} controls autoPlay className="mt-4 w-full rounded-2xl bg-black shadow-2xl shadow-black/50 ring-1 ring-white/10" />
       {streams.length > 0 ? (
-        <div className="row">
+        <div className="mt-4 flex flex-wrap gap-2">
           {streams.map((s, i) => (
-            <button key={i} className={stream?.url === s.url ? 'active' : ''} onClick={() => setStream(s)}>
+            <button
+              key={i}
+              onClick={() => setStream(s)}
+              className={`min-h-9 cursor-pointer rounded-full px-4 text-[13px] font-bold transition-all active:scale-[0.96] ${
+                stream?.url === s.url ? 'bg-accent text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
+              }`}
+            >
               {s.quality ?? s.kind}
             </button>
           ))}
         </div>
       ) : (
-        <p className="muted">No playable streams returned.</p>
+        <p className="mt-4 text-sm text-muted">No playable streams returned.</p>
       )}
     </div>
   )

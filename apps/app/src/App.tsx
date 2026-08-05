@@ -8,6 +8,8 @@ import { ReaderView } from './views/ReaderView'
 import { PlayerView } from './views/PlayerView'
 import { StoreView } from './views/StoreView'
 import { SettingsView } from './views/SettingsView'
+import { PluginSettingsView } from './views/PluginSettingsView'
+import { Icon, type IconName } from './icons'
 
 export type Route =
   | { name: 'browse' }
@@ -18,6 +20,7 @@ export type Route =
   | { name: 'player'; sourceId: string; mediaId: string; episodeId: string }
   | { name: 'store' }
   | { name: 'settings' }
+  | { name: 'plugin-settings' }
 
 function parseHash(hash: string): Route {
   const [path, ...rest] = hash.replace(/^#\/?/, '').split('/')
@@ -31,7 +34,7 @@ function parseHash(hash: string): Route {
     case 'store':
       return { name: 'store' }
     case 'settings':
-      return { name: 'settings' }
+      return rest[0] === 'plugins' ? { name: 'plugin-settings' } : { name: 'settings' }
     case 'history':
       return { name: 'history' }
     case 'browse':
@@ -54,17 +57,24 @@ export function navigate(route: Route): void {
             ? '#/store'
             : route.name === 'settings'
               ? '#/settings'
-              : `#/${route.name}/${route.sourceId}/${route.mediaId}${route.name === 'reader' || route.name === 'player' ? `/${route.episodeId}` : ''}`
+              : route.name === 'plugin-settings'
+                ? '#/settings/plugins'
+                : `#/${route.name}/${route.sourceId}/${route.mediaId}${route.name === 'reader' || route.name === 'player' ? `/${route.episodeId}` : ''}`
   window.location.hash = path
 }
 
-const tabs: Array<{ route: Route; label: string }> = [
-  { route: { name: 'browse' }, label: 'Browse' },
-  { route: { name: 'library' }, label: 'Library' },
-  { route: { name: 'history' }, label: 'History' },
-  { route: { name: 'store' }, label: 'Plugins' },
-  { route: { name: 'settings' }, label: 'Settings' }
+const tabs: Array<{ route: Route; label: string; icon: IconName }> = [
+  { route: { name: 'browse' }, label: 'Browse', icon: 'browse' },
+  { route: { name: 'library' }, label: 'Library', icon: 'library' },
+  { route: { name: 'history' }, label: 'History', icon: 'history' },
+  { route: { name: 'store' }, label: 'Plugins', icon: 'plugins' },
+  { route: { name: 'settings' }, label: 'Settings', icon: 'settings' }
 ]
+
+function isActive(route: Route, tab: Route): boolean {
+  if (tab.name === 'settings') return route.name === 'settings' || route.name === 'plugin-settings'
+  return route.name === tab.name
+}
 
 export function App() {
   const [runtime, setRuntime] = useState<AppRuntime | null>(null)
@@ -80,24 +90,83 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  if (!runtime) return <div className="page center">Loading engine…</div>
+  if (!runtime) {
+    return (
+      <div className="grid h-full place-items-center bg-ink">
+        <div className="flex flex-col items-center gap-3">
+          <div className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-accent to-accent-deep shadow-lg shadow-accent/25">
+            <Icon name="library" size={24} className="text-white" />
+          </div>
+          <p className="text-sm text-muted">Loading engine…</p>
+        </div>
+      </div>
+    )
+  }
+
+  const bare = route.name === 'media' || route.name === 'reader' || route.name === 'player'
 
   return (
-    <div className="app">
-      {route.name === 'media' || route.name === 'reader' || route.name === 'player' ? (
-        <Content route={route} runtime={runtime} />
-      ) : (
-        <>
-          <nav className="nav">
+    <div className="flex h-full bg-ink text-fg">
+      {!bare && (
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-line-soft bg-surface/30 md:flex">
+          <div className="flex items-center gap-3 px-5 pb-6 pt-6">
+            <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-accent to-accent-deep shadow-md shadow-accent/25">
+              <Icon name="library" size={18} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-extrabold tracking-tight">Media Platform</div>
+              <div className="text-[11px] font-medium text-faint">multi-source library</div>
+            </div>
+          </div>
+          <nav className="flex flex-col gap-1 px-3">
             {tabs.map((t) => (
-              <button key={t.label} className={`nav-btn ${route.name === t.route.name ? 'active' : ''}`} onClick={() => navigate(t.route)}>
+              <button
+                key={t.label}
+                onClick={() => navigate(t.route)}
+                className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${
+                  isActive(route, t.route) ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg'
+                }`}
+              >
+                <Icon name={t.icon} size={19} />
                 {t.label}
               </button>
             ))}
-            {isTauri() && <span className="nav-badge">native</span>}
           </nav>
-          <Content route={route} runtime={runtime} />
-        </>
+          {isTauri() && (
+            <div className="mt-auto px-5 pb-5">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                <span className="size-1.5 rounded-full bg-ok" />
+                native
+              </span>
+            </div>
+          )}
+        </aside>
+      )}
+
+      <main className={`min-w-0 flex-1 overflow-y-auto ${bare ? '' : 'pb-[calc(68px+env(safe-area-inset-bottom))] md:pb-0'}`}>
+        <Content route={route} runtime={runtime} />
+      </main>
+
+      {!bare && (
+        <nav
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-line-soft bg-surface/85 backdrop-blur-md md:hidden"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          <div className="grid grid-cols-5">
+            {tabs.map((t) => (
+              <button
+                key={t.label}
+                onClick={() => navigate(t.route)}
+                className={`flex flex-col items-center gap-1 py-2 text-[10px] font-bold transition-colors ${
+                  isActive(route, t.route) ? 'text-accent' : 'text-muted'
+                }`}
+              >
+                <Icon name={t.icon} size={21} />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </nav>
       )}
     </div>
   )
@@ -121,5 +190,7 @@ function Content({ route, runtime }: { route: Route; runtime: AppRuntime }) {
       return <StoreView runtime={runtime} />
     case 'settings':
       return <SettingsView runtime={runtime} />
+    case 'plugin-settings':
+      return <PluginSettingsView runtime={runtime} />
   }
 }

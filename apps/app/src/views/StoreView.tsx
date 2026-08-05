@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { fetchRepoIndex, type RepoPlugin } from '../provider'
 import type { AppRuntime } from '../runtime'
 import { createFetchProvider } from '../runtime'
+import { Banner, Btn, EmptyState, Page, PageHeader, SectionHeading, TextInput } from '../components'
+import { Icon } from '../icons'
 
 const DEFAULT_REPOS = ['http://localhost:8787/repo']
 
@@ -52,64 +54,101 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
   }
 
   return (
-    <div className="view">
-      <h1>Plugins</h1>
-      <div className="row wrap">
-        <input placeholder="Add repo URL (e.g. https://host/plugins)" value={repoInput} onChange={(e) => setRepoInput(e.target.value)} />
-        <button
+    <Page>
+      <PageHeader title="Plugins">
+        <Btn variant="ghost" onClick={refresh} disabled={busy}>
+          <Icon name="refresh" size={16} className={busy ? 'animate-spin' : ''} />
+          {busy ? 'Refreshing…' : 'Refresh'}
+        </Btn>
+      </PageHeader>
+
+      <div className="flex gap-2">
+        <TextInput placeholder="Add repo URL (e.g. https://host/plugins)" value={repoInput} onChange={(e) => setRepoInput(e.target.value)} />
+        <Btn
+          variant="primary"
           onClick={() => {
             const v = repoInput.trim()
             if (v && !repos.includes(v)) setRepos((r) => [...r, v])
             setRepoInput('')
           }}
         >
+          <Icon name="plus" size={16} />
           Add repo
-        </button>
-        <button onClick={refresh} disabled={busy}>
-          {busy ? 'Refreshing…' : 'Refresh'}
-        </button>
+        </Btn>
       </div>
-      <div className="repos">
+      <div className="mt-3 flex flex-wrap gap-2">
         {repos.map((r) => (
-          <span key={r} className="chip">
+          <span key={r} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1.5 pl-3.5 pr-1.5 text-xs font-medium text-muted">
             {r}
-            <button onClick={() => setRepos((list) => list.filter((x) => x !== r))}>×</button>
+            <button
+              onClick={() => setRepos((list) => list.filter((x) => x !== r))}
+              aria-label={`Remove repo ${r}`}
+              className="grid size-6 cursor-pointer place-items-center rounded-full text-faint transition-colors hover:bg-danger-soft hover:text-danger"
+            >
+              <Icon name="x" size={13} />
+            </button>
           </span>
         ))}
       </div>
-      {error && <div className="error">{error}</div>}
-      {message && <div className="ok">{message}</div>}
+      {error && <Banner tone="error">{error}</Banner>}
+      {message && <Banner tone="ok">{message}</Banner>}
 
-      <h2>Available</h2>
-      {plugins.length === 0 && <p className="muted">{busy ? 'Loading…' : 'No plugins found in configured repos.'}</p>}
-      <div className="plugin-list">
-        {plugins.map((p) => {
-          const installedVer = runtime.installed.get(p.id)
-          return (
-            <div key={p.id} className="plugin-row">
-              {p.iconUrl ? <img className="plugin-icon" src={p.iconUrl} alt="" /> : <div className="plugin-icon placeholder" />}
-              <div className="grow">
-                <div>
-                  <strong>{p.name}</strong> <span className="muted">v{p.version}</span>
-                  {p.lang ? ` · ${p.lang}` : ''}
+      <SectionHeading title="Available" />
+      {plugins.length === 0 ? (
+        busy ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : (
+          <EmptyState icon="plugins" title="No plugins found" hint="Add a plugin repository URL above to discover installable sources." />
+        )
+      ) : (
+        <div className="flex flex-col gap-2">
+          {plugins.map((p) => {
+            const installedVer = runtime.installed.get(p.id)
+            return (
+              <div key={p.id} className="flex items-center gap-3 rounded-2xl border border-line-soft bg-surface p-3 transition-colors hover:border-line">
+                {p.iconUrl ? (
+                  <img className="size-12 shrink-0 rounded-xl object-cover ring-1 ring-white/5" src={p.iconUrl} alt="" />
+                ) : (
+                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-surface-2 text-muted">
+                    <Icon name="plugins" size={20} />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <strong className="text-sm font-bold">{p.name}</strong>
+                    <span className="text-xs text-faint">
+                      v{p.version}
+                      {p.lang ? ` · ${p.lang}` : ''}
+                    </span>
+                  </div>
+                  <div className="text-xs font-medium capitalize text-muted">
+                    {p.mediaTypes.join(', ')}
+                    {p.nsfw ? ' · NSFW' : ''}
+                  </div>
+                  {p.description && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{p.description}</div>}
                 </div>
-                <div className="muted small">
-                  {p.mediaTypes.join(', ')}
-                  {p.nsfw ? ' · NSFW' : ''}
-                </div>
-                {p.description && <div className="small">{p.description}</div>}
+                {installedVer ? (
+                  <Btn variant="outline" disabled={installedVer === p.version} className="shrink-0">
+                    {installedVer === p.version ? (
+                      <>
+                        <Icon name="check" size={15} />
+                        Installed
+                      </>
+                    ) : (
+                      `Update (${p.version})`
+                    )}
+                  </Btn>
+                ) : (
+                  <Btn variant="primary" onClick={() => install(p)} disabled={busy} className="shrink-0">
+                    <Icon name="download" size={15} />
+                    Install
+                  </Btn>
+                )}
               </div>
-              {installedVer ? (
-                <button disabled={installedVer === p.version}>{installedVer === p.version ? 'Installed' : `Update (${p.version})`}</button>
-              ) : (
-                <button onClick={() => install(p)} disabled={busy}>
-                  Install
-                </button>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
+            )
+          })}
+        </div>
+      )}
+    </Page>
   )
 }

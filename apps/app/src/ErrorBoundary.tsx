@@ -23,11 +23,16 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className="view center" style={{ minHeight: '100vh' }}>
-          <div>
-            <h1>Something went wrong</h1>
-            <p className="muted">{String(this.state.error)}</p>
-            <button onClick={() => window.location.reload()}>Reload</button>
+        <div className="grid min-h-screen place-items-center bg-ink p-6 text-fg">
+          <div className="max-w-md text-center">
+            <h1 className="text-xl font-extrabold tracking-tight">Something went wrong</h1>
+            <p className="mt-2 text-sm text-muted">{String(this.state.error)}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-5 min-h-10 cursor-pointer rounded-xl bg-accent px-5 text-sm font-semibold text-white hover:bg-accent-deep"
+            >
+              Reload
+            </button>
           </div>
         </div>
       )

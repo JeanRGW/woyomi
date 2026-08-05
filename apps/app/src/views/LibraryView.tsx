@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { LibraryEntry, LibraryStatus } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
-import { MediaCard } from '../components'
+import { Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader } from '../components'
+import { Icon } from '../icons'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
@@ -15,30 +16,38 @@ export function LibraryView({ runtime }: { runtime: AppRuntime }) {
   }, [refresh])
 
   const filtered = filter === 'all' ? entries : entries.filter((e) => e.status === filter)
+  const counts = entries.reduce<Record<string, number>>((acc, e) => {
+    acc[e.status] = (acc[e.status] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
-    <div className="view">
-      <h1>Library</h1>
-      <div className="row wrap">
-        <select value={filter} onChange={(e) => setFilter(e.target.value as LibraryStatus | 'all')}>
-          <option value="all">All</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <button onClick={refresh}>Refresh</button>
+    <Page wide>
+      <PageHeader title="Library">
+        <Btn variant="ghost" onClick={refresh} aria-label="Refresh">
+          <Icon name="refresh" size={16} />
+          Refresh
+        </Btn>
+      </PageHeader>
+      <div className="no-scrollbar -mx-4 mb-5 flex gap-2 overflow-x-auto px-4 md:-mx-8 md:px-8">
+        <Chip active={filter === 'all'} onClick={() => setFilter('all')}>
+          All · {entries.length}
+        </Chip>
+        {STATUSES.map((s) => (
+          <Chip key={s} active={filter === s} onClick={() => setFilter(s)}>
+            {s} · {counts[s] ?? 0}
+          </Chip>
+        ))}
       </div>
       {filtered.length === 0 ? (
-        <p className="muted">Nothing here yet — add from Browse.</p>
+        <EmptyState icon="library" title="Nothing here yet" hint="Add titles from Browse and they will show up in your library." />
       ) : (
-        <div className="grid">
+        <MediaGrid>
           {filtered.map((e) => (
             <MediaCard key={e.media.id} media={e.media} />
           ))}
-        </div>
+        </MediaGrid>
       )}
-    </div>
+    </Page>
   )
 }
