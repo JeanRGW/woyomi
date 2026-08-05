@@ -1,5 +1,12 @@
 export type MediaType = 'manga' | 'anime' | 'novel' | 'movie' | 'series'
 
+export const VIDEO_TYPES: readonly MediaType[] = ['anime', 'movie', 'series']
+
+/** Media whose episodes are played as video rather than read. */
+export function isVideoType(type: MediaType): boolean {
+  return VIDEO_TYPES.includes(type)
+}
+
 export type MediaStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled'
 
 export type LibraryStatus = 'reading' | 'plan' | 'completed' | 'dropped' | 'paused'
@@ -122,6 +129,13 @@ export interface ProgressEntry {
   updatedAt: number
 }
 
+/** One opened chapter/video/other: media + episode snapshot, keyed mediaId/episodeId. */
+export interface HistoryEntry {
+  media: Media
+  episode: Episode
+  openedAt: number
+}
+
 export interface LibraryStore {
   add(media: Media, status: LibraryStatus): Promise<void>
   updateStatus(mediaId: string, status: LibraryStatus): Promise<void>
@@ -130,7 +144,14 @@ export interface LibraryStore {
   list(): Promise<LibraryEntry[]>
   setSeen(mediaId: string, episodeId: string): Promise<void>
   setSeenMany(mediaId: string, episodeIds: string[]): Promise<void>
+  unsetSeen(mediaId: string, episodeId: string): Promise<void>
   getProgress(mediaId: string): Promise<ProgressEntry | undefined>
+  /** Upsert an open into history; re-opening dedupes and bumps openedAt. */
+  addHistory(media: Media, episode: Episode): Promise<void>
+  /** Most-recently-opened first. */
+  listHistory(): Promise<HistoryEntry[]>
+  /** episodeId is globally unique, so mediaId is not needed. */
+  removeHistory(episodeId: string): Promise<void>
   exportJson(): Promise<string>
   importJson(json: string): Promise<void>
 }

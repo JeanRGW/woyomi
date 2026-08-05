@@ -21,6 +21,7 @@ interface MangaResult {
     attributes: {
       title: Record<string, string>
       altTitles?: Array<Record<string, string>>
+      description?: Record<string, string>
       status?: string
       tags?: Array<{ attributes: { name: Record<string, string> } }>
     }
@@ -59,6 +60,12 @@ function mapStatus(raw?: string): Media['status'] {
   return undefined
 }
 
+/** Pick a locale value like the existing title pick: prefer 'en', else first. */
+function pickLocale(map?: Record<string, string>): string | undefined {
+  if (!map) return undefined
+  return map.en ?? Object.values(map)[0]
+}
+
 function mapMedia(id: string, raw: MangaResult['data'][number]): Media {
   const attrs = raw.attributes
   const title = Object.values(attrs.title)[0] ?? attrs.title.en ?? 'Untitled'
@@ -71,6 +78,7 @@ function mapMedia(id: string, raw: MangaResult['data'][number]): Media {
     type: 'manga',
     status: mapStatus(attrs.status),
     coverUrl: coverUrl(id, raw.relationships),
+    synopsis: pickLocale(attrs.description),
     tags: (attrs.tags ?? []).map((t) => Object.values(t.attributes.name)[0] ?? '').filter(Boolean)
   }
 }

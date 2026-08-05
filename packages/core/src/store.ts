@@ -1,9 +1,10 @@
-import type { LibraryEntry, LibraryStatus, LibraryStore, Media, ProgressEntry } from './types.js'
+import type { Episode, HistoryEntry, LibraryEntry, LibraryStatus, LibraryStore, Media, ProgressEntry } from './types.js'
 
 /** In-memory store used for tests and non-persistent scenarios. */
 export class MemoryStore implements LibraryStore {
   private entries = new Map<string, LibraryEntry>()
   private progress = new Map<string, ProgressEntry>()
+  private history = new Map<string, HistoryEntry>()
 
   async add(media: Media, status: LibraryStatus): Promise<void> {
     this.entries.set(media.id, { media, status, addedAt: this.entries.get(media.id)?.addedAt ?? Date.now() })
@@ -17,6 +18,9 @@ export class MemoryStore implements LibraryStore {
   async remove(mediaId: string): Promise<void> {
     this.entries.delete(mediaId)
     this.progress.delete(mediaId)
+    for (const [key, h] of [...this.history]) {
+      if (h.media.id === mediaId) this.history.delete(key)
+    }
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -38,28 +42,56 @@ export class MemoryStore implements LibraryStore {
     this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
   }
 
+  async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
+    const existing = this.progress.get(mediaId)
+    if (!existing) return
+    const seen = new Set(existing.seenEpisodeIds)
+    if (!seen.delete(episodeId)) return
+    if (seen.size === 0) this.progress.delete(mediaId)
+    else this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
+  }
+
   async getProgress(mediaId: string): Promise<ProgressEntry | undefined> {
     return this.progress.get(mediaId)
   }
 
+  async addHistory(media: Media, episode: Episode): Promise<void> {
+    this.history.set(episode.id, { media, episode, openedAt: Date.now() })
+  }
+
+  async listHistory(): Promise<HistoryEntry[]> {
+    return [...this.history.values()].sort((a, b) => b.openedAt - a.openedAt)
+  }
+
+  async removeHistory(episodeId: string): Promise<void> {
+    this.history.delete(episodeId)
+  }
+
   async exportJson(): Promise<string> {
-    return JSON.stringify({ version: 1, entries: [...this.entries.values()], progress: [...this.progress.values()] })
+    return JSON.stringify({
+      version: 1,
+      entries: [...this.entries.values()],
+      progress: [...this.progress.values()],
+      history: [...this.history.values()]
+    })
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[] }
+    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[]; history?: HistoryEntry[] }
     if (data.entries) for (const e of data.entries) this.entries.set(e.media.id, e)
     if (data.progress) for (const p of data.progress) this.progress.set(p.mediaId, p)
+    if (data.history) for (const h of data.history) this.history.set(h.episode.id, h)
   }
 }
 
 /**
  * IndexedDB-backed store used by the web (no-server) build.
- * Two object stores: `library` (key = media id) and `progress` (key = media id).
+ * Object stores: `library` (key = media id), `progress` (key = media id),
+ * `history` (key = `${mediaId}/${episodeId}`).
  */
 export class IndexedDbStore implements LibraryStore {
   static readonly DB_NAME = 'media-platform'
-  static readonly VERSION = 1
+  static readonly VERSION = 2
 
   private dbPromise: Promise<IDBDatabase> | undefined
 
@@ -75,6 +107,7 @@ export class IndexedDbStore implements LibraryStore {
           const db = req.result
           if (!db.objectStoreNames.contains('library')) db.createObjectStore('library', { keyPath: 'id' })
           if (!db.objectStoreNames.contains('progress')) db.createObjectStore('progress', { keyPath: 'mediaId' })
+          if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'key' })
         }
       })
     }
@@ -133,9 +166,39 @@ export class IndexedDbStore implements LibraryStore {
     return request(db.transaction('progress', 'readwrite').objectStore('progress').put(row)).then(() => undefined)
   }
 
+  async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
+    const db = await this.db()
+    const existing = await this.getProgress(mediaId)
+    if (!existing) return
+    const seen = new Set(existing.seenEpisodeIds)
+    if (!seen.delete(episodeId)) return
+    const store = db.transaction('progress', 'readwrite').objectStore('progress')
+    if (seen.size === 0) return request(store.delete(mediaId)).then(() => undefined)
+    return request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)
+  }
+
   async getProgress(mediaId: string): Promise<ProgressEntry | undefined> {
     const db = await this.db()
     return request<ProgressEntry | undefined>(db.transaction('progress', 'readonly').objectStore('progress').get(mediaId))
+  }
+
+  async addHistory(media: Media, episode: Episode): Promise<void> {
+    const db = await this.db()
+    const row = { key: episode.id, media, episode, openedAt: Date.now() }
+    return request(db.transaction('history', 'readwrite').objectStore('history').put(row)).then(() => undefined)
+  }
+
+  async listHistory(): Promise<HistoryEntry[]> {
+    const db = await this.db()
+    const rows = await request<Array<{ media: Media; episode: Episode; openedAt: number }>>(
+      db.transaction('history', 'readonly').objectStore('history').getAll()
+    )
+    return rows.map((r) => ({ media: r.media, episode: r.episode, openedAt: r.openedAt })).sort((a, b) => b.openedAt - a.openedAt)
+  }
+
+  async removeHistory(episodeId: string): Promise<void> {
+    const db = await this.db()
+    return request(db.transaction('history', 'readwrite').objectStore('history').delete(episodeId)).then(() => undefined)
   }
 
   async exportJson(): Promise<string> {
@@ -145,18 +208,20 @@ export class IndexedDbStore implements LibraryStore {
       const p = await this.getProgress(e.media.id)
       if (p) progress.push(p)
     }
-    return JSON.stringify({ version: 1, entries, progress })
+    return JSON.stringify({ version: 1, entries, progress, history: await this.listHistory() })
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[] }
+    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[]; history?: HistoryEntry[] }
     const db = await this.db()
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(['library', 'progress'], 'readwrite')
+      const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
       const ls = tx.objectStore('library')
       const ps = tx.objectStore('progress')
+      const hs = tx.objectStore('history')
       for (const e of data.entries ?? []) ls.put({ ...e.media, meta: e })
       for (const p of data.progress ?? []) ps.put(p)
+      for (const h of data.history ?? []) hs.put({ key: h.episode.id, ...h })
       tx.oncomplete = () => resolve(null)
       tx.onerror = () => reject(tx.error)
     })

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { ChapterContent } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
+import { useRecordOpenById } from '../hooks'
 
 export function ReaderView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const [content, setContent] = useState<ChapterContent | null>(null)
   const [error, setError] = useState('')
+
+  useRecordOpenById(runtime, sourceId, mediaId, episodeId)
 
   useEffect(() => {
     let cancelled = false

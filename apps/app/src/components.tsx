@@ -17,11 +17,16 @@ export function MediaCard({ media }: { media: Media }) {
   )
 }
 
-export function EpisodeRow({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+export function EpisodeRow({ label, active, onOpen, onToggleSeen }: { label: string; active: boolean; onOpen: () => void; onToggleSeen: () => void }) {
   return (
-    <div className={`episode-row ${active ? 'seen' : ''}`} role="button" tabIndex={0} onClick={onClick} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
-      <span>{label}</span>
-      {active && <span className="badge">seen</span>}
+    <div className={`episode-row ${active ? 'seen' : ''}`}>
+      <span className="episode-label" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => e.key === 'Enter' && onOpen()}>
+        {label}
+      </span>
+      <span className="episode-actions">
+        {active && <span className="badge">seen</span>}
+        <button className="toggle-seen" onClick={onToggleSeen}>{active ? 'Mark unseen' : 'Mark seen'}</button>
+      </span>
     </div>
   )
 }

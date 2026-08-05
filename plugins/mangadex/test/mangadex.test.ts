@@ -9,6 +9,7 @@ const searchFixture = {
       attributes: {
         title: { en: 'My Hero Academia' },
         altTitles: [{ ja: '僕のヒーローアカデミア' }, { 'en-us': 'Boku no Hero Academia' }],
+        description: { en: '**A hero** story with [link](https://example.com).', fr: 'Une histoire de héros.' },
         status: 'ongoing',
         tags: [
           { attributes: { name: { en: 'Action' } } },
@@ -63,8 +64,23 @@ describe('mangadex source', () => {
     expect(m.title).toBe('My Hero Academia')
     expect(m.altTitles).toContain('僕のヒーローアカデミア')
     expect(m.coverUrl).toContain('uploads.mangadex.org/covers/abc-123/abc-123.jpg')
+    expect(m.synopsis).toBe('**A hero** story with [link](https://example.com).')
     expect(m.tags).toEqual(['Action', 'School'])
     expect(m.status).toBe('ongoing')
+  })
+
+  it('falls back to the first description locale when en is absent', async () => {
+    const entity = JSON.parse(JSON.stringify(searchFixture.data[0]))
+    entity.attributes.description = { fr: 'Une histoire de héros.', ja: 'ヒーロー物語' }
+    const m = await mangaDexSource.getMedia({ ...ctx, fetch: fixtureFetch({ '/manga/abc-123': { data: entity } }) }, 'abc-123')
+    expect(m.synopsis).toBe('Une histoire de héros.')
+  })
+
+  it('leaves synopsis undefined when no description is present', async () => {
+    const entity = JSON.parse(JSON.stringify(searchFixture.data[0]))
+    delete entity.attributes.description
+    const m = await mangaDexSource.getMedia({ ...ctx, fetch: fixtureFetch({ '/manga/abc-123': { data: entity } }) }, 'abc-123')
+    expect(m.synopsis).toBeUndefined()
   })
 
   it('dedupes chapters and maps numbers/seasons', async () => {

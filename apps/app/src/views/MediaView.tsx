@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { Episode, LibraryEntry, LibraryStatus } from '@media-platform/core'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { marked } from 'marked'
+import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { EpisodeRow } from '../components'
@@ -30,14 +31,37 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     load()
   }, [load])
 
+  const descriptionHtml = useMemo(
+    () => (media?.synopsis ? marked.parse(media.synopsis, { async: false }) : ''),
+    [media?.synopsis]
+  )
+
   async function setStatus(status: LibraryStatus) {
     if (!media) return
     await runtime.store.add(media, status)
     setEntry(await runtime.store.get(media.id))
   }
 
-  async function markSeen(ep: Episode) {
-    await runtime.store.setSeen(media!.id, ep.id)
+  async function toggleSeen(ep: Episode) {
+    const method = seen.has(ep.id) ? 'unsetSeen' : 'setSeen'
+    await runtime.store[method](media!.id, ep.id)
+    const prog = await runtime.store.getProgress(media!.id)
+    setSeen(new Set(prog?.seenEpisodeIds ?? []))
+  }
+
+  async function markAllSeen() {
+    await runtime.store.setSeenMany(
+      media!.id,
+      episodes.map((e) => e.id)
+    )
+    const prog = await runtime.store.getProgress(media!.id)
+    setSeen(new Set(prog?.seenEpisodeIds ?? []))
+  }
+
+  async function markAllUnseen() {
+    for (const ep of episodes) {
+      await runtime.store.unsetSeen(media!.id, ep.id)
+    }
     const prog = await runtime.store.getProgress(media!.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }
@@ -45,7 +69,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   if (error) return <div className="view"><div className="error">{error}</div></div>
   if (!media) return <div className="view center">Loading…</div>
 
-  const isVideo = media.type === 'anime' || media.type === 'movie' || media.type === 'series'
+  const video = isVideoType(media.type)
 
   return (
     <div className="view">
@@ -58,7 +82,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
             {media.type} · {media.sourceId}
             {media.status ? ` · ${media.status}` : ''}
           </div>
-          {media.synopsis && <p>{media.synopsis}</p>}
+          {descriptionHtml && <div className="description" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />}
           {media.tags && <div className="tags">{media.tags.map((t) => <span key={t} className="tag">{t}</span>)}</div>}
           <div className="row">
             <select value={entry?.status ?? ''} onChange={(e) => e.target.value && setStatus(e.target.value as LibraryStatus)}>
@@ -70,18 +94,21 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         </div>
       </div>
 
-      <h2>{episodes.length} {isVideo ? 'episodes' : 'chapters'}</h2>
+      <h2>{episodes.length} {video ? 'episodes' : 'chapters'}</h2>
       <div className="episodes">
         {episodes.map((ep) => (
           <EpisodeRow
             key={ep.id}
             label={`${ep.number}${ep.season != null ? ` · S${ep.season}` : ''}${ep.title ? ` — ${ep.title}` : ''}`}
             active={seen.has(ep.id)}
-            onClick={() => (isVideo ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
+            onOpen={() => (video ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
+            onToggleSeen={() => toggleSeen(ep)}
           />
         ))}
       </div>
-      <button className="wide" onClick={() => markSeen(episodes[episodes.length - 1]!)}>Mark all seen</button>
+      <button className="wide" onClick={episodes.every((ep) => seen.has(ep.id)) ? markAllUnseen : markAllSeen}>
+        {episodes.every((ep) => seen.has(ep.id)) ? 'Mark all unseen' : 'Mark all seen'}
+      </button>
     </div>
   )
 }

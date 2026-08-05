@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import Hls from 'hls.js'
 import type { Episode, Media, StreamSource } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
+import { recordOpen } from '../hooks'
 
 export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const [streams, setStreams] = useState<StreamSource[]>([])
@@ -21,6 +22,7 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
         if (cancelled) return
         setMedia(m)
         setEpisode(ep ?? null)
+        if (ep) await recordOpen(runtime, m, ep)
         const ss = await runtime.engine.getStreams(sourceId, m, ep ?? { id: episodeId, number: 1, mediaId })
         if (cancelled) return
         setStreams(ss)

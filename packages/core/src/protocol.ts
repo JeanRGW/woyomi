@@ -45,6 +45,12 @@ export const SearchResultsSchema = z.object({
   items: z.array(MediaSchema)
 })
 
+export const HistoryEntrySchema = z.object({
+  media: MediaSchema,
+  episode: EpisodeSchema,
+  openedAt: z.number()
+})
+
 export const PluginManifestSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
   name: z.string(),

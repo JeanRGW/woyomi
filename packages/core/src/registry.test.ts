@@ -99,4 +99,44 @@ describe('MemoryStore', () => {
     expect((await store2.list())[0]?.media.title).toBe('T')
     expect((await store2.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e1'])
   })
+
+  it('unsetSeen removes a single episode and cleans up empty progress', async () => {
+    const store = new MemoryStore()
+    await store.setSeenMany('s/1', ['e1', 'e2'])
+    await store.unsetSeen('s/1', 'e1')
+    expect((await store.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e2'])
+    await store.unsetSeen('s/1', 'e2')
+    expect(await store.getProgress('s/1')).toBeUndefined()
+    // unsetting an unseen episode is a no-op
+    await store.unsetSeen('s/1', 'nope')
+    expect(await store.getProgress('s/1')).toBeUndefined()
+  })
+
+  it('history is most-recent-first, deduped on re-open, and removable', async () => {
+    const store = new MemoryStore()
+    const media = { id: 's/1', title: 'T', mediaId: '1', sourceId: 's', type: 'manga' as const }
+    const ep1 = { id: 's/1/e1', mediaId: '1', number: 1 }
+    const ep2 = { id: 's/1/e2', mediaId: '1', number: 2 }
+    await store.addHistory(media, ep1)
+    await new Promise((r) => setTimeout(r, 5))
+    await store.addHistory(media, ep2)
+    await new Promise((r) => setTimeout(r, 5))
+    await store.addHistory(media, ep1) // re-open: dedupes, bumps to top
+    const list = await store.listHistory()
+    expect(list).toHaveLength(2)
+    expect(list[0]?.episode.number).toBe(1)
+    expect(list[1]?.episode.number).toBe(2)
+
+    await store.removeHistory('s/1/e2')
+    expect((await store.listHistory()).map((h) => h.episode.number)).toEqual([1])
+  })
+
+  it('export/import round-trips history', async () => {
+    const store = new MemoryStore()
+    const media = { id: 's/1', title: 'T', mediaId: '1', sourceId: 's', type: 'manga' as const }
+    await store.addHistory(media, { id: 's/1/e1', mediaId: '1', number: 1 })
+    const store2 = new MemoryStore()
+    await store2.importJson(await store.exportJson())
+    expect(await store2.listHistory()).toHaveLength(1)
+  })
 })

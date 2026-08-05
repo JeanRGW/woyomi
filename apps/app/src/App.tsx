@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getRuntime, isTauri, type AppRuntime } from './runtime'
 import { BrowseView } from './views/BrowseView'
+import { HistoryView } from './views/HistoryView'
 import { LibraryView } from './views/LibraryView'
 import { MediaView } from './views/MediaView'
 import { ReaderView } from './views/ReaderView'
@@ -11,6 +12,7 @@ import { SettingsView } from './views/SettingsView'
 export type Route =
   | { name: 'browse' }
   | { name: 'library' }
+  | { name: 'history' }
   | { name: 'media'; sourceId: string; mediaId: string }
   | { name: 'reader'; sourceId: string; mediaId: string; episodeId: string }
   | { name: 'player'; sourceId: string; mediaId: string; episodeId: string }
@@ -30,6 +32,8 @@ function parseHash(hash: string): Route {
       return { name: 'store' }
     case 'settings':
       return { name: 'settings' }
+    case 'history':
+      return { name: 'history' }
     case 'browse':
       return { name: 'browse' }
     case 'library':
@@ -44,17 +48,20 @@ export function navigate(route: Route): void {
       ? '#/browse'
       : route.name === 'library'
         ? '#/library'
-        : route.name === 'store'
-          ? '#/store'
-          : route.name === 'settings'
-            ? '#/settings'
-            : `#/${route.name}/${route.sourceId}/${route.mediaId}${route.name === 'reader' || route.name === 'player' ? `/${route.episodeId}` : ''}`
+        : route.name === 'history'
+          ? '#/history'
+          : route.name === 'store'
+            ? '#/store'
+            : route.name === 'settings'
+              ? '#/settings'
+              : `#/${route.name}/${route.sourceId}/${route.mediaId}${route.name === 'reader' || route.name === 'player' ? `/${route.episodeId}` : ''}`
   window.location.hash = path
 }
 
 const tabs: Array<{ route: Route; label: string }> = [
   { route: { name: 'browse' }, label: 'Browse' },
   { route: { name: 'library' }, label: 'Library' },
+  { route: { name: 'history' }, label: 'History' },
   { route: { name: 'store' }, label: 'Plugins' },
   { route: { name: 'settings' }, label: 'Settings' }
 ]
@@ -100,6 +107,8 @@ function Content({ route, runtime }: { route: Route; runtime: AppRuntime }) {
   switch (route.name) {
     case 'browse':
       return <BrowseView runtime={runtime} />
+    case 'history':
+      return <HistoryView runtime={runtime} />
     case 'library':
       return <LibraryView runtime={runtime} />
     case 'media':
