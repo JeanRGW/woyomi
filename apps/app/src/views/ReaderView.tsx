@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChapterContent, Episode, Media } from '@media-platform/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
-import { useRecordOpenById } from '../hooks'
+import { recordOpen } from '../hooks'
 import { BackButton, Banner, Page } from '../components'
 import { findAdjacent, restorePage, viewLabel, type PageView } from './reader/reader-nav'
 import { BACKGROUNDS, getReadPosition, saveReadPosition, useReaderPrefs } from './reader/reader-prefs'
@@ -30,8 +30,10 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const [zoomCtl, setZoomCtl] = useState<ZoomClusterState | null>(null)
 
   const autoAdvanceFired = useRef(false)
-
-  useRecordOpenById(runtime, sourceId, mediaId, episodeId)
+  const lastSavedRef = useRef<number | null>(null)
+  // live mirror of `view` so unmount-time effects read the current page
+  const viewRef = useRef(view)
+  viewRef.current = view
 
   useEffect(() => {
     let cancelled = false
@@ -58,6 +60,8 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
         setMedia(m)
         setEpisodes(eps)
         setSeen(new Set(prog?.seenEpisodeIds ?? []))
+        const ep = eps.find((e) => e.id === episodeId)
+        if (ep) await recordOpen(runtime, m, ep)
       } catch {
         // titles/chapter nav just stay minimal
       }
@@ -90,16 +94,43 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
     [sourceId, mediaId]
   )
 
-  // position save + finish + auto-advance
+  // position + finish + auto-advance
   const finished = total > 0 && view.readingEnd === total - 1
+
+  // save on finish: persists the "read to the end" marker, and auto-advances
+  // in the same effect so it can't be unmounted past a pending save.
+  // `lastSavedRef` re-saves `total` if the reader comes back to the end.
   useEffect(() => {
     if (total === 0 || initialPage === null) return
-    saveReadPosition(runtime.engine.prefs, episodeId, finished ? total : view.readingStart)
-    if (finished && prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
-      autoAdvanceFired.current = true
-      jumpTo(nextEpisode)
+    if (finished && lastSavedRef.current !== total) {
+      lastSavedRef.current = total
+      saveReadPosition(runtime.engine.prefs, episodeId, total)
+      if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
+        autoAdvanceFired.current = true
+        jumpTo(nextEpisode)
+      }
     }
-  }, [runtime, sourceId, mediaId, episodeId, finished, view.readingStart, total, initialPage, prefs.autoNext, nextEpisode, jumpTo])
+  }, [finished, total, initialPage, runtime, episodeId, prefs.autoNext, nextEpisode, jumpTo])
+
+  // mid-chapter position is saved debounced (continuous scroll re-views pages)
+  useEffect(() => {
+    if (total === 0 || initialPage === null || finished) return
+    const t = window.setTimeout(() => {
+      lastSavedRef.current = view.readingStart
+      saveReadPosition(runtime.engine.prefs, episodeId, view.readingStart)
+    }, 400)
+    return () => window.clearTimeout(t)
+  }, [runtime, episodeId, view.readingStart, total, initialPage, finished])
+
+  // flush a pending position on unmount (quick exit inside the debounce window)
+  useEffect(() => {
+    return () => {
+      const lastView = viewRef.current
+      if (lastSavedRef.current === null && lastView.readingStart > 0) {
+        saveReadPosition(runtime.engine.prefs, episodeId, lastView.readingStart)
+      }
+    }
+  }, [runtime, episodeId, viewRef])
 
   if (error)
     return (

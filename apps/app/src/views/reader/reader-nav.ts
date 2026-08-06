@@ -58,6 +58,15 @@ export function viewLabel(view: PageView, total: number): string {
     : `${view.readingStart + 1} / ${total}`
 }
 
+/** True when every file page in `[0, upTo)` has a settled height (its image
+ * loaded or failed), so `offsetTop` of page `upTo` is meaningful. */
+export function prefixReady(ready: ReadonlySet<number>, upTo: number): boolean {
+  for (let i = 0; i < upTo; i++) {
+    if (!ready.has(i)) return false
+  }
+  return true
+}
+
 /** Per-image classes; the 26rem spread cap lives on the double-page container. */
 export function pageImageClass(fit: ReaderFit): string {
   return fit === 'page'

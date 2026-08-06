@@ -10,7 +10,8 @@ export function ReaderImage({
   eager,
   className = '',
   style,
-  onLoad
+  onLoad,
+  onError
 }: {
   src: string
   alt: string
@@ -18,6 +19,7 @@ export function ReaderImage({
   className?: string
   style?: CSSProperties
   onLoad?: (e: React.SyntheticEvent<HTMLImageElement>) => void
+  onError?: () => void
 }) {
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -49,7 +51,10 @@ export function ReaderImage({
       className={className}
       style={style}
       onLoad={onLoad}
-      onError={() => setFailed(true)}
+      onError={() => {
+        setFailed(true)
+        onError?.()
+      }}
     />
   )
 }

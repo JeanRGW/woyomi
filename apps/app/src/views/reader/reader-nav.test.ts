@@ -6,6 +6,7 @@ import {
   focalZoomAdjust,
   nextZoom,
   pageImageClass,
+  prefixReady,
   restorePage,
   tapZoneAt,
   toggleZoom,
@@ -62,6 +63,18 @@ describe('findAdjacent', () => {
     expect(findAdjacent(eps, 's/m/3', 1)).toBeUndefined()
     expect(findAdjacent(eps, 'nope', 1)).toBeUndefined()
     expect(findAdjacent([], 's/m/1', 1)).toBeUndefined()
+  })
+})
+
+describe('prefixReady', () => {
+  it('all pages before upTo must be ready', () => {
+    expect(prefixReady(new Set([0, 1, 2]), 3)).toBe(true)
+    expect(prefixReady(new Set([0, 2]), 3)).toBe(false)
+    expect(prefixReady(new Set([0, 1, 2, 3]), 3)).toBe(true)
+  })
+  it('empty prefix is trivially ready; upTo 0 is always ready', () => {
+    expect(prefixReady(new Set(), 0)).toBe(true)
+    expect(prefixReady(new Set(), 5)).toBe(false)
   })
 })
 

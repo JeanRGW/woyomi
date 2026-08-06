@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PageView } from './reader-nav'
+import { prefixReady } from './reader-nav'
 import { useTouchGestures } from './pinch'
 import { ReaderImage } from './ImagePage'
 
@@ -29,22 +30,64 @@ export function ContinuousReader({
   const containerRef = useRef<HTMLDivElement>(null)
   const ratiosRef = useRef(new Map<number, number>()) // file page -> width/height
   const [ratiosKnown, setRatiosKnown] = useState(0) // bump to re-render heights
+  const readyRef = useRef(new Set<number>()) // pages with a settled height (loaded OR failed)
+  const [readyCount, setReadyCount] = useState(0) // bump to re-run the restore gate
   const [restored, setRestored] = useState(false)
   const reportedPage = useRef(-1)
+  // target beyond the last page means the saved position is stale; clamp so we
+  // don't wait forever for a ratio that can never arrive
+  const targetPage = Math.min(initialPage, total - 1)
 
-  // restore scroll once on mount (heights are deterministic placeholders)
+  const markReady = (i: number) => {
+    if (!readyRef.current.has(i)) {
+      readyRef.current.add(i)
+      setReadyCount((n) => n + 1)
+    }
+  }
+
+  // restore scroll once every page above the target has a settled height (its
+  // ratio landed or the image failed); before that offsetTop is ~0
   useEffect(() => {
     const el = containerRef.current
-    if (!el || restored || initialPage <= 0) {
+    if (!el || targetPage <= 0) {
       setRestored(true)
       return
     }
-    const target = el.querySelector<HTMLElement>(`[data-page="${initialPage}"]`)
+    if (restored) return
+    if (!prefixReady(readyRef.current, targetPage)) return
+    const target = el.querySelector<HTMLElement>(`[data-page="${targetPage}"]`)
     if (target) {
       el.scrollTop = target.offsetTop
       setRestored(true)
     }
-  }, [restored, initialPage, ratiosKnown])
+  }, [restored, targetPage, readyCount])
+
+  // a page that never settles (endless retry / hung image) must not block
+  // restore forever: as a last resort, scroll to the target's placeholder
+  // offset and mark restored so the reader is never stuck at page 0. If
+  // readiness later completes, the corrected re-scroll effect re-positions.
+  useEffect(() => {
+    if (restored || targetPage <= 0) return
+    const t = window.setTimeout(() => {
+      if (prefixReady(readyRef.current, targetPage)) return // gate will handle it
+      const el = containerRef.current
+      const target = el?.querySelector<HTMLElement>(`[data-page="${targetPage}"]`)
+      if (target && el) {
+        el.scrollTop = target.offsetTop
+        setRestored(true)
+      }
+    }, 2000)
+    return () => window.clearTimeout(t)
+  }, [restored, targetPage, readyCount])
+
+  // correct a coarse fallback restore once the prefix heights land
+  useEffect(() => {
+    if (restored && targetPage > 0 && prefixReady(readyRef.current, targetPage)) {
+      const el = containerRef.current
+      const target = el?.querySelector<HTMLElement>(`[data-page="${targetPage}"]`)
+      if (target && el) el.scrollTop = target.offsetTop
+    }
+  }, [restored, targetPage, readyCount])
 
   // derive current page from scroll position (viewport midpoint)
   useEffect(() => {
@@ -116,7 +159,7 @@ export function ContinuousReader({
               <ReaderImage
                 src={src}
                 alt={`page ${i + 1}`}
-                eager={i <= initialPage}
+                eager={i <= targetPage}
                 className="block h-auto w-full"
                 onLoad={(e) => {
                   const img = e.currentTarget
@@ -124,7 +167,9 @@ export function ContinuousReader({
                     ratiosRef.current.set(i, img.naturalWidth / img.naturalHeight)
                     setRatiosKnown((n) => n + 1)
                   }
+                  markReady(i)
                 }}
+                onError={() => markReady(i)}
               />
             </div>
           )

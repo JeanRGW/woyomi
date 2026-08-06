@@ -88,7 +88,8 @@ export function PagedReader({
     const prev = zoomRef.current
     const clamped = clampZoom(next)
     setZoom(clamped)
-    if (el && focus && prev > 0 && prev !== clamped) {
+    zoomRef.current = clamped // keep the ref in lock-step so incremental ratios are correct
+    if (el && focus && prev > 0 && clamped !== prev) {
       const factor = clamped / prev
       // apply after layout so scroll ranges reflect the new size
       requestAnimationFrame(() => {
@@ -98,7 +99,7 @@ export function PagedReader({
     }
   }
 
-  /** button/wheel/double-tap zoom anchors the viewport center; pinch anchors the gesture point */
+  /** button/wheel zoom anchors the viewport center */
   const applyZoomCentered = (next: number) => {
     const el = containerRef.current
     applyZoom(next, el ? { x: el.clientWidth / 2, y: el.clientHeight / 2 } : undefined)
@@ -153,7 +154,7 @@ export function PagedReader({
     const el = containerRef.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return
+      if (!e.ctrlKey || e.deltaY === 0) return
       e.preventDefault()
       const rect = el.getBoundingClientRect()
       applyZoom(nextZoom(zoomRef.current, e.deltaY < 0 ? 1 : -1), { x: e.clientX - rect.left, y: e.clientY - rect.top })
@@ -162,12 +163,13 @@ export function PagedReader({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  /** First tap schedules the action; a second tap cancels it and toggles zoom. */
-  const scheduleTap = (action: () => void) => {
+  /** First tap schedules the action; a second tap (any zone) cancels it and
+   * zooms on the tap point instead of navigating/toggling. */
+  const scheduleTap = (action: () => void, focus?: { x: number; y: number }) => {
     if (tapTimer.current !== undefined) {
       window.clearTimeout(tapTimer.current)
       tapTimer.current = undefined
-      applyZoomCentered(toggleZoom(zoomRef.current))
+      applyZoom(toggleZoom(zoomRef.current), focus)
       return
     }
     tapTimer.current = window.setTimeout(() => {
@@ -179,19 +181,19 @@ export function PagedReader({
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (moved.current) return
     const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
+    const focus = { x: e.clientX - rect.left, y: e.clientY - rect.top }
 
     if (tapNav) {
-      const zone = tapZoneAt(x, rect.width)
+      const zone = tapZoneAt(focus.x, rect.width)
       if (zone === 'center') {
-        scheduleTap(() => onToggleChrome())
+        scheduleTap(() => onToggleChrome(), focus)
         return
       }
       const goNext = direction === 'rtl' ? zone === 'left' : zone === 'right'
-      scheduleTap(() => turnBy(goNext ? step : -step))
+      scheduleTap(() => turnBy(goNext ? step : -step), focus)
       return
     }
-    scheduleTap(() => onToggleChrome())
+    scheduleTap(() => onToggleChrome(), focus)
   }
 
   const onPointerMoveCapture = () => {
