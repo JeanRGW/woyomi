@@ -33,7 +33,8 @@ app.get('/health', (c) => c.json({ ok: true }))
 // dist/index.json; bundles served from their real paths.
 const repoDirs = [
   join(REPO_DIR, 'plugins', 'mangadex', 'dist'),
-  join(REPO_DIR, 'plugins', 'examplevideo', 'dist')
+  join(REPO_DIR, 'plugins', 'examplevideo', 'dist'),
+  join(REPO_DIR, 'plugins', 'tsundoku', 'dist')
 ]
 
 app.get('/repo', async (c) => {

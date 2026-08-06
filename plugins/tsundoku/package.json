@@ -1,0 +1,20 @@
+{
+  "name": "@media-platform/plugin-tsundoku",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "media-plugin-build . dist",
+    "build:plugin": "media-plugin-build . dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@media-platform/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@media-platform/plugin-builder": "workspace:*",
+    "linkedom": "^0.18.13",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  }
+}

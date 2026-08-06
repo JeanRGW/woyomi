@@ -202,6 +202,8 @@ async function initRuntime(): Promise<AppRuntime> {
   await loadFromBundle(mangadexBuilt.default, 'bundled')
   const videoBuilt = await import('@media-platform/plugin-examplevideo/dist/examplevideo.plugin.js?raw')
   await loadFromBundle(videoBuilt.default, 'bundled')
+  const tsundokuBuilt = await import('@media-platform/plugin-tsundoku/dist/tsundoku.plugin.js?raw')
+  await loadFromBundle(tsundokuBuilt.default, 'bundled')
 
   // Rehydrate externally-installed plugins across restarts.
   for (const plugin of await plugins.list()) {
