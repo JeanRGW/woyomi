@@ -7,27 +7,25 @@ export interface TouchGestureHandlers {
   onPan?(dx: number, dy: number): void
 }
 
-export interface TouchGestures<T extends HTMLElement> {
-  ref: React.RefObject<T | null>
-  /** true once a gesture moved past the tap slop; click handlers should no-op. */
-  moved: React.RefObject<boolean>
-}
-
 const TAP_SLOP_PX = 8
 
 /**
- * Pointer-events pinch + pan. ponytail: no inertia/fling — the containers use
- * native overflow scroll, which already has it; add a velocity tracker only if
- * pans feel dead.
+ * Pointer-events pinch + pan. Attaches to the caller's `ref` (the scroll
+ * container). `moved` is true once a gesture has traveled past the tap slop;
+ * click handlers should no-op on it.
+ * ponytail: no inertia/fling — the containers use native overflow scroll,
+ * which already has it; add a velocity tracker only if pans feel dead.
  */
-export function useTouchGestures<T extends HTMLElement>(handlers: TouchGestureHandlers): TouchGestures<T> {
-  const ref = useRef<T>(null)
+export function useTouchGestures<T extends HTMLElement>(
+  dom: React.RefObject<T | null>,
+  handlers: TouchGestureHandlers
+): { moved: React.RefObject<boolean> } {
   const moved = useRef(false)
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
 
   useEffect(() => {
-    const el = ref.current
+    const el = dom.current
     if (!el) return
 
     const pointers = new Map<number, { x: number; y: number }>()
@@ -83,7 +81,7 @@ export function useTouchGestures<T extends HTMLElement>(handlers: TouchGestureHa
       el.removeEventListener('pointerup', onPointerEnd)
       el.removeEventListener('pointercancel', onPointerEnd)
     }
-  }, [])
+  }, [dom])
 
-  return { ref, moved }
+  return { moved }
 }

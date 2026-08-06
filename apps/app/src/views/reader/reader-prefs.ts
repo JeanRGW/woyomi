@@ -9,7 +9,6 @@ export interface ReaderPrefs {
   background: ReaderBackground
   tapNav: boolean
   autoNext: boolean
-  scale: number
   doublePage: boolean
   /** strip column width as % of screen width (30–100); mixed-width webtoon pages all fit it */
   stripWidth: number
@@ -22,7 +21,6 @@ export const DEFAULT_READER_PREFS: ReaderPrefs = {
   background: 'ink',
   tapNav: true,
   autoNext: false,
-  scale: 1,
   doublePage: false,
   stripWidth: 100
 }
@@ -76,10 +74,10 @@ export function useReaderPrefs(prefs: PreferencesApi): { prefs: ReaderPrefs; loa
   return { prefs: values, loaded, set }
 }
 
-export function getReadPosition(prefs: PreferencesApi, sourceId: string, mediaId: string, episodeId: string): Promise<number | undefined> {
-  return prefs.get<number>(APP_PREFS, `reader.position.${sourceId}/${mediaId}/${episodeId}`)
+export function getReadPosition(prefs: PreferencesApi, episodeId: string): Promise<number | undefined> {
+  return prefs.get<number>(APP_PREFS, `reader.position.${episodeId}`)
 }
 
-export function saveReadPosition(prefs: PreferencesApi, sourceId: string, mediaId: string, episodeId: string, position: number): void {
-  void prefs.set(APP_PREFS, `reader.position.${sourceId}/${mediaId}/${episodeId}`, position)
+export function saveReadPosition(prefs: PreferencesApi, episodeId: string, position: number): void {
+  void prefs.set(APP_PREFS, `reader.position.${episodeId}`, position)
 }

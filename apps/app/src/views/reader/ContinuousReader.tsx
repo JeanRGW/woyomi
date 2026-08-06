@@ -78,7 +78,7 @@ export function ContinuousReader({
   }, [total, ratiosKnown])
 
   // pan only; there is no strip zoom, the strip width pref is the sizing knob
-  const { moved } = useTouchGestures<HTMLDivElement>({
+  const { moved } = useTouchGestures<HTMLDivElement>(containerRef, {
     onPan: (dx, dy) => {
       const el = containerRef.current
       if (el) {

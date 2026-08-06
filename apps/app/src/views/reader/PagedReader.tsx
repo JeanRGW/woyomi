@@ -34,7 +34,6 @@ export function PagedReader({
   initialPage,
   onViewChange,
   onToggleChrome,
-  zoomResetSignal,
   onZoomChange
 }: {
   images: string[]
@@ -45,8 +44,6 @@ export function PagedReader({
   initialPage: number
   onViewChange: (view: PageView) => void
   onToggleChrome: () => void
-  /** increments when the parent wants zoom back to 1 (episode change) */
-  zoomResetSignal: number
   onZoomChange: (z: ZoomClusterState) => void
 }) {
   const total = images.length
@@ -69,7 +66,6 @@ export function PagedReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.start, view.count, double, total])
 
-  useEffect(() => setZoom(1), [zoomResetSignal])
   useEffect(() => () => window.clearTimeout(tapTimer.current), [])
 
   // reset scroll when the view changes
@@ -118,7 +114,7 @@ export function PagedReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom])
 
-  const { moved } = useTouchGestures<HTMLDivElement>({
+  const { moved } = useTouchGestures<HTMLDivElement>(containerRef, {
     onPinch: (factor, focus) => applyZoom(gestureStartZoom.current * factor, focus),
     onPan: (dx, dy) => {
       const el = containerRef.current

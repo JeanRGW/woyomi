@@ -73,7 +73,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   useEffect(() => {
     if (!prefsLoaded || total === 0 || initialPage !== null) return
     let cancelled = false
-    getReadPosition(runtime.engine.prefs, sourceId, mediaId, episodeId).then((saved) => {
+    getReadPosition(runtime.engine.prefs, episodeId).then((saved) => {
       if (!cancelled) setInitialPage(restorePage(saved, total))
     })
     return () => {
@@ -94,7 +94,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const finished = total > 0 && view.readingEnd === total - 1
   useEffect(() => {
     if (total === 0 || initialPage === null) return
-    saveReadPosition(runtime.engine.prefs, sourceId, mediaId, episodeId, finished ? total : view.readingStart)
+    saveReadPosition(runtime.engine.prefs, episodeId, finished ? total : view.readingStart)
     if (finished && prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
       autoAdvanceFired.current = true
       jumpTo(nextEpisode)
@@ -146,7 +146,6 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
             initialPage={initialPage ?? 0}
             onViewChange={setView}
             onToggleChrome={() => setChromeVisible((v) => !v)}
-            zoomResetSignal={0}
             onZoomChange={setZoomCtl}
           />
         ) : (
