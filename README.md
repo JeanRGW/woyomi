@@ -12,9 +12,10 @@ a text novel reader, and an HLS/MP4 player.
 ```
 apps/app            React 18 + Vite frontend AND Tauri 2 (Rust) shell
 apps/server         optional self-hosted backend (web-mode scrape proxy + sync + plugin repo)
-packages/core       plugin API, engine (runner), registry, loader, stores, zod protocol
+packages/core       plugin API, engine (runner), registry, loader, stores, zod protocol, Web Worker sandbox
 packages/plugin-builder   CLI: plugin folder -> IIFE bundle + manifest + sha256; repo index generator
 plugins/mangadex    first-party MangaDex source (manga + novel)
+plugins/tsundoku    first-party HTML-scraping source — Tsundoku Traduções (manga + novel)
 plugins/examplevideo      demo video source exercising the stream-extractor API
 ```
 
@@ -35,7 +36,8 @@ ship with the app (bundled) or are installed from remote repositories
 plugins/mangadex/src/index.ts
   └─ globalThis.__media_plugin_register({ manifest, sources })
        └─ esbuild bundle -> dist/mangadex.plugin.js (+ .plugin.json + sha256)
-            └─ loaded at runtime by packages/core (loadBundle) into the registry + engine
+            └─ loaded at runtime by packages/core (loadPluginSandbox) into a Web
+               Worker, exposed to the engine as proxy Sources over postMessage RPC
 ```
 
 ### Plugin repositories (Mihon/Aniyomi-style providers)
@@ -75,6 +77,12 @@ pnpm --filter @media-platform/app tauri build              # release bundle
 
 Android: add the platform with `cargo tauri android init`, then
 `cargo tauri android dev`.
+
+On a physical device the app must reach the Vite dev server over your LAN:
+connect the phone and machine to the same Wi-Fi (no client isolation), or
+tunnel over USB with `adb reverse tcp:1420 tcp:1420` and target the loopback.
+`vite.config.ts` already honors the `TAURI_DEV_HOST` address Tauri passes for
+device development.
 
 ### Web build (no native shell)
 
@@ -122,6 +130,21 @@ interface Source {
 }
 ```
 
+### Plugin sandbox environment
+
+Plugins execute inside a per-plugin **Web Worker** — a sandbox without `window`,
+`document`, the DOM, or Tauri IPC. What you get instead:
+
+- **`ctx.fetch` / `fetchHtml` / `fetchJson`** for network (never global `fetch`);
+  requests route through the native `fetch_url` bridge (or browser/proxy).
+- **An HTML `DOMParser` is injected** (linkedom) so scraping sources can do
+  `new DOMParser().parseFromString(html, 'text/html')` and query with selectors.
+- **`ctx.cache` / `ctx.preferences`** via the injected context, not globals.
+
+Keep the plugin self-contained: no `window`, `document`, `localStorage`, or
+`importScripts` of external code — the bundle is a single self-contained IIFE.
+See `plugins/tsundoku` for a reference HTML-scraping plugin.
+
 ## Testing
 
 - **Unit tests (Vitest):** core engine/registry/loader/store, plugin parsers
@@ -146,4 +169,7 @@ interface Source {
   fallback path (native mpv/ExoPlayer) is a future phase.
 - `mode:'dom'` fetches (headless page rendering for JS-heavy sites) are stubbed
   in the Rust command and unsupported in browser mode.
+- The self-hosted `/api/scrape` proxy is unauthenticated and unrestricted —
+  keep it on LAN/loopback; do not expose it publicly (auth + rate limits are
+  planned hardening).
 - DRM (Widevine) streams are not supported.

@@ -22,10 +22,10 @@ Turbo orders `test` and `typecheck` after `build` automatically.
 ### Ordering gotcha (easy to miss)
 
 `dist/`, `*.plugin.js`, `*.plugin.json` are gitignored. `apps/app/src/runtime.ts`
-loads bundled plugins via `?raw` imports of
-`@media-platform/plugin-mangadex/dist/mangadex.plugin.js` — so **`pnpm build`
-must run before `pnpm dev` / app `vite build` / `pnpm smoke`**. `pnpm build`
-alone is sufficient (plugins have a `build` script producing the IIFE bundles).
+loads bundled plugins via `?raw` imports of their built dist files (mangadex,
+tsundoku, examplevideo) — so **`pnpm build` must run before `pnpm dev` /
+app `vite build` / `pnpm smoke`**. `pnpm build` alone is sufficient (plugins
+have a `build` script producing the IIFE bundles).
 
 ### Server (optional self-hosted backend)
 
@@ -49,12 +49,14 @@ pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <distDir
 ## Architecture
 
 - `packages/core` — plugin API (`Source` types, zod `protocol`), `Engine`
-  (runner), `PluginRegistry`, `loadBundle`, stores (Memory/IndexedDb), sha256.
+  (runner), `PluginRegistry`, loader + **Web Worker sandbox** (`sandbox.ts`
+  / `sandbox-worker-host.ts`), stores (Memory/IndexedDb), sha256.
   Exports via `dist/index.js`; source uses `.js` extension on relative imports.
 - `packages/plugin-builder` — esbuild bundler (IIFE, browser platform) + repo
   index generator. Bin is `media-plugin-build` (plugins' `build` script).
-- `plugins/*` — first-party sources (`mangadex`, `examplevideo`). They are
-  **workspace packages that depend on `@media-platform/core`**.
+- `plugins/*` — first-party sources (`mangadex`, `tsundoku`,
+  `examplevideo`). They are **workspace packages that depend on
+  `@media-platform/core`** and ship as bundled plugins via `?raw` imports.
 - `apps/app` — React 18 + Vite frontend and the Tauri 2 Rust shell
   (`src-tauri/`). `src/runtime.ts` wires fetch/stores per runtime.
 - `apps/server` — optional Hono backend.
