@@ -45,7 +45,7 @@ function parseHash(hash: string): Route {
   }
 }
 
-export function navigate(route: Route): void {
+export function navigate(route: Route, opts?: { replace?: boolean }): void {
   const path =
     route.name === 'browse'
       ? '#/browse'
@@ -60,7 +60,14 @@ export function navigate(route: Route): void {
               : route.name === 'plugin-settings'
                 ? '#/settings/plugins'
                 : `#/${route.name}/${route.sourceId}/${route.mediaId}${route.name === 'reader' || route.name === 'player' ? `/${route.episodeId}` : ''}`
-  window.location.hash = path
+  if (opts?.replace) {
+    const url = `${window.location.pathname}${window.location.search}${path}`
+    history.replaceState(null, '', url)
+    // replaceState doesn't fire hashchange; notify the router manually
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  } else {
+    window.location.hash = path
+  }
 }
 
 const tabs: Array<{ route: Route; label: string; icon: IconName }> = [
