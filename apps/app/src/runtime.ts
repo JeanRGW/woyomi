@@ -31,6 +31,9 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__
 }
 
+/** Upper bound on an installable plugin bundle, to keep installs sane. */
+const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
+
 /**
  * The FetchProvider. Native Tauri: routes to Rust `fetch_url` (reqwest, no
  * CORS). Plain browser (dev / web build): tries direct fetch — works only for
@@ -209,23 +212,34 @@ async function initRuntime(): Promise<AppRuntime> {
       const codeRes = await provider(plugin.url)
       if (codeRes.status < 200 || codeRes.status >= 300) throw new Error(`download ${plugin.url} -> HTTP ${codeRes.status}`)
       const code = codeRes.body
+      if (code.length > MAX_PLUGIN_BYTES) {
+        throw new Error(`plugin bundle too large: ${(code.length / 1024).toFixed(0)} KiB`)
+      }
 
       const actual = await sha256Hex(code)
       if (actual !== plugin.sha256.toLowerCase()) {
         throw new Error(`sha256 mismatch for ${plugin.id}: expected ${plugin.sha256}, got ${actual}`)
       }
 
-      // Validate the sidecar manifest before evaluating the bundle.
-      if (plugin.manifestUrl) {
-        const mf = await provider(plugin.manifestUrl)
-        if (mf.status < 200 || mf.status >= 300) throw new Error(`manifest ${plugin.manifestUrl} -> HTTP ${mf.status}`)
-        validateManifest(JSON.parse(mf.body))
-      }
-
       const registration = loadBundle(code)
       const manifest = validateManifest(registration.manifest)
       if (manifest.id !== plugin.id) throw new Error(`manifest id ${manifest.id} != ${plugin.id}`)
-      if (manifest.apiVersion !== registration.manifest.apiVersion) throw new Error('internal manifest mismatch')
+
+      // The sidecar manifest must agree with the bundle's embedded manifest.
+      if (plugin.manifestUrl) {
+        const mf = await provider(plugin.manifestUrl)
+        if (mf.status < 200 || mf.status >= 300) throw new Error(`manifest ${plugin.manifestUrl} -> HTTP ${mf.status}`)
+        const sidecar = validateManifest(JSON.parse(mf.body))
+        if (
+          sidecar.id !== manifest.id ||
+          sidecar.version !== manifest.version ||
+          sidecar.apiVersion !== manifest.apiVersion ||
+          JSON.stringify(sidecar.sourceIds) !== JSON.stringify(manifest.sourceIds)
+        ) {
+          throw new Error(`sidecar manifest for ${plugin.id} does not match the bundle`)
+        }
+      }
+
       registry.registerExternal(registration)
       engine.unregisterPlugin(plugin.id)
       for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
