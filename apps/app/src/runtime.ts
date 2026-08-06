@@ -19,6 +19,7 @@ import {
   type SandboxTransport
 } from '@media-platform/core'
 import { SqliteStore } from './sqlite-store'
+import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, type ScrapeConfig } from './scrape'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
 declare global {
@@ -39,9 +40,23 @@ const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
 
 /**
  * The FetchProvider. Native Tauri: routes to Rust `fetch_url` (reqwest, no
- * CORS). Plain browser (dev / web build): tries direct fetch — works only for
- * CORS-enabled APIs like MangaDex. mode:'dom' is not supported in the browser.
+ * CORS). Plain browser (dev / web build): routes through the scrape proxy when
+ * one is configured (self-hosted, no CORS limits), else direct fetch — which
+ * works only for CORS-enabled APIs like MangaDex. mode:'dom' is not supported
+ * in the browser.
  */
+
+/** Proxy config for the web build; empty url = proxy disabled (direct fetch). */
+let scrapeConfig: ScrapeConfig = { url: '', token: '' }
+
+export function setScrapeConfig(config: ScrapeConfig): void {
+  scrapeConfig = config
+}
+
+export function getScrapeConfig(): ScrapeConfig {
+  return scrapeConfig
+}
+
 export function createFetchProvider(): FetchFn {
   const invoke = window.__TAURI_INTERNALS__?.invoke
   if (invoke) {
@@ -60,16 +75,25 @@ export function createFetchProvider(): FetchFn {
   }
 
   return async (url: string, init?: FetchInit): Promise<FetchResult> => {
-    const res = await fetch(url, {
-      method: init?.method ?? 'GET',
-      headers: init?.headers,
-      body: init?.body,
-      signal: AbortSignal.timeout(15_000) // ponytail: single choke point; engine needs no per-call timeout
-    })
-    const body = await res.text()
-    const headers: Record<string, string> = {}
-    res.headers.forEach((v, k) => (headers[k] = v))
-    return { status: res.status, headers, body }
+    try {
+      if (shouldProxy(scrapeConfig, url)) return await scrapeRequest(scrapeConfig, url, init)
+      const res = await fetch(url, {
+        method: init?.method ?? 'GET',
+        headers: init?.headers,
+        body: init?.body,
+        signal: AbortSignal.timeout(15_000) // ponytail: single choke point; engine needs no per-call timeout
+      })
+      const body = await res.text()
+      const headers: Record<string, string> = {}
+      res.headers.forEach((v, k) => (headers[k] = v))
+      return { status: res.status, headers, body }
+    } catch (e) {
+      // Surface a hint about the proxy on NETWORK failures (fetch rejected:
+      // CORS/DNS/unreachable). A non-2xx response from the proxy or the
+      // target carries its own message and must not be re-annotated.
+      if (isNetworkError(e)) throw annotateFetchError(scrapeConfig, e)
+      throw e
+    }
   }
 }
 
@@ -88,6 +112,9 @@ export interface AppRuntime {
   /** Source ids pinned to the Home landing; empty = nothing pinned (hint shown). */
   getLandingSources(): Promise<string[]>
   setLandingSources(ids: string[]): Promise<void>
+  /** Web-mode scrape proxy config. */
+  getScrapeConfig(): Promise<ScrapeConfig>
+  setScrapeConfig(config: ScrapeConfig): Promise<void>
   /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
@@ -119,6 +146,13 @@ async function initRuntime(): Promise<AppRuntime> {
     plugins = idb.pluginStore()
     prefs = idb.preferencesApi()
   }
+
+  // Web-mode proxy config: empty url = direct fetch. Read before the engine
+  // is built so createFetchProvider() routes consistently everywhere.
+  setScrapeConfig({
+    url: (await prefs.get<string>('__app', 'scrape.url')) ?? '',
+    token: (await prefs.get<string>('__app', 'scrape.token')) ?? ''
+  })
 
   const installed = new Map<string, string>()
   const sandboxes = new Map<string, PluginSandbox>()
@@ -259,6 +293,12 @@ async function initRuntime(): Promise<AppRuntime> {
     setPluginEnabled,
     getLandingSources: async () => (await prefs.get<string[]>('__app', 'landing.sources')) ?? [],
     setLandingSources: (ids: string[]) => prefs.set('__app', 'landing.sources', ids),
+    getScrapeConfig: async () => getScrapeConfig(),
+    setScrapeConfig: async (config) => {
+      setScrapeConfig(config)
+      await prefs.set('__app', 'scrape.url', config.url)
+      await prefs.set('__app', 'scrape.token', config.token)
+    },
     async installExternal(plugin) {
       const provider = createFetchProvider()
       const codeRes = await provider(plugin.url)

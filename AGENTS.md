@@ -34,7 +34,8 @@ cd apps/server
 SYNC_TOKEN=changeme DATA_DIR=./data PORT=8787 pnpm dev
 ```
 
-Hono app: `/api/scrape` CORS proxy, `/api/sync/:user` JSON sync, `/repo`
+Hono app: `/api/scrape` CORS proxy (off by default; `SCRAPE_ENABLED=true`
++ optional `SCRAPE_TOKEN`), `/api/sync/:user` JSON sync, `/repo`
 aggregates the built plugin dist dirs.
 
 ### Plugin tooling

@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppRuntime } from '../runtime'
+import { isTauri } from '../runtime'
 import { navigate } from '../App'
-import { Btn, Page, SectionHeading, Toggle } from '../components'
+import { Btn, Page, SectionHeading, TextInput, Toggle } from '../components'
 import { Icon } from '../icons'
+import { scrapeRequest } from '../scrape'
 
 export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   const [plugins, setPlugins] = useState(runtime.registry.list())
+  const [proxyUrlInput, setProxyUrlInput] = useState('')
+  const [proxyToken, setProxyToken] = useState('')
+  const [proxyStatus, setProxyStatus] = useState<'idle' | 'testing' | 'ok' | 'failed'>('idle')
+  const [proxyError, setProxyError] = useState('')
+  const [proxySaved, setProxySaved] = useState(false)
 
   const refresh = useCallback(() => setPlugins(runtime.registry.list()), [runtime])
   useEffect(() => {
     refresh()
-  }, [refresh])
+    runtime.getScrapeConfig().then((cfg) => {
+      setProxyUrlInput(cfg.url)
+      setProxyToken(cfg.token)
+    })
+  }, [refresh, runtime])
 
   async function exportJson() {
     const json = await runtime.store.exportJson()
@@ -24,6 +35,27 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
 
   async function importJson(file: File) {
     await runtime.store.importJson(await file.text())
+  }
+
+  async function saveProxy() {
+    await runtime.setScrapeConfig({ url: proxyUrlInput.trim(), token: proxyToken.trim() })
+    setProxySaved(true)
+    setProxyStatus('idle')
+    window.setTimeout(() => setProxySaved(false), 2000)
+  }
+
+  async function testProxy() {
+    setProxyStatus('testing')
+    setProxyError('')
+    try {
+      const config = { url: proxyUrlInput.trim(), token: proxyToken.trim() }
+      if (!config.url) throw new Error('Enter a server URL first')
+      await scrapeRequest(config, 'https://example.com/')
+      setProxyStatus('ok')
+    } catch (e) {
+      setProxyStatus('failed')
+      setProxyError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   const prefsCount = plugins.filter((p) => (p.registration.manifest.prefs?.length ?? 0) > 0).length
@@ -88,6 +120,45 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
         </div>
         <Icon name="chevronRight" size={18} className="shrink-0 text-faint" />
       </button>
+
+      {!isTauri() && (
+        <>
+          <SectionHeading title="Web proxy (scrape)" />
+          <div className="rounded-2xl border border-line-soft bg-surface p-4">
+            <p className="mb-3 text-xs text-muted">
+              Used in the browser build to fetch sources that don't allow CORS (e.g. HTML scrapers). Leave the URL empty to use
+              direct fetch. Point it at a self-hosted server with <code className="text-accent">SCRAPE_ENABLED=true</code>.
+            </p>
+            <div className="flex flex-col gap-2">
+              <TextInput
+                type="url"
+                placeholder="https://your-server.example"
+                value={proxyUrlInput}
+                onChange={(e) => setProxyUrlInput(e.target.value)}
+                aria-label="Proxy server URL"
+              />
+              <TextInput
+                type="password"
+                placeholder="Key (optional, matches SCRAPE_TOKEN)"
+                value={proxyToken}
+                onChange={(e) => setProxyToken(e.target.value)}
+                aria-label="Proxy key"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Btn variant="soft" onClick={saveProxy} disabled={proxyStatus === 'testing'}>
+                  Save proxy
+                </Btn>
+                <Btn variant="soft" onClick={testProxy} disabled={proxyStatus === 'testing'}>
+                  {proxyStatus === 'testing' ? 'Testing…' : 'Test connection'}
+                </Btn>
+                {proxySaved && <span className="text-xs font-semibold text-ok">Saved</span>}
+                {proxyStatus === 'ok' && <span className="text-xs font-semibold text-ok">OK</span>}
+                {proxyStatus === 'failed' && <span className="text-xs font-semibold text-danger">{proxyError || 'Failed'}</span>}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       <SectionHeading title="Data" />
       <div className="flex flex-col gap-2 rounded-2xl border border-line-soft bg-surface p-4 sm:flex-row">

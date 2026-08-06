@@ -26,7 +26,13 @@ A plugin never calls `fetch` itself. It receives a `SourceContext` whose
 
 - **native (Tauri):** routes to a Rust `fetch_url` command (reqwest). No CORS
   — source sites are reachable directly.
-- **browser/web mode:** uses the optional self-hosted `/api/scrape` proxy.
+- **browser/web mode:** routes through the optional self-hosted `/api/scrape`
+  proxy (configured under **Settings → Web proxy**). Empty URL = direct
+  `fetch`, which works only for CORS-enabled APIs like MangaDex. To self-host
+  the proxy securely, run `apps/server` with `SCRAPE_ENABLED=true` (optionally
+  `SCRAPE_TOKEN=...` for a shared key the app sends as `Bearer`). The endpoint
+  is off by default so the bundled server is not an open proxy, and when
+  enabled it is hardened (timeout, response-size cap, SSRF blocklist).
 
 Plugins are bundled into self-contained IIFEs by `plugin-builder` and either
 ship with the app (bundled) or are installed from remote repositories
@@ -169,7 +175,8 @@ See `plugins/tsundoku` for a reference HTML-scraping plugin.
   fallback path (native mpv/ExoPlayer) is a future phase.
 - `mode:'dom'` fetches (headless page rendering for JS-heavy sites) are stubbed
   in the Rust command and unsupported in browser mode.
-- The self-hosted `/api/scrape` proxy is unauthenticated and unrestricted —
-  keep it on LAN/loopback; do not expose it publicly (auth + rate limits are
-  planned hardening).
+- The `/api/scrape` proxy is **off by default** (`SCRAPE_ENABLED=false`) so the
+  bundled server is not an open proxy; when self-hosting, enable it and set
+  `SCRAPE_TOKEN` to require a shared key. It is hardened (timeout,
+  response-size cap, SSRF blocklist) but lacks per-user rate limits.
 - DRM (Widevine) streams are not supported.
