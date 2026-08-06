@@ -102,13 +102,13 @@ describe('mangadex source', () => {
     expect(m.synopsis).toBeUndefined()
   })
 
-  it('dedupes chapters and maps numbers/seasons', async () => {
+  it('keeps chapters whose numbers repeat across volumes and maps numbers/seasons', async () => {
     const eps = await mangaDexSource.getEpisodes({ ...ctx, fetch: fixtureFetch({ '/feed?': chaptersFixture }) }, 'abc-123')
-    expect(eps.map((e) => e.number)).toEqual([1, 2, 42.5])
-    // ch-2 is a duplicate chapter number (different volume) -> dropped
-    expect(eps).toHaveLength(3)
+    expect(eps.map((e) => e.number)).toEqual([1, 1, 2, 42.5])
+    expect(eps).toHaveLength(4)
     expect(eps[0]?.season).toBe(1)
-    expect(eps[2]?.number).toBe(42.5)
+    expect(eps[1]?.season).toBe(2)
+    expect(eps[3]?.number).toBe(42.5)
   })
 
   it('uses data-saver URLs when the preference is on (default)', async () => {

@@ -276,25 +276,39 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
   const [single, setSingle] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Bumped on each run + unmount so late callbacks from an older query are dropped.
+  const reqToken = useRef(0)
+
+  useEffect(() => () => void reqToken.current++, [])
 
   async function run(page = 1) {
     const q = query.trim()
     if (!q) return
     if (mode === 'single' && !sourceId) return
+    const token = ++reqToken.current
     setLoading(true)
     setError('')
     try {
       if (mode === 'all') {
-        const res = await runtime.engine.searchAll(q, page)
-        setAllResults(page === 1 ? res : (prev) => mergeAll(prev, res))
+        if (page === 1) {
+          // Seed a stable per-source shell in registry order; results stream in as they settle.
+          setAllResults(sources.map((s) => ({ sourceId: s.id, sourceName: s.name, page: 1, hasNextPage: false, items: [] })))
+        }
+        await runtime.engine.searchAll(q, page, (r) => {
+          if (reqToken.current !== token) return
+          setAllResults((prev) =>
+            prev.map((e) => (e.sourceId === r.sourceId ? { ...e, ...r, items: page > 1 ? [...e.items, ...r.items] : r.items } : e))
+          )
+        })
       } else {
         const res = await runtime.engine.search(sourceId, q, page)
+        if (reqToken.current !== token) return
         setSingle(page === 1 ? res : (prev) => (prev ? { ...res, items: [...prev.items, ...res.items] } : res))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (reqToken.current === token) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (reqToken.current === token) setLoading(false)
     }
   }
 
@@ -369,11 +383,4 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
       )}
     </div>
   )
-}
-
-function mergeAll(prev: SourceResults[], next: SourceResults[]): SourceResults[] {
-  return next.map((n) => {
-    const p = prev.find((x) => x.sourceId === n.sourceId)
-    return p ? { ...n, items: [...p.items, ...n.items] } : n
-  })
 }

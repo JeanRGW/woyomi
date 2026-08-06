@@ -128,7 +128,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                   {p.description && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{p.description}</div>}
                 </div>
                 {installedVer ? (
-                  <Btn variant="outline" disabled={installedVer === p.version} className="shrink-0">
+                  <Btn variant="outline" disabled={installedVer === p.version} className="shrink-0" onClick={() => install(p)}>
                     {installedVer === p.version ? (
                       <>
                         <Icon name="check" size={15} />

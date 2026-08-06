@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Engine } from '../src/engine.js'
 import type { HomeSection, SearchResults, Source, SourceContext } from '../src/types.js'
+import type { SourceResults } from '../src/engine.js'
 
 function makeFetch(body: string, status = 200) {
   return async () => ({ status, headers: {}, body })
@@ -61,6 +62,17 @@ describe('Engine', () => {
     await expect(engine.search('nope', 'q', 1)).rejects.toThrow('unknown source')
   })
 
+  it('unregisterPlugin removes every source of a plugin', async () => {
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(makeSource({ id: 'a' }), 'p')
+    engine.registerSource(makeSource({ id: 'b' }), 'p')
+    engine.registerSource(makeSource({ id: 'other' }), 'q')
+    engine.unregisterPlugin('p')
+    expect(engine.listSources().map((s) => s.id)).toEqual(['other'])
+    await expect(engine.search('a', 'q', 1)).rejects.toThrow('unknown source')
+    await expect(engine.search('b', 'q', 1)).rejects.toThrow('unknown source')
+  })
+
   it('searchAll groups results per source and tolerates failures', async () => {
     const ok = makeSource({
       id: 'ok',
@@ -78,11 +90,12 @@ describe('Engine', () => {
     const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
     engine.registerSource(ok)
     engine.registerSource(bad)
-    const results = await engine.searchAll('q', 1)
-    expect(results).toHaveLength(2)
-    expect(results[0]).toMatchObject({ sourceId: 'ok', items: [{ title: 'O' }] })
-    expect(results[1]).toMatchObject({ sourceId: 'bad', items: [], hasNextPage: false })
-    expect(results[1]?.error).toContain('boom')
+    const got: SourceResults[] = []
+    await engine.searchAll('q', 1, (r) => got.push(r))
+    expect(got).toHaveLength(2)
+    expect(got[0]).toMatchObject({ sourceId: 'ok', items: [{ title: 'O' }] })
+    expect(got[1]).toMatchObject({ sourceId: 'bad', items: [], hasNextPage: false })
+    expect(got[1]?.error).toContain('boom')
   })
 
   it('searchAll keeps a failing source from blocking the aggregate', async () => {
@@ -103,9 +116,65 @@ describe('Engine', () => {
         }
       })
     )
-    const results = await engine.searchAll('q', 1)
-    expect(results[0]?.sourceId).toBe('a')
-    expect(results[1]?.error).toContain('down')
+    const got: SourceResults[] = []
+    await engine.searchAll('q', 1, (r) => got.push(r))
+    expect(got[0]?.sourceId).toBe('a')
+    expect(got[1]?.error).toContain('down')
+  })
+
+  it('searchAll skips sources excluded by canSearch', async () => {
+    const searched: string[] = []
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0, canSearch: (id) => id === 'a' })
+    for (const id of ['a', 'b']) {
+      engine.registerSource(
+        makeSource({
+          id,
+          async search() {
+            searched.push(id)
+            return { page: 1, hasNextPage: false, items: [] }
+          }
+        })
+      )
+    }
+    const got: SourceResults[] = []
+    await engine.searchAll('q', 1, (r) => got.push(r))
+    expect(got.map((r) => r.sourceId)).toEqual(['a'])
+    expect(searched).toEqual(['a'])
+  })
+
+  it('searchAll streams each source as it settles', async () => {
+    let resolveSlow!: () => void
+    const slowGate = new Promise<void>((r) => (resolveSlow = r))
+    const order: string[] = []
+    const engine = new Engine({ fetch: makeFetch(''), sourceThrottleMs: 0 })
+    engine.registerSource(
+      makeSource({
+        id: 'fast',
+        async search() {
+          return { page: 1, hasNextPage: false, items: [] }
+        }
+      })
+    )
+    engine.registerSource(
+      makeSource({
+        id: 'slow',
+        async search() {
+          await slowGate
+          return { page: 1, hasNextPage: false, items: [] }
+        }
+      })
+    )
+    let fastFired = false
+    const pending = engine.searchAll('q', 1, (r) => {
+      order.push(r.sourceId)
+      if (r.sourceId === 'fast') fastFired = true
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(fastFired).toBe(true)
+    expect(order).toEqual(['fast'])
+    resolveSlow()
+    await pending
+    expect(order).toEqual(['fast', 'slow'])
   })
 
   it('hasHome/getHomeSections/getHomeSection route through the source', async () => {

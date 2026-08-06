@@ -19,12 +19,16 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
       try {
         const m = await runtime.engine.getMedia(sourceId, mediaId)
         const eps = await runtime.engine.getEpisodes(sourceId, mediaId)
-        const ep = eps.find((e) => e.id === episodeId) ?? eps[0]
+        const ep = eps.find((e) => e.id === episodeId)
         if (cancelled) return
+        if (!ep) {
+          setError('Episode not found')
+          return
+        }
         setMedia(m)
-        setEpisode(ep ?? null)
-        if (ep) await recordOpen(runtime, m, ep)
-        const ss = await runtime.engine.getStreams(sourceId, m, ep ?? { id: episodeId, number: 1, mediaId })
+        setEpisode(ep)
+        await recordOpen(runtime, m, ep)
+        const ss = await runtime.engine.getStreams(sourceId, m, ep)
         if (cancelled) return
         setStreams(ss)
         setStream(ss[0] ?? null)

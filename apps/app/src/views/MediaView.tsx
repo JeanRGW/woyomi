@@ -59,9 +59,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   }
 
   async function markAllUnseen() {
-    for (const ep of episodes) {
-      await runtime.store.unsetSeen(media!.id, ep.id)
-    }
+    await runtime.store.unsetSeenMany(
+      media!.id,
+      episodes.map((e) => e.id)
+    )
     const prog = await runtime.store.getProgress(media!.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }

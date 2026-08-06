@@ -55,10 +55,14 @@ export class MemoryStore implements LibraryStore {
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
+    await this.unsetSeenMany(mediaId, [episodeId])
+  }
+
+  async unsetSeenMany(mediaId: string, episodeIds: string[]): Promise<void> {
     const existing = this.progress.get(mediaId)
     if (!existing) return
     const seen = new Set(existing.seenEpisodeIds)
-    if (!seen.delete(episodeId)) return
+    for (const id of episodeIds) seen.delete(id)
     if (seen.size === 0) this.progress.delete(mediaId)
     else this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
   }
@@ -240,11 +244,15 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
+    await this.unsetSeenMany(mediaId, [episodeId])
+  }
+
+  async unsetSeenMany(mediaId: string, episodeIds: string[]): Promise<void> {
     const db = await this.db()
     const existing = await this.getProgress(mediaId)
     if (!existing) return
     const seen = new Set(existing.seenEpisodeIds)
-    if (!seen.delete(episodeId)) return
+    for (const id of episodeIds) seen.delete(id)
     const store = db.transaction('progress', 'readwrite').objectStore('progress')
     if (seen.size === 0) return request(store.delete(mediaId)).then(() => undefined)
     return request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)

@@ -84,6 +84,7 @@ pub fn run() {
         .manage(AppState {
             client: reqwest::Client::builder()
                 .user_agent("media-platform/0.1 (+native)")
+                .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("failed to build http client"),
         })

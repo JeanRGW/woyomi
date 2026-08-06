@@ -36,6 +36,8 @@ interface MangaResult {
     }
     relationships?: Array<{ type: string; attributes?: { fileName?: string } }>
   }>
+  total?: number
+  offset?: number
 }
 
 interface ChapterResult {
@@ -62,6 +64,12 @@ interface ChapterServer {
 function coverUrl(mangaId: string, rel: Array<{ type: string; attributes?: { fileName?: string } }> | undefined): string | undefined {
   const cover = rel?.find((r) => r.type === 'cover_art')
   return cover?.attributes?.fileName ? `${IMG_BASE}/covers/${mangaId}/${cover.attributes.fileName}` : undefined
+}
+
+/** true when a later page exists; the API total wins, else guess by page fullness. */
+function hasNextPage(json: MangaResult, offset: number): boolean {
+  if (json.total != null) return offset + json.data.length < json.total
+  return json.data.length === 20
 }
 
 function mapStatus(raw?: string): Media['status'] {
@@ -125,7 +133,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
         fetchJson<MangaResult>(ctx.fetch, API.search(query, page, lang), { headers: jsonHeaders() })
       )
       const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
-      return { page, hasNextPage: items.length === 20, items }
+      return { page, hasNextPage: hasNextPage(json, (page - 1) * 20), items }
     },
 
     async getMedia(ctx, mediaId): Promise<Media> {
@@ -147,7 +155,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
         fetchJson<MangaResult>(ctx.fetch, API.home(lang, section.order, (page - 1) * 20), { headers: jsonHeaders() })
       )
       const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
-      return { page, hasNextPage: items.length === 20, items }
+      return { page, hasNextPage: hasNextPage(json, (page - 1) * 20), items }
     },
 
     async getEpisodes(ctx, mediaId): Promise<Episode[]> {
@@ -160,7 +168,8 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
           for (const ch of json.data) {
             const num = ch.attributes.chapter ? Number(ch.attributes.chapter) : Number.NaN
             const vol = ch.attributes.volume ? Number(ch.attributes.volume) : undefined
-            const numKey = `${num}`
+            // key on volume+number so series that restart numbering per volume keep every chapter
+            const numKey = `${vol ?? ''}/${num}`
             if (Number.isNaN(num) || seen.has(numKey)) continue
             seen.add(numKey)
             episodes.push({

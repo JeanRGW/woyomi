@@ -66,8 +66,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
               checked={p.enabled}
               label={`${p.enabled ? 'Disable' : 'Enable'} ${p.registration.manifest.name}`}
               onChange={() => {
-                runtime.registry.setEnabled(p.registration.manifest.id, !p.enabled)
-                refresh()
+                void runtime.setPluginEnabled(p.registration.manifest.id, !p.enabled).then(refresh)
               }}
             />
           </div>

@@ -57,7 +57,8 @@ export function createFetchProvider(): FetchFn {
     const res = await fetch(url, {
       method: init?.method ?? 'GET',
       headers: init?.headers,
-      body: init?.body
+      body: init?.body,
+      signal: AbortSignal.timeout(15_000) // ponytail: single choke point; engine needs no per-call timeout
     })
     const body = await res.text()
     const headers: Record<string, string> = {}
@@ -76,6 +77,8 @@ export interface AppRuntime {
   uninstall(pluginId: string): void
   /** Persist a per-source enable/disable toggle for a plugin. */
   setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): void
+  /** Persist a whole-plugin enable/disable toggle. */
+  setPluginEnabled(pluginId: string, enabled: boolean): Promise<void>
   /** Source ids pinned to the Home landing; empty = nothing pinned (hint shown). */
   getLandingSources(): Promise<string[]>
   setLandingSources(ids: string[]): Promise<void>
@@ -113,7 +116,13 @@ async function initRuntime(): Promise<AppRuntime> {
 
   const installed = new Map<string, string>()
 
-  const engine = new Engine({ fetch: createFetchProvider(), cache: new TTLCache(), sourceThrottleMs: 300, sourcePrefs: prefs })
+  const engine = new Engine({
+    fetch: createFetchProvider(),
+    cache: new TTLCache(),
+    sourceThrottleMs: 300,
+    sourcePrefs: prefs,
+    canSearch: (id) => registry.sources().some((s) => s.id === id)
+  })
   const registry = new PluginRegistry()
 
   async function loadFromBundle(code: string, origin: 'bundled' | 'external'): Promise<void> {
@@ -148,7 +157,7 @@ async function initRuntime(): Promise<AppRuntime> {
     await loadInstalled(plugin)
   }
 
-  // Apply persisted per-source toggles (keyed per plugin under 'sources.enabled').
+  // Apply persisted per-source toggles (keyed per plugin under 'sources.disabled').
   for (const plugin of registry.list()) {
     const disabled = await prefs.get<string[]>(plugin.registration.manifest.id, 'sources.disabled')
     if (disabled) {
@@ -158,11 +167,22 @@ async function initRuntime(): Promise<AppRuntime> {
     }
   }
 
+  // Reapply persisted whole-plugin enable toggles.
+  for (const plugin of registry.list()) {
+    const enabled = await prefs.get<boolean>(plugin.registration.manifest.id, 'plugin.enabled')
+    if (enabled === false) registry.setEnabled(plugin.registration.manifest.id, false)
+  }
+
   async function setSourceEnabled(pluginId: string, sourceId: string, enabled: boolean): Promise<void> {
     registry.setSourceEnabled(sourceId, enabled)
     const disabled = (await prefs.get<string[]>(pluginId, 'sources.disabled')) ?? []
     const next = enabled ? disabled.filter((s) => s !== sourceId) : [...new Set([...disabled, sourceId])]
     await prefs.set(pluginId, 'sources.disabled', next)
+  }
+
+  async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {
+    registry.setEnabled(pluginId, enabled)
+    await prefs.set(pluginId, 'plugin.enabled', enabled)
   }
 
   return {
@@ -177,9 +197,11 @@ async function initRuntime(): Promise<AppRuntime> {
     uninstall(id) {
       installed.delete(id)
       registry.unregister(id)
+      engine.unregisterPlugin(id)
       void plugins.remove(id)
     },
     setSourceEnabled,
+    setPluginEnabled,
     getLandingSources: async () => (await prefs.get<string[]>('__app', 'landing.sources')) ?? [],
     setLandingSources: (ids: string[]) => prefs.set('__app', 'landing.sources', ids),
     async installExternal(plugin) {
@@ -205,6 +227,7 @@ async function initRuntime(): Promise<AppRuntime> {
       if (manifest.id !== plugin.id) throw new Error(`manifest id ${manifest.id} != ${plugin.id}`)
       if (manifest.apiVersion !== registration.manifest.apiVersion) throw new Error('internal manifest mismatch')
       registry.registerExternal(registration)
+      engine.unregisterPlugin(plugin.id)
       for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
       installed.set(plugin.id, plugin.version)
 

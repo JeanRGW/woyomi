@@ -91,10 +91,14 @@ export class SqliteStore implements LibraryStore {
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
+    await this.unsetSeenMany(mediaId, [episodeId])
+  }
+
+  async unsetSeenMany(mediaId: string, episodeIds: string[]): Promise<void> {
     const existing = await this.getProgress(mediaId)
     if (!existing) return
     const seen = new Set(existing.seenEpisodeIds)
-    if (!seen.delete(episodeId)) return
+    for (const id of episodeIds) seen.delete(id)
     const db = await this.db()
     if (seen.size === 0) {
       await db.execute('DELETE FROM progress WHERE media_id = $1', [mediaId])

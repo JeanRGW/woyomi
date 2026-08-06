@@ -210,6 +210,7 @@ export interface LibraryStore {
   setSeen(mediaId: string, episodeId: string): Promise<void>
   setSeenMany(mediaId: string, episodeIds: string[]): Promise<void>
   unsetSeen(mediaId: string, episodeId: string): Promise<void>
+  unsetSeenMany(mediaId: string, episodeIds: string[]): Promise<void>
   getProgress(mediaId: string): Promise<ProgressEntry | undefined>
   /** Upsert an open into history; re-opening dedupes and bumps openedAt. */
   addHistory(media: Media, episode: Episode): Promise<void>

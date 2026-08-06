@@ -23,6 +23,8 @@ export interface EngineOptions {
   sourceThrottleMs?: number
   /** optional preferences backend keyed by plugin id; absent sources use a no-op */
   sourcePrefs?: PreferencesApi
+  /** which sources searchAll may query; defaults to all registered sources */
+  canSearch?: (sourceId: string) => boolean
 }
 
 /** Per-source slice of a multi-source search; a failing source sets `error` only. */
@@ -93,6 +95,17 @@ export class Engine {
     return [...this.sources.values()]
   }
 
+  /** Removes every source registered under `pluginId` and its throttle state. */
+  unregisterPlugin(pluginId: string): void {
+    for (const [id, pid] of [...this.sourcePlugins]) {
+      if (pid === pluginId) {
+        this.sources.delete(id)
+        this.sourcePlugins.delete(id)
+        this.throttles.delete(id)
+      }
+    }
+  }
+
   private ctxFor(sourceId: string) {
     const throttle = this.throttles.get(sourceId) ?? new ThrottledFetch(this.opts.fetch, this.opts.sourceThrottleMs ?? 300)
     this.throttles.set(sourceId, throttle)
@@ -107,19 +120,23 @@ export class Engine {
   }
 
   /**
-   * Searches every enabled source in parallel, split per source. A source that
-   * throws is captured as `error` and never blocks the aggregate.
+   * Searches every searchable source in parallel, split per source. `onSource`
+   * is called once per source, in settlement order; a source that throws is
+   * delivered as a result with `error` set and never blocks the others. The
+   * promise resolves when every source has settled.
    */
-  async searchAll(query: string, page: number): Promise<SourceResults[]> {
-    const sources = [...this.sources.values()]
-    const settled = await Promise.allSettled(sources.map((s) => s.search(this.ctxFor(s.id), query, page)))
-    return sources.map((s, i) => {
-      const r = settled[i]
-      if (!r || r.status === 'rejected') {
-        return { sourceId: s.id, sourceName: s.name, page, hasNextPage: false, items: [], error: r && r.status === 'rejected' ? String(r.reason) : 'failed' }
-      }
-      return { sourceId: s.id, sourceName: s.name, page, hasNextPage: r.value.hasNextPage, items: r.value.items }
-    })
+  async searchAll(query: string, page: number, onSource: (r: SourceResults) => void): Promise<void> {
+    const sources = [...this.sources.values()].filter((s) => this.opts.canSearch?.(s.id) ?? true)
+    await Promise.all(
+      sources.map(async (s) => {
+        try {
+          const r = await s.search(this.ctxFor(s.id), query, page)
+          onSource({ sourceId: s.id, sourceName: s.name, page, hasNextPage: r.hasNextPage, items: r.items })
+        } catch (e) {
+          onSource({ sourceId: s.id, sourceName: s.name, page, hasNextPage: false, items: [], error: String(e) })
+        }
+      })
+    )
   }
 
   /** True when the source exposes a homepage. */

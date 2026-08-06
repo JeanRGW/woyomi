@@ -10,4 +10,5 @@ apps/app/src-tauri/target/
 apps/app/src-tauri/gen/
 apps/app/dist/
 .turbo/
+.commandcode/
 apps/server/data/
