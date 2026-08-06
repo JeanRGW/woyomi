@@ -41,11 +41,13 @@ export function createFetchProvider(): FetchFn {
   if (invoke) {
     return async (url: string, init?: FetchInit): Promise<FetchResult> => {
       const res = (await invoke('fetch_url', {
-        url,
-        method: init?.method ?? 'GET',
-        headers: init?.headers ?? {},
-        body: init?.body,
-        dom: init?.mode === 'dom'
+        args: {
+          url,
+          method: init?.method ?? 'GET',
+          headers: init?.headers ?? {},
+          body: init?.body,
+          dom: init?.mode === 'dom'
+        }
       })) as FetchResult
       return res
     }

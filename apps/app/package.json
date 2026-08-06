@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "tauri": "tauri",
     "build:plugin-mangadex": "pnpm --filter @media-platform/plugin-mangadex build:plugin",
     "build:plugin-examplevideo": "pnpm --filter @media-platform/plugin-examplevideo build:plugin",
     "typecheck": "tsc --noEmit",
