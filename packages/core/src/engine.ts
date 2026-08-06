@@ -114,6 +114,17 @@ export class Engine {
     return { fetch, cache: this.cache, preferences: bindPrefs(this.prefs, pluginId) }
   }
 
+  /**
+   * Throttled, timeout-capped fetch for a registered source, for sandboxed
+   * plugins whose worker routes ctx.fetch back to the main thread.
+   */
+  getSourceFetch(sourceId: string): FetchFn {
+    this.require(sourceId)
+    const throttle = this.throttles.get(sourceId) ?? new ThrottledFetch(this.opts.fetch, this.opts.sourceThrottleMs ?? 300)
+    this.throttles.set(sourceId, throttle)
+    return (url, init) => throttle.call(sourceId, url, init)
+  }
+
   async search(sourceId: string, query: string, page: number): Promise<SearchResults> {
     const source = this.require(sourceId)
     return source.search(this.ctxFor(sourceId), query, page)

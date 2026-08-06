@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: {
+    host: process.env.TAURI_DEV_HOST || false,
     port: 1420,
     strictPort: true
   },

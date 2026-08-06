@@ -3,7 +3,7 @@ import {
   IndexedDbStore,
   PluginRegistry,
   TTLCache,
-  loadBundle,
+  loadPluginSandbox,
   sha256Hex,
   validateManifest,
   type FetchFn,
@@ -11,9 +11,12 @@ import {
   type FetchResult,
   type LibraryStore,
   type PluginRegistration,
+  type PluginSandbox,
   type PluginStore,
   type PluginStoredBundle,
-  type PreferencesApi
+  type PreferencesApi,
+  type SandboxCtx,
+  type SandboxTransport
 } from '@media-platform/core'
 import { SqliteStore } from './sqlite-store'
 
@@ -118,31 +121,75 @@ async function initRuntime(): Promise<AppRuntime> {
   }
 
   const installed = new Map<string, string>()
+  const sandboxes = new Map<string, PluginSandbox>()
+  const cache = new TTLCache()
 
   const engine = new Engine({
     fetch: createFetchProvider(),
-    cache: new TTLCache(),
+    cache,
     sourceThrottleMs: 300,
     sourcePrefs: prefs,
     canSearch: (id) => registry.sources().some((s) => s.id === id)
   })
   const registry = new PluginRegistry()
 
-  async function loadFromBundle(code: string, origin: 'bundled' | 'external'): Promise<void> {
-    const registration = loadBundle(code)
+    /** Context handed to the sandbox: fetch routes through the engine's throttle+timeout. */
+  function sandboxCtx(): SandboxCtx {
+    return {
+      fetch: (sourceId, url, init) => engine.getSourceFetch(sourceId)(url, init),
+      cache: {
+        get: (key) => Promise.resolve(cache.get(key)),
+        set: (key, value, ttlMs) => Promise.resolve(cache.set(key, value, ttlMs))
+      },
+      prefs
+    }
+  }
+
+  function createSandboxTransport(): SandboxTransport {
+    const worker = new Worker(new URL('./plugin-worker.ts', import.meta.url), { type: 'module' })
+    return {
+      post: (msg) => worker.postMessage(msg),
+      onMessage: (cb) => {
+        worker.onmessage = (ev) => cb(ev.data)
+      },
+      onError: (cb) => {
+        worker.onerror = () => {
+          cb(new Error('plugin worker error'))
+          return false
+        }
+      },
+      terminate: () => worker.terminate()
+    }
+  }
+
+  function createSandbox(code: string): Promise<PluginSandbox> {
+    return loadPluginSandbox({ code, ctx: sandboxCtx(), createTransport: createSandboxTransport })
+  }
+
+  function registerPlugin(sandbox: PluginSandbox, origin: 'bundled' | 'external'): void {
+    const registration: PluginRegistration = { manifest: sandbox.manifest, sources: sandbox.sources }
     if (origin === 'bundled') registry.registerBundled(registration)
     else registry.registerExternal(registration)
-    for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
+    for (const source of sandbox.sources) engine.registerSource(source, sandbox.manifest.id)
+    sandboxes.set(sandbox.manifest.id, sandbox)
+  }
+
+  async function loadFromBundle(code: string, origin: 'bundled' | 'external'): Promise<void> {
+    registerPlugin(await createSandbox(code), origin)
   }
 
   async function loadInstalled(plugin: PluginStoredBundle): Promise<void> {
+    let sandbox: PluginSandbox | undefined
     try {
-      const registration = loadBundle(plugin.code)
-      if (registration.manifest.id !== plugin.id) return
-      registry.registerExternal(registration)
-      for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
+      sandbox = await createSandbox(plugin.code)
+      if (sandbox.manifest.id !== plugin.id) {
+        sandbox.terminate()
+        return
+      }
+      registerPlugin(sandbox, 'external')
       installed.set(plugin.id, plugin.manifest.version)
     } catch (e) {
+      sandbox?.terminate()
       // A plugin whose code no longer matches its stored manifest is dropped
       // rather than blocking app boot.
       console.warn(`dropping stored plugin ${plugin.id}:`, e)
@@ -201,6 +248,8 @@ async function initRuntime(): Promise<AppRuntime> {
       installed.delete(id)
       registry.unregister(id)
       engine.unregisterPlugin(id)
+      sandboxes.get(id)?.terminate()
+      sandboxes.delete(id)
       void plugins.remove(id)
     },
     setSourceEnabled,
@@ -221,31 +270,36 @@ async function initRuntime(): Promise<AppRuntime> {
         throw new Error(`sha256 mismatch for ${plugin.id}: expected ${plugin.sha256}, got ${actual}`)
       }
 
-      const registration = loadBundle(code)
-      const manifest = validateManifest(registration.manifest)
-      if (manifest.id !== plugin.id) throw new Error(`manifest id ${manifest.id} != ${plugin.id}`)
+      const sandbox = await createSandbox(code)
+      try {
+        const manifest = validateManifest(sandbox.manifest)
+        if (manifest.id !== plugin.id) throw new Error(`manifest id ${manifest.id} != ${plugin.id}`)
 
-      // The sidecar manifest must agree with the bundle's embedded manifest.
-      if (plugin.manifestUrl) {
-        const mf = await provider(plugin.manifestUrl)
-        if (mf.status < 200 || mf.status >= 300) throw new Error(`manifest ${plugin.manifestUrl} -> HTTP ${mf.status}`)
-        const sidecar = validateManifest(JSON.parse(mf.body))
-        if (
-          sidecar.id !== manifest.id ||
-          sidecar.version !== manifest.version ||
-          sidecar.apiVersion !== manifest.apiVersion ||
-          JSON.stringify(sidecar.sourceIds) !== JSON.stringify(manifest.sourceIds)
-        ) {
-          throw new Error(`sidecar manifest for ${plugin.id} does not match the bundle`)
+        // The sidecar manifest must agree with the bundle's embedded manifest.
+        if (plugin.manifestUrl) {
+          const mf = await provider(plugin.manifestUrl)
+          if (mf.status < 200 || mf.status >= 300) throw new Error(`manifest ${plugin.manifestUrl} -> HTTP ${mf.status}`)
+          const sidecar = validateManifest(JSON.parse(mf.body))
+          if (
+            sidecar.id !== manifest.id ||
+            sidecar.version !== manifest.version ||
+            sidecar.apiVersion !== manifest.apiVersion ||
+            JSON.stringify(sidecar.sourceIds) !== JSON.stringify(manifest.sourceIds)
+          ) {
+            throw new Error(`sidecar manifest for ${plugin.id} does not match the bundle`)
+          }
         }
+
+        engine.unregisterPlugin(plugin.id)
+        sandboxes.get(plugin.id)?.terminate()
+        registerPlugin(sandbox, 'external')
+        installed.set(plugin.id, plugin.version)
+
+        await plugins.save({ id: plugin.id, code, sha256: actual, manifest })
+      } catch (e) {
+        sandbox.terminate()
+        throw e
       }
-
-      registry.registerExternal(registration)
-      engine.unregisterPlugin(plugin.id)
-      for (const source of registration.sources) engine.registerSource(source, registration.manifest.id)
-      installed.set(plugin.id, plugin.version)
-
-      await plugins.save({ id: plugin.id, code, sha256: actual, manifest })
     }
   }
 }
