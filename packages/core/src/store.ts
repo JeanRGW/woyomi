@@ -210,11 +210,15 @@ export class IndexedDbStore implements LibraryStore {
 
   async remove(mediaId: string): Promise<void> {
     const db = await this.db()
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(['library', 'progress'], 'readwrite')
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
       tx.objectStore('library').delete(mediaId)
       tx.objectStore('progress').delete(mediaId)
-      tx.oncomplete = () => resolve(null)
+      const hs = tx.objectStore('history')
+      void request<Array<{ key: string; media: Media }>>(hs.getAll()).then((rows) => {
+        for (const h of rows) if (h.media.id === mediaId) void request(hs.delete(h.key))
+      })
+      tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
   }

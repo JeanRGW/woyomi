@@ -221,6 +221,26 @@ describe('plugin sandbox', () => {
     expect((await fresh).items[0]?.title).toBe('FRESH')
   })
 
+  it('runs concurrent invocations on one plugin in parallel', async () => {
+    const gate: Array<() => void> = []
+    const fetch = async () => {
+      await new Promise<void>((r) => gate.push(r))
+      return { status: 200, headers: {}, body: JSON.stringify([]) }
+    }
+    const sandbox = await loadPluginSandbox({
+      code: TEST_PLUGIN,
+      ctx: makeCtx({ fetch }),
+      createTransport: makeFakeTransport
+    })
+    const src = sandbox.sources[0]!
+    const a = src.search(null as never, 'a', 1)
+    const b = src.search(null as never, 'b', 1)
+    await until(() => gate.length >= 2)
+    expect(gate.length).toBe(2)
+    gate.forEach((r) => r())
+    await Promise.all([a, b])
+  })
+
   it('fails the load handshake when the bundle cannot be evaluated', async () => {
     await expect(
       loadPluginSandbox({

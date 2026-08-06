@@ -107,7 +107,6 @@ class SandboxRuntime implements PluginSandbox {
   private readyPromise: Promise<void>
   private readyResolve!: () => void
   private readyReject!: (e: Error) => void
-  private chain: Promise<unknown> = Promise.resolve()
 
   constructor(private opts: LoadSandboxOptions) {
     this.readyPromise = new Promise((resolve, reject) => {
@@ -210,12 +209,10 @@ class SandboxRuntime implements PluginSandbox {
   }
 
   invoke(sourceId: string, method: string, args: unknown[]): Promise<unknown> {
-    const run = this.chain.then(async () => {
-      await this.ensureAlive()
-      return this.callOnce(sourceId, method, args)
-    })
-    this.chain = run.catch(() => undefined)
-    return run
+    // Happy path posts synchronously so concurrent calls (e.g. searchAll fanning
+    // out across a plugin's sources) run in parallel instead of serializing.
+    if (!this.crashed && !this.disposed) return this.callOnce(sourceId, method, args)
+    return this.ensureAlive().then(() => this.callOnce(sourceId, method, args))
   }
 
   private async ensureAlive(): Promise<void> {

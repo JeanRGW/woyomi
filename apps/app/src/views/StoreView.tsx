@@ -25,18 +25,20 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
   async function refresh() {
     setBusy(true)
     setError('')
-    try {
-      const all: RepoPlugin[] = []
-      for (const repo of repos) {
-        if (!repo.trim()) continue
-        all.push(...(await fetchRepoIndex(provider, repo.trim())))
+    const all: RepoPlugin[] = []
+    const failures: string[] = []
+    for (const repo of repos) {
+      const r = repo.trim()
+      if (!r) continue
+      try {
+        all.push(...(await fetchRepoIndex(provider, r)))
+      } catch (e) {
+        failures.push(`${r}: ${e instanceof Error ? e.message : String(e)}`)
       }
-      setPlugins(all)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
     }
+    setPlugins(all)
+    if (failures.length > 0) setError(failures.join('; '))
+    setBusy(false)
   }
 
   async function install(p: RepoPlugin) {
@@ -67,7 +69,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
         <Btn
           variant="primary"
           onClick={() => {
-            const v = repoInput.trim()
+            const v = repoInput.trim().replace(/\/+$/, '')
             if (v && !repos.includes(v)) setRepos((r) => [...r, v])
             setRepoInput('')
           }}

@@ -3,6 +3,7 @@ import { makeMangadexSource } from '../src/mangadex.js'
 import type { FetchFn } from '@media-platform/core'
 
 const mangaDexSource = makeMangadexSource({ code: 'en', label: 'EN' })
+const ptBrSource = makeMangadexSource({ code: 'pt-br', label: 'PT-BR' })
 
 const searchFixture = {
   data: [
@@ -86,6 +87,24 @@ describe('mangadex source', () => {
     expect(m.synopsis).toBe('**A hero** story with [link](https://example.com).')
     expect(m.tags).toEqual(['Action', 'School'])
     expect(m.status).toBe('ongoing')
+  })
+
+  it('prefers the source language for the title (altTitles fallback)', async () => {
+    const fixture = {
+      data: [
+        {
+          id: 'you-shou-yan',
+          attributes: {
+            title: { 'zh-ro': 'Yǒu Shòu Yān' },
+            altTitles: [{ 'pt-br': 'Bestas Fabulosas' }, { en: 'Fabulous Beasts' }, { en: 'There Are Beasts' }]
+          }
+        }
+      ]
+    }
+    const pt = await ptBrSource.search({ ...ctx, fetch: fixtureFetch({ '/manga?': fixture }) }, 'beast', 1)
+    expect(pt.items[0]?.title).toBe('Bestas Fabulosas')
+    const en = await mangaDexSource.search({ ...ctx, fetch: fixtureFetch({ '/manga?': fixture }) }, 'beast', 1)
+    expect(en.items[0]?.title).toBe('Fabulous Beasts')
   })
 
   it('falls back to the first description locale when en is absent', async () => {

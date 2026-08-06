@@ -181,6 +181,7 @@ async function initRuntime(): Promise<AppRuntime> {
   async function loadInstalled(plugin: PluginStoredBundle): Promise<void> {
     let sandbox: PluginSandbox | undefined
     try {
+      if (plugin.code.length > MAX_PLUGIN_BYTES) throw new Error('stored plugin bundle too large')
       sandbox = await createSandbox(plugin.code)
       if (sandbox.manifest.id !== plugin.id) {
         sandbox.terminate()

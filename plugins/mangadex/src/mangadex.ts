@@ -77,26 +77,45 @@ function mapStatus(raw?: string): Media['status'] {
   return undefined
 }
 
-/** Pick a locale value like the existing title pick: prefer 'en', else first. */
-function pickLocale(map?: Record<string, string>): string | undefined {
+/** Pick a locale value: the source's own language, else 'en', else the first key. */
+function pickLocale(map?: Record<string, string>, preferred?: string): string | undefined {
   if (!map) return undefined
+  if (preferred && map[preferred]) return map[preferred]
   return map.en ?? Object.values(map)[0]
 }
 
-function mapMedia(sourceId: string, id: string, raw: MangaResult['data'][number]): Media {
+function altTitleValue(altTitles: Array<Record<string, string>> | undefined, key: string): string | undefined {
+  return altTitles?.find((t) => t[key])?.[key]
+}
+
+/**
+ * Localized display title: the source's language first (MangaDex often keeps
+ * localized names in altTitles), then English, then any title.
+ */
+function pickTitle(attrs: MangaResult['data'][number]['attributes'], preferred: string): string {
+  const title = attrs.title
+  if (preferred && title[preferred]) return title[preferred]
+  const altPreferred = altTitleValue(attrs.altTitles, preferred)
+  if (altPreferred) return altPreferred
+  if (title.en) return title.en
+  const altEn = altTitleValue(attrs.altTitles, 'en')
+  if (altEn) return altEn
+  return Object.values(title)[0] ?? 'Untitled'
+}
+
+function mapMedia(sourceId: string, id: string, raw: MangaResult['data'][number], lang: string): Media {
   const attrs = raw.attributes
-  const title = Object.values(attrs.title)[0] ?? attrs.title.en ?? 'Untitled'
   return {
     id: `${sourceId}/${id}`,
     mediaId: id,
     sourceId,
-    title,
-    altTitles: (attrs.altTitles ?? []).flatMap((t) => Object.values(t)),
+    title: pickTitle(attrs, lang),
+    altTitles: (attrs.altTitles ?? []).flatMap((t) => (pickLocale(t, lang) ? [pickLocale(t, lang)!] : [])),
     type: 'manga',
     status: mapStatus(attrs.status),
     coverUrl: coverUrl(id, raw.relationships),
-    synopsis: pickLocale(attrs.description),
-    tags: (attrs.tags ?? []).map((t) => Object.values(t.attributes.name)[0] ?? '').filter(Boolean)
+    synopsis: pickLocale(attrs.description, lang),
+    tags: (attrs.tags ?? []).map((t) => pickLocale(t.attributes.name, lang) ?? '').filter(Boolean)
   }
 }
 
@@ -132,7 +151,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       const json = await ctx.cache.withCache(`mangadex:${sourceId}:search:${query}:${page}`, 10 * 60_000, () =>
         fetchJson<MangaResult>(ctx.fetch, API.search(query, page, lang), { headers: jsonHeaders() })
       )
-      const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
+      const items = json.data.map((m) => mapMedia(sourceId, m.id, m, lang))
       return { page, hasNextPage: hasNextPage(json, (page - 1) * 20), items }
     },
 
@@ -141,7 +160,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       // the single-manga endpoint returns `data` as one entity, not an array
       const m = Array.isArray(json.data) ? json.data[0] : json.data
       if (!m) throw new Error(`media ${mediaId} not found`)
-      return mapMedia(sourceId, mediaId, m)
+      return mapMedia(sourceId, mediaId, m, lang)
     },
 
     async getHomeSections(ctx): Promise<HomeSection[]> {
@@ -154,7 +173,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       const json = await ctx.cache.withCache(`mangadex:${sourceId}:home:${sectionId}:${page}`, 10 * 60_000, () =>
         fetchJson<MangaResult>(ctx.fetch, API.home(lang, section.order, (page - 1) * 20), { headers: jsonHeaders() })
       )
-      const items = json.data.map((m) => mapMedia(sourceId, m.id, m))
+      const items = json.data.map((m) => mapMedia(sourceId, m.id, m, lang))
       return { page, hasNextPage: hasNextPage(json, (page - 1) * 20), items }
     },
 
