@@ -111,6 +111,24 @@ describe('mangadex source', () => {
     expect(eps[3]?.number).toBe(42.5)
   })
 
+  it('fetches all chapters of a series longer than the old 1000-offset cap', async () => {
+    // Real-world shape: 1167 feed entries (dup scanlation groups) for 1100 chapters.
+    const total = 1167
+    const longFetch: FetchFn = async (url) => {
+      const m = /offset=(\d+)/.exec(url)
+      const offset = m ? Number(m[1]) : 0
+      const data = Array.from({ length: 96 }, (_, i) => {
+        const num = 1100 - (offset + i)
+        return num >= 1 ? { id: `ch-${offset + i}`, attributes: { chapter: String(num), volume: null, title: null } } : null
+      }).filter((x): x is NonNullable<typeof x> => x !== null)
+      return { status: 200, headers: {}, body: JSON.stringify({ data, total, limit: 96, offset }) }
+    }
+    const eps = await mangaDexSource.getEpisodes({ ...ctx, fetch: longFetch }, 'abc-123')
+    expect(eps).toHaveLength(1100)
+    expect(eps[0]?.number).toBe(1)
+    expect(eps[1099]?.number).toBe(1100)
+  })
+
   it('uses data-saver URLs when the preference is on (default)', async () => {
     delete prefOverrides.dataSaver
     const content = await mangaDexSource.getChapterContent(

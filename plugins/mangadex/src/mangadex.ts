@@ -162,7 +162,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       return ctx.cache.withCache(`mangadex:${sourceId}:episodes:${mediaId}`, 30 * 60_000, async () => {
         const seen = new Set<string>()
         const episodes: Episode[] = []
-        for (let offset = 0; offset < 1000; offset += 96) {
+        for (let offset = 0; ; offset += 96) {
           const json = await fetchJson<ChapterResult>(ctx.fetch, API.chapters(mediaId, offset, lang), { headers: jsonHeaders() })
           if (json.data.length === 0) break
           for (const ch of json.data) {
@@ -182,7 +182,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
               lang
             })
           }
-          if ((json.total ?? 0) <= offset + (json.limit ?? 96)) break
+          if (json.total != null && json.total <= offset + json.data.length) break
         }
         return episodes.sort((a, b) => a.number - b.number)
       })
