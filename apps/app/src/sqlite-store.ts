@@ -1,7 +1,7 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@media-platform/core'
-import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry } from '@media-platform/core'
-import type { LibraryStore } from '@media-platform/core'
+import type { PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
+import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry } from '@woyomi/core'
+import type { LibraryStore } from '@woyomi/core'
 
 /**
  * SQLite-backed LibraryStore for the Tauri native build, via tauri-plugin-sql
@@ -11,7 +11,7 @@ import type { LibraryStore } from '@media-platform/core'
 export class SqliteStore implements LibraryStore {
   private dbPromise: Promise<Database> | undefined
 
-  constructor(private path = 'sqlite:media-platform.db') {}
+  constructor(private path = 'sqlite:woyomi.db') {}
 
   private db(): Promise<Database> {
     if (!this.dbPromise) {

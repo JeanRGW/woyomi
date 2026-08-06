@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { HomeSection, SearchResults, Source } from '@media-platform/core'
+import type { HomeSection, SearchResults, Source } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
-import type { SourceResults } from '@media-platform/core'
+import type { SourceResults } from '@woyomi/core'
 import { Banner, Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader, SectionHeading, SelectInput, TextInput } from '../components'
 import { Icon } from '../icons'
 

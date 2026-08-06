@@ -2,8 +2,8 @@ import { build } from 'esbuild'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import type { PluginManifest } from '@media-platform/core'
-import { API_VERSION, validateManifest } from '@media-platform/core'
+import type { PluginManifest } from '@woyomi/core'
+import { API_VERSION, validateManifest } from '@woyomi/core'
 
 export interface BuildOptions {
   /** plugin package root (contains package.json + src/index.ts) */

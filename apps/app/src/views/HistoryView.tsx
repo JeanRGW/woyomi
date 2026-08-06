@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { isVideoType, type HistoryEntry } from '@media-platform/core'
+import { isVideoType, type HistoryEntry } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { EmptyState, Page, PageHeader } from '../components'

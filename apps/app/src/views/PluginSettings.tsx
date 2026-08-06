@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { PreferenceValue, SourcePref } from '@media-platform/core'
+import type { PreferenceValue, SourcePref } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { SelectInput, TextInput, Toggle } from '../components'
 

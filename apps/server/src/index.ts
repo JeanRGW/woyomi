@@ -141,7 +141,7 @@ app.post('/api/scrape', async (c) => {
   // Strip hop-by-hop/forbidden headers that would corrupt the upstream
   // request: content-length is set by fetch for the body, host identifies the
   // upstream, and authorization must stay the proxy's (if any), not a caller's.
-  const upHeaders: Record<string, string> = { 'user-agent': 'media-platform/0.1 (+web)' }
+  const upHeaders: Record<string, string> = { 'user-agent': 'woyomi/0.1 (+web)' }
   for (const [k, v] of Object.entries(headers)) {
     const lk = k.toLowerCase()
     if (lk === 'content-length' || lk === 'host' || lk === 'authorization') continue
@@ -203,6 +203,6 @@ if (import.meta.main) {
   const port = Number(process.env.PORT ?? 8787)
   const { serve } = await import('@hono/node-server')
   serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`media-platform server on http://localhost:${info.port}`)
+    console.log(`woyomi server on http://localhost:${info.port}`)
   })
 }

@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
-import type { Media } from '@media-platform/core'
+import type { Media } from '@woyomi/core'
 import { navigate } from './App'
 import { Icon, type IconName } from './icons'
 

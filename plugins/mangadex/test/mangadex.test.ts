@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeMangadexSource } from '../src/mangadex.js'
-import type { FetchFn } from '@media-platform/core'
+import type { FetchFn } from '@woyomi/core'
 
 const mangaDexSource = makeMangadexSource({ code: 'en', label: 'EN' })
 const ptBrSource = makeMangadexSource({ code: 'pt-br', label: 'PT-BR' })

@@ -43,7 +43,7 @@ async fn fetch_url(
     let client = &state.client;
     let mut req = client
         .request(reqwest::Method::from_bytes(args.method.as_bytes()).map_err(|e| e.to_string())?, &args.url)
-        .header("user-agent", "media-platform/0.1 (+native)")
+        .header("user-agent", "woyomi/0.1 (+native)")
         .header("accept", "*/*");
 
     for (k, v) in &args.headers {
@@ -83,7 +83,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .manage(AppState {
             client: reqwest::Client::builder()
-                .user_agent("media-platform/0.1 (+native)")
+                .user_agent("woyomi/0.1 (+native)")
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("failed to build http client"),

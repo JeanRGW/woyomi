@@ -17,7 +17,7 @@ const MANIFEST = {
   sourceIds: ['fixture']
 }
 
-const SOURCE = `import type { Source } from '@media-platform/core'
+const SOURCE = `import type { Source } from '@woyomi/core'
 
 const source: Source = {
   id: 'fixture',

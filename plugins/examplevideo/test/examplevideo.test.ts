@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { exampleVideoSource } from '../src/examplevideo.js'
-import type { FetchFn } from '@media-platform/core'
+import type { FetchFn } from '@woyomi/core'
 
 const ctx = {
   cache: {

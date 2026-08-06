@@ -1,4 +1,4 @@
-import type { Episode, Media, SearchResults, Source, SourceContext, StreamSource } from '@media-platform/core'
+import type { Episode, Media, SearchResults, Source, SourceContext, StreamSource } from '@woyomi/core'
 
 /**
  * Demo video source: exercises the video-extractor interface with mock streams

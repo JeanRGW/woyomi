@@ -1,5 +1,5 @@
 {
-  "name": "@media-platform/plugin-mangadex",
+  "name": "@woyomi/plugin-mangadex",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@media-platform/core": "workspace:*"
+    "@woyomi/core": "workspace:*"
   },
   "devDependencies": {
-    "@media-platform/plugin-builder": "workspace:*",
+    "@woyomi/plugin-builder": "workspace:*",
     "typescript": "^5.7.2",
     "vitest": "^3.0.5"
   }

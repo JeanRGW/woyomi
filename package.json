@@ -1,8 +1,8 @@
 {
-  "name": "media-platform",
+  "name": "woyomi",
   "private": true,
   "version": "0.1.0",
-  "description": "Multi-source content aggregator (Aniyomi/Mihon-style) - Tauri app + plugin system",
+  "description": "woyomi - multi-source content aggregator (Tauri app + plugin system)",
   "type": "module",
   "packageManager": "pnpm@11.8.0",
   "engines": {
@@ -11,8 +11,8 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "build:plugins": "turbo run build:plugin --filter @media-platform/plugin-builder --filter \"./plugins/*\"",
-    "dev": "pnpm --filter @media-platform/app dev",
+    "build:plugins": "turbo run build:plugin --filter @woyomi/plugin-builder --filter \"./plugins/*\"",
+    "dev": "pnpm --filter @woyomi/app dev",
     "typecheck": "turbo run typecheck",
     "smoke": "node scripts/smoke.mjs"
   },

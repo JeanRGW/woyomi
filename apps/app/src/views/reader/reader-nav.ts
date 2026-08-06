@@ -1,4 +1,4 @@
-import type { Episode } from '@media-platform/core'
+import type { Episode } from '@woyomi/core'
 
 export type ReadingDirection = 'rtl' | 'ltr' | 'vertical'
 export type ReaderMode = 'continuous' | 'paged'

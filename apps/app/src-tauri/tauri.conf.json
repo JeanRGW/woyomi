@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Media Platform",
+  "productName": "woyomi",
   "version": "0.1.0",
-  "identifier": "com.mediaplatform.app",
+  "identifier": "app.rgw.woyomi",
   "build": {
-    "beforeDevCommand": "pnpm --filter @media-platform/app dev",
+    "beforeDevCommand": "pnpm --filter @woyomi/app dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --filter @media-platform/app build",
+    "beforeBuildCommand": "pnpm --filter @woyomi/app build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Media Platform",
+        "title": "woyomi",
         "width": 1200,
         "height": 800,
         "minWidth": 700,

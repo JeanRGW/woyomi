@@ -1,5 +1,5 @@
-import type { ChapterContent, Episode, HomeSection, Media, SearchResults, Source, SourceContext } from '@media-platform/core'
-import { fetchHtml } from '@media-platform/core'
+import type { ChapterContent, Episode, HomeSection, Media, SearchResults, Source, SourceContext } from '@woyomi/core'
+import { fetchHtml } from '@woyomi/core'
 
 const BASE = 'https://tsundoku.com.br'
 const sourceId = 'tsundoku'

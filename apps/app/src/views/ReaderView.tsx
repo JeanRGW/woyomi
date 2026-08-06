@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChapterContent, Episode, Media } from '@media-platform/core'
+import type { ChapterContent, Episode, Media } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { recordOpen } from '../hooks'

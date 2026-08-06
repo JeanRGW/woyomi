@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { FetchFn } from '@media-platform/core'
+import type { FetchFn } from '@woyomi/core'
 
 /**
  * External plugin providers (Mihon/Aniyomi-style repos): a static URL serving

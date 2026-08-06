@@ -152,7 +152,7 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
  * `history` (key = `${mediaId}/${episodeId}`), `preferences`, `plugins`.
  */
 export class IndexedDbStore implements LibraryStore {
-  static readonly DB_NAME = 'media-platform'
+  static readonly DB_NAME = 'woyomi'
   static readonly VERSION = 3
 
   private dbPromise: Promise<IDBDatabase> | undefined

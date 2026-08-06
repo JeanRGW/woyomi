@@ -28,7 +28,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
     const blob = new Blob([json], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'media-platform-library.json'
+    a.download = 'woyomi-library.json'
     a.click()
     URL.revokeObjectURL(a.href)
   }

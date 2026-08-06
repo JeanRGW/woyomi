@@ -12,7 +12,7 @@ pnpm install                # esbuild build script is pre-approved (pnpm-workspa
 pnpm build                  # turbo: build all packages AND first-party plugin IIFEs to dist
 pnpm test                   # Vitest across all packages (fixtures inline, no network)
 pnpm typecheck              # strict TS, all packages
-pnpm --filter @media-platform/app lint    # only lint target in the repo (eslint)
+pnpm --filter @woyomi/app lint    # only lint target in the repo (eslint)
 pnpm dev                    # app Vite dev server, http://localhost:1420
 pnpm smoke                  # live MangaDex pipeline test (needs pnpm build first)
 ```
@@ -42,9 +42,9 @@ aggregates the built plugin dist dirs.
 
 ```sh
 # build one plugin -> IIFE + sidecar manifest + sha256 in <outDir>
-pnpm --filter @media-platform/plugin-builder exec node dist/cli.js <pluginRoot> <outDir>
+pnpm --filter @woyomi/plugin-builder exec node dist/cli.js <pluginRoot> <outDir>
 # generate a Mihon-style repo index.json from built artifacts
-pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <distDir>
+pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
 ```
 
 ## Architecture
@@ -57,7 +57,7 @@ pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <distDir
   index generator. Bin is `media-plugin-build` (plugins' `build` script).
 - `plugins/*` — first-party sources (`mangadex`, `tsundoku`,
   `examplevideo`). They are **workspace packages that depend on
-  `@media-platform/core`** and ship as bundled plugins via `?raw` imports.
+  `@woyomi/core`** and ship as bundled plugins via `?raw` imports.
 - `apps/app` — React 18 + Vite frontend and the Tauri 2 Rust shell
   (`src-tauri/`). `src/runtime.ts` wires fetch/stores per runtime.
 - `apps/server` — optional Hono backend.

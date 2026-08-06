@@ -14,16 +14,16 @@ importers:
 
   apps/app:
     dependencies:
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@media-platform/plugin-examplevideo':
+      '@woyomi/plugin-examplevideo':
         specifier: workspace:*
         version: link:../../plugins/examplevideo
-      '@media-platform/plugin-mangadex':
+      '@woyomi/plugin-mangadex':
         specifier: workspace:*
         version: link:../../plugins/mangadex
-      '@media-platform/plugin-tsundoku':
+      '@woyomi/plugin-tsundoku':
         specifier: workspace:*
         version: link:../../plugins/tsundoku
       '@tauri-apps/plugin-sql':
@@ -99,7 +99,7 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.0
         version: 2.1.0(hono@4.13.0)
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
       hono:
@@ -137,7 +137,7 @@ importers:
 
   packages/plugin-builder:
     dependencies:
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../core
       esbuild:
@@ -156,11 +156,11 @@ importers:
 
   plugins/examplevideo:
     dependencies:
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
-      '@media-platform/plugin-builder':
+      '@woyomi/plugin-builder':
         specifier: workspace:*
         version: link:../../packages/plugin-builder
       typescript:
@@ -172,11 +172,11 @@ importers:
 
   plugins/mangadex:
     dependencies:
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
-      '@media-platform/plugin-builder':
+      '@woyomi/plugin-builder':
         specifier: workspace:*
         version: link:../../packages/plugin-builder
       typescript:
@@ -188,11 +188,11 @@ importers:
 
   plugins/tsundoku:
     dependencies:
-      '@media-platform/core':
+      '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
     devDependencies:
-      '@media-platform/plugin-builder':
+      '@woyomi/plugin-builder':
         specifier: workspace:*
         version: link:../../packages/plugin-builder
       linkedom:

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Episode, Media } from '@media-platform/core'
+import type { Episode, Media } from '@woyomi/core'
 import type { AppRuntime } from './runtime'
 
 /** Reactive matchMedia; false during SSR-less first render until the effect runs. */

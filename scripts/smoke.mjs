@@ -2,7 +2,7 @@
 /**
  * Live smoke test against the real MangaDex API:
  * search -> media -> episodes -> chapter pages.
- * Requires the plugin to be built first: pnpm --filter @media-platform/plugin-mangadex build:plugin
+ * Requires the plugin to be built first: pnpm --filter @woyomi/plugin-mangadex build:plugin
  */
 import { readFile } from 'node:fs/promises'
 import { Engine } from '../packages/core/dist/index.js'

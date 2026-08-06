@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { LibraryEntry, LibraryStatus } from '@media-platform/core'
+import type { LibraryEntry, LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader } from '../components'
 import { Icon } from '../icons'

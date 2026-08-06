@@ -1,5 +1,5 @@
 [package]
-name = "media-platform"
+name = "woyomi"
 version = "0.1.0"
 description = "Multi-source content aggregator (Aniyomi/Mihon-style)"
 authors = ["you"]
@@ -7,7 +7,7 @@ edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "media_platform_lib"
+name = "woyomi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

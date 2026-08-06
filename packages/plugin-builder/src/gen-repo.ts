@@ -7,7 +7,7 @@ import { join } from 'node:path'
  * `file` entries are relative to this directory; the app resolves them
  * against the index.json's own location, so the index.json and plugin files
  * must be served from the same directory.
- * Usage: `pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <dir> [outfile]`
+ * Usage: `pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <dir> [outfile]`
  */
 export async function generateRepoIndex(pluginDir: string, outfile = 'index.json'): Promise<unknown> {
   const files = await readdir(pluginDir)
@@ -40,7 +40,7 @@ export async function generateRepoIndex(pluginDir: string, outfile = 'index.json
       sha256: manifest.sha256
     })
   }
-  const index = { name: 'Media Platform Repo', plugins }
+  const index = { name: 'woyomi Repo', plugins }
   await writeFile(join(pluginDir, outfile), JSON.stringify(index, null, 2))
   return index
 }

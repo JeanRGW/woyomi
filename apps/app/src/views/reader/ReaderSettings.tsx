@@ -1,4 +1,4 @@
-import type { Episode } from '@media-platform/core'
+import type { Episode } from '@woyomi/core'
 import { Chip, Toggle } from '../../components'
 import { Icon } from '../../icons'
 import type { ReaderBackground, ReaderFit, ReaderMode, ReadingDirection } from './reader-nav'

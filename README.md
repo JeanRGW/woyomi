@@ -1,4 +1,4 @@
-# Media Platform
+# woyomi
 
 A multi-source content aggregator in the style of
 [Aniyomi](https://github.com/aniyomiorg/aniyomi) / [Mihon](https://github.com/mihonapp/mihon),
@@ -6,6 +6,8 @@ built as a **Tauri 2 desktop + Android app** with a modular TypeScript plugin
 system. Supports manga, anime, webnovels, movies, and series from pluggable
 sources, with a local library, episode/chapter tracking, a paged manga reader,
 a text novel reader, and an HLS/MP4 player.
+
+Project home: **https://woyomi.rgw.app**
 
 ## Architecture
 
@@ -57,7 +59,7 @@ Any static host (or the bundled `apps/server`) can serve a repo:
   <id>.plugin.json  # sidecar manifest
 ```
 
-`index.json` is generated with `pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <distDir>`.
+`index.json` is generated with `pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>`.
 The app's Plugins screen manages repo URLs, lists available plugins, and
 installs/updates/uninstalls them (sha256-verified, `apiVersion`-gated).
 
@@ -76,9 +78,9 @@ pnpm typecheck          # strict TS across all packages
 ### Desktop app (Tauri) — Windows / Linux / Android
 
 ```sh
-pnpm --filter @media-platform/app build:plugin-mangadex   # build first-party plugins (see note)
-pnpm --filter @media-platform/app tauri dev                # run in dev shell (requires Rust)
-pnpm --filter @media-platform/app tauri build              # release bundle
+pnpm --filter @woyomi/app build:plugin-mangadex   # build first-party plugins (see note)
+pnpm --filter @woyomi/app tauri dev                # run in dev shell (requires Rust)
+pnpm --filter @woyomi/app tauri build              # release bundle
 ```
 
 Android: add the platform with `cargo tauri android init`, then
@@ -97,7 +99,7 @@ iteration — scraping falls back to direct `fetch` (works for CORS-enabled APIs
 like MangaDex) or the self-hosted proxy.
 
 ```sh
-pnpm --filter @media-platform/app dev     # http://localhost:1420
+pnpm --filter @woyomi/app dev     # http://localhost:1420
 ```
 
 ### Self-hosted backend (optional)
@@ -117,10 +119,10 @@ Environment: `SYNC_TOKEN` (Bearer token for `/api/sync/*`), `DATA_DIR`
 ## Writing a plugin
 
 1. `mkdir plugins/mysource` with a `package.json` depending on
-   `@media-platform/core`.
+   `@woyomi/core`.
 2. Implement a `Source` (see `packages/core/src/types.ts`) and register it in
    `src/index.ts` via `__media_plugin_register`.
-3. Build: `pnpm --filter @media-platform/plugin-builder exec node dist/cli.js plugins/mysource plugins/mysource/dist`
+3. Build: `pnpm --filter @woyomi/plugin-builder exec node dist/cli.js plugins/mysource plugins/mysource/dist`
 4. Distribute via a repo `index.json` (see `gen-repo.js`) or bundle into the app.
 
 The `Source` interface (one unified model across all five media types):

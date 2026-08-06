@@ -17,7 +17,7 @@ import {
   type PreferencesApi,
   type SandboxCtx,
   type SandboxTransport
-} from '@media-platform/core'
+} from '@woyomi/core'
 import { SqliteStore } from './sqlite-store'
 import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, type ScrapeConfig } from './scrape'
 
@@ -232,11 +232,11 @@ async function initRuntime(): Promise<AppRuntime> {
   }
 
   // First-party plugins are compiled into the app (bundle format, same loader).
-  const mangadexBuilt = await import('@media-platform/plugin-mangadex/dist/mangadex.plugin.js?raw')
+  const mangadexBuilt = await import('@woyomi/plugin-mangadex/dist/mangadex.plugin.js?raw')
   await loadFromBundle(mangadexBuilt.default, 'bundled')
-  const videoBuilt = await import('@media-platform/plugin-examplevideo/dist/examplevideo.plugin.js?raw')
+  const videoBuilt = await import('@woyomi/plugin-examplevideo/dist/examplevideo.plugin.js?raw')
   await loadFromBundle(videoBuilt.default, 'bundled')
-  const tsundokuBuilt = await import('@media-platform/plugin-tsundoku/dist/tsundoku.plugin.js?raw')
+  const tsundokuBuilt = await import('@woyomi/plugin-tsundoku/dist/tsundoku.plugin.js?raw')
   await loadFromBundle(tsundokuBuilt.default, 'bundled')
 
   // Rehydrate externally-installed plugins across restarts.

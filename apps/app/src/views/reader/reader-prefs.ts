@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { PreferencesApi } from '@media-platform/core'
+import type { PreferencesApi } from '@woyomi/core'
 import type { ReaderBackground, ReaderFit, ReaderMode, ReadingDirection } from './reader-nav'
 
 export interface ReaderPrefs {

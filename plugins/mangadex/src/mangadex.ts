@@ -1,5 +1,5 @@
-import type { ChapterContent, Episode, HomeSection, Media, SearchResults, Source, SourceContext } from '@media-platform/core'
-import { fetchJson, jsonHeaders } from '@media-platform/core'
+import type { ChapterContent, Episode, HomeSection, Media, SearchResults, Source, SourceContext } from '@woyomi/core'
+import { fetchJson, jsonHeaders } from '@woyomi/core'
 
 const BASE = 'https://api.mangadex.org'
 const IMG_BASE = 'https://uploads.mangadex.org'

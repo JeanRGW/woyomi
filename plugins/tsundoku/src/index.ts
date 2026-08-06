@@ -1,5 +1,5 @@
-import type { PluginRegistration } from '@media-platform/core'
-import { API_VERSION } from '@media-platform/core'
+import type { PluginRegistration } from '@woyomi/core'
+import { API_VERSION } from '@woyomi/core'
 import { makeTsundokuSource } from './tsundoku.js'
 
 declare global {

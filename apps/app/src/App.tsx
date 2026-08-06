@@ -121,7 +121,7 @@ export function App() {
               <Icon name="library" size={18} className="text-white" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[15px] font-extrabold tracking-tight">Media Platform</div>
+              <div className="truncate text-[15px] font-extrabold tracking-tight">woyomi</div>
               <div className="text-[11px] font-medium text-faint">multi-source library</div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fetchRepoIndex, resolveUrl } from './provider'
-import type { FetchFn } from '@media-platform/core'
+import type { FetchFn } from '@woyomi/core'
 
 const indexJson = JSON.stringify({
   plugins: [

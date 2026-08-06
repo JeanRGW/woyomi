@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Hls from 'hls.js'
-import type { Episode, Media, StreamSource } from '@media-platform/core'
+import type { Episode, Media, StreamSource } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { recordOpen } from '../hooks'
 import { BackButton, Banner, Page } from '../components'

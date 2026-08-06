@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
-import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@media-platform/core'
+import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { BackButton, Banner, Btn, CoverArt, EpisodeRow, Page, SelectInput } from '../components'

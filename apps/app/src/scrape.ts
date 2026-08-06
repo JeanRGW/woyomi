@@ -1,4 +1,4 @@
-import type { FetchInit, FetchResult } from '@media-platform/core'
+import type { FetchInit, FetchResult } from '@woyomi/core'
 
 /** Web-mode scrape-proxy config (Settings > Web proxy). */
 export interface ScrapeConfig {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DOMParser } from 'linkedom'
 import { makeTsundokuSource } from '../src/tsundoku.js'
-import type { FetchFn } from '@media-platform/core'
+import type { FetchFn } from '@woyomi/core'
 
 // The worker host injects DOMParser (linkedom) into the sandbox; mirror it here.
 ;(globalThis as Record<string, unknown>).DOMParser = DOMParser

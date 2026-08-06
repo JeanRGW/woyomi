@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Episode } from '@media-platform/core'
+import type { Episode } from '@woyomi/core'
 import {
   clampZoom,
   findAdjacent,
