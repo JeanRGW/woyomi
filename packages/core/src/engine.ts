@@ -115,8 +115,9 @@ export class Engine {
   }
 
   /**
-   * Throttled, timeout-capped fetch for a registered source, for sandboxed
-   * plugins whose worker routes ctx.fetch back to the main thread.
+   * Throttled fetch for a registered source, for sandboxed plugins whose worker
+   * routes ctx.fetch back to the main thread. (Timeouts live in the fetch
+   * provider, not here.)
    */
   getSourceFetch(sourceId: string): FetchFn {
     this.require(sourceId)

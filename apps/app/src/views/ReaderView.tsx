@@ -46,8 +46,10 @@ export function ReaderView({ runtime, sourceId, mediaId, episodeId }: { runtime:
             <img key={i} src={src} alt={`page ${i + 1}`} loading="lazy" className="max-w-full rounded-md" />
           ))}
         </div>
-      ) : (
+      ) : content.html.trim() ? (
         <article className="novel-body" dangerouslySetInnerHTML={{ __html: content.html }} />
+      ) : (
+        <p className="mx-auto max-w-md py-10 text-center text-sm text-muted">This chapter has no viewable content.</p>
       )}
     </div>
   )

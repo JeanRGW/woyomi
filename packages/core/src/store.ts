@@ -28,11 +28,8 @@ export class MemoryStore implements LibraryStore {
   }
 
   async remove(mediaId: string): Promise<void> {
+    // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
     this.entries.delete(mediaId)
-    this.progress.delete(mediaId)
-    for (const [key, h] of [...this.history]) {
-      if (h.media.id === mediaId) this.history.delete(key)
-    }
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -194,11 +191,10 @@ export class IndexedDbStore implements LibraryStore {
   async add(media: Media, status: LibraryStatus): Promise<void> {
     const db = await this.db()
     const existing = await this.get(media.id)
-    const row = { ...media, _status: status, _addedAt: existing != null ? Date.now() : 0 }
-    if (row._addedAt === 0) row._addedAt = Date.now()
+    const addedAt = existing?.addedAt ?? Date.now()
     return new Promise((resolve, reject) => {
       const tx = db.transaction('library', 'readwrite')
-      tx.objectStore('library').put({ ...media, meta: { media, status, addedAt: row._addedAt } })
+      tx.objectStore('library').put({ ...media, meta: { media, status, addedAt } })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
@@ -210,17 +206,8 @@ export class IndexedDbStore implements LibraryStore {
 
   async remove(mediaId: string): Promise<void> {
     const db = await this.db()
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
-      tx.objectStore('library').delete(mediaId)
-      tx.objectStore('progress').delete(mediaId)
-      const hs = tx.objectStore('history')
-      void request<Array<{ key: string; media: Media }>>(hs.getAll()).then((rows) => {
-        for (const h of rows) if (h.media.id === mediaId) void request(hs.delete(h.key))
-      })
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
+    // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
+    await request(db.transaction('library', 'readwrite').objectStore('library').delete(mediaId)).then(() => undefined)
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {

@@ -66,10 +66,12 @@ pnpm --filter @media-platform/plugin-builder exec node dist/gen-repo.js <distDir
   `fetch_url` command in Tauri, direct `fetch` in browser (CORS-limited), or
   the self-hosted `/api/scrape` proxy.
 - A bundle is a self-contained IIFE calling
-  `globalThis.__media_platform_register({ manifest, sources })` exactly once.
+  `globalThis.__media_plugin_register({ manifest, sources })` exactly once.
 - `manifest.apiVersion` must equal `API_VERSION` from core (checked by the
   builder and by `installExternal` in runtime.ts, which also verifies sha256).
-- Loader evaluates bundles on the main thread (no Web Worker sandbox yet).
+- Plugins execute inside a per-plugin Web Worker sandbox (packages/core
+  `sandbox.ts` / `sandbox-worker-host.ts`); `loadBundle` in `loader.ts` is used
+  only by `plugin-builder` for build-time manifest capture.
 
 ## Quirks / gotchas
 

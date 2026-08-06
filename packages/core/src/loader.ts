@@ -9,9 +9,9 @@ const REGISTER_KEY = '__media_plugin_register'
  *
  * Execution uses `new Function`, which has no access to this module's scope, so
  * a runaway plugin globals-stomping is limited to its bundle file's own global
- * assignments.
- * ponytail: main-thread eval. Move to a Web Worker (no DOM) if a buggy plugin
- * ever blocks the UI — evaluation logic is already isolated here.
+ * assignments. Runtime plugin execution happens in a Web Worker sandbox
+ * (sandbox.ts); this sync evaluator is used by plugin-builder at build time and
+ * by unit/smoke fixtures.
  */
 export function loadBundle(code: string): PluginRegistration {
   let captured: PluginRegistration | undefined

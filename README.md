@@ -133,9 +133,12 @@ interface Source {
 
 ## Status / known limits
 
-- Bundled plugins and repo-installed plugins use the same bundle format; the
-  loader currently evaluates on the main thread (`ponytail:` note in
-  `loader.ts` — a Web Worker sandbox is the upgrade path).
+- Plugins execute inside a per-plugin **Web Worker sandbox** (no `window`, no
+  Tauri IPC, no DOM access); their `SourceContext` (`fetch`/`cache`/
+  `preferences`) is served over a `postMessage` RPC bridge, and an HTML
+  `DOMParser` (linkedom) is injected so scraping plugins work. The sync
+  `loadBundle` in `loader.ts` is used only by `plugin-builder` for build-time
+  manifest capture.
 - The video source is a demo (`examplevideo`) returning a public HLS test
   stream; wiring real extractors is plugin work, isolated behind
   `getStreams()`.

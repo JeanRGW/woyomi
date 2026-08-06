@@ -56,13 +56,9 @@ export class SqliteStore implements LibraryStore {
   }
 
   async remove(mediaId: string): Promise<void> {
+    // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
     const db = await this.db()
     await db.execute('DELETE FROM library WHERE id = $1', [mediaId])
-    await db.execute('DELETE FROM progress WHERE media_id = $1', [mediaId])
-    const historyRows = await this.listHistory()
-    for (const h of historyRows) {
-      if (h.media.id === mediaId) await db.execute('DELETE FROM history WHERE episode_id = $1', [h.episode.id])
-    }
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
