@@ -16,7 +16,7 @@ apps/app            React 18 + Vite frontend AND Tauri 2 (Rust) shell
 apps/server         optional self-hosted backend (web-mode scrape proxy + sync + plugin repo)
 packages/core       plugin API, engine (runner), registry, loader, stores, zod protocol, Web Worker sandbox
 packages/plugin-builder   CLI: plugin folder -> IIFE bundle + manifest + sha256; repo index generator
-plugins/mangadex    first-party MangaDex source (manga + novel)
+plugins/mangadex    first-party MangaDex source (manga)
 plugins/tsundoku    first-party HTML-scraping source — Tsundoku Traduções (manga + novel)
 plugins/examplevideo      demo video source exercising the stream-extractor API
 ```

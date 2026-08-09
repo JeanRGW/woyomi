@@ -144,7 +144,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
   return {
     id: sourceId,
     name: `MangaDex (${label})`,
-    mediaTypes: ['manga', 'novel'],
+    mediaTypes: ['manga'],
     lang,
 
     async search(ctx, query, page): Promise<SearchResults> {
@@ -212,12 +212,6 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
       const server = await fetchJson<ChapterServer>(ctx.fetch, API.chapter(chapterUuid), { headers: jsonHeaders() })
       const hash = server.chapter.hash
       const files = server.chapter.data
-      // MangaDex's at-home returns the real image pages for a chapter; data-saver
-      // returns lower-quality `.jpg` images. Text/novel chapters have no image
-      // files, so the reader falls back to a placeholder text view.
-      if (!files.length) {
-        return { type: 'text', html: '' }
-      }
       const useDataSaver = await ctx.preferences.getWithDefault('dataSaver', true)
       const base = useDataSaver ? API.dataSaver(server.baseUrl, hash) : API.pages(server.baseUrl, hash)
       const images = useDataSaver ? server.chapter.dataSaver.map((f) => `${base}/${f}`) : files.map((f) => `${base}/${f}`)

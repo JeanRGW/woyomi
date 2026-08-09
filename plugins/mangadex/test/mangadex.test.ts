@@ -206,13 +206,13 @@ describe('mangadex source', () => {
     expect(eps.every((e) => e.lang === 'en')).toBe(true)
   })
 
-  it('returns a text view for a chapter with no images (novel)', async () => {
+  it('returns an empty pages view for an image-less chapter', async () => {
     const content = await mangaDexSource.getChapterContent(
       { ...ctx, fetch: fixtureFetch({ '/at-home': emptyServerFixture }) },
       'abc-123',
       'ch-1'
     )
-    expect(content.type).toBe('text')
+    expect(content).toEqual({ type: 'pages', images: [] })
   })
 
   it('parses getMedia when data is a single entity (not an array)', async () => {

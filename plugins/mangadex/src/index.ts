@@ -37,8 +37,8 @@ const registration: PluginRegistration = {
     version: '0.1.0',
     apiVersion: API_VERSION,
     lang: 'en',
-    description: 'MangaDex — manga & light-novel source (one source per language)',
-    mediaTypes: ['manga', 'novel'],
+    description: 'MangaDex — manga source (one source per language)',
+    mediaTypes: ['manga'],
     entry: 'mangadex.plugin.js',
     sourceIds: sources.map((s) => s.id),
     prefs: [
