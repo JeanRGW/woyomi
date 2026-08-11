@@ -20,7 +20,7 @@ import {
 } from '@woyomi/core'
 import { SqliteStore } from './sqlite-store'
 import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, type ScrapeConfig } from './scrape'
-import type { SyncConfig } from './sync'
+import { makeSyncingStore, startAutoSync, type SyncConfig } from './sync'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
 declare global {
@@ -119,6 +119,9 @@ export interface AppRuntime {
   /** Server library-sync config. */
   getSyncConfig(): Promise<SyncConfig>
   setSyncConfig(config: SyncConfig): Promise<void>
+  /** Auto-sync toggle (default on); sets whether writes/start sync automatically. */
+  getAutoSyncEnabled(): Promise<boolean>
+  setAutoSyncEnabled(enabled: boolean): Promise<void>
   /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
@@ -157,6 +160,15 @@ async function initRuntime(): Promise<AppRuntime> {
     url: (await prefs.get<string>('__app', 'scrape.url')) ?? '',
     token: (await prefs.get<string>('__app', 'scrape.token')) ?? ''
   })
+
+  const autoSyncEnabled = async (): Promise<boolean> => (await prefs.get<boolean>('__app', 'autoSync.enabled')) ?? true
+  const syncConfig = async (): Promise<SyncConfig> => ({
+    server: (await prefs.get<string>('__app', 'sync.server')) ?? '',
+    user: (await prefs.get<string>('__app', 'sync.user')) ?? '',
+    token: (await prefs.get<string>('__app', 'sync.token')) ?? ''
+  })
+  const autoSync = startAutoSync({ getConfig: syncConfig, getStore: () => store, isEnabled: autoSyncEnabled })
+  store = makeSyncingStore(store, autoSync.markDirty)
 
   const installed = new Map<string, string>()
   const sandboxes = new Map<string, PluginSandbox>()
@@ -303,16 +315,14 @@ async function initRuntime(): Promise<AppRuntime> {
       await prefs.set('__app', 'scrape.url', config.url)
       await prefs.set('__app', 'scrape.token', config.token)
     },
-    getSyncConfig: async () => ({
-      server: (await prefs.get<string>('__app', 'sync.server')) ?? '',
-      user: (await prefs.get<string>('__app', 'sync.user')) ?? '',
-      token: (await prefs.get<string>('__app', 'sync.token')) ?? ''
-    }),
+    getSyncConfig: syncConfig,
     setSyncConfig: async (config) => {
       await prefs.set('__app', 'sync.server', config.server)
       await prefs.set('__app', 'sync.user', config.user)
       await prefs.set('__app', 'sync.token', config.token)
     },
+    getAutoSyncEnabled: autoSyncEnabled,
+    setAutoSyncEnabled: (enabled: boolean) => prefs.set('__app', 'autoSync.enabled', enabled),
     async installExternal(plugin) {
       const provider = createFetchProvider()
       const codeRes = await provider(plugin.url)

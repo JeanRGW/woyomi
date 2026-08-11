@@ -15,6 +15,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   const [proxyError, setProxyError] = useState('')
   const [proxySaved, setProxySaved] = useState(false)
   const [syncConfig, setSyncConfig] = useState<SyncConfig>({ server: '', user: '', token: '' })
+  const [autoSyncEnabled, setAutoSyncEnabledState] = useState(true)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'running' | 'ok' | 'failed'>('idle')
   const [syncError, setSyncError] = useState('')
   const [syncSaved, setSyncSaved] = useState(false)
@@ -27,6 +28,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
       setProxyToken(cfg.token)
     })
     runtime.getSyncConfig().then(setSyncConfig)
+    runtime.getAutoSyncEnabled().then(setAutoSyncEnabledState)
   }, [refresh, runtime])
 
   async function exportJson() {
@@ -223,6 +225,18 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
             <Btn variant="soft" onClick={() => runSync('pull')} disabled={syncStatus === 'running'}>
               Pull now
             </Btn>
+            <Toggle
+              checked={autoSyncEnabled}
+              label={autoSyncEnabled ? 'Auto-sync on' : 'Auto-sync off'}
+              onChange={() => {
+                const next = !autoSyncEnabled
+                setAutoSyncEnabledState(next)
+                void runtime.setAutoSyncEnabled(next)
+              }}
+            />
+            <span className="text-xs text-muted">
+              {autoSyncEnabled ? 'Syncs on app open and after each library change' : 'Syncing manually only'}
+            </span>
             {syncSaved && <span className="text-xs font-semibold text-ok">Saved</span>}
             {syncStatus === 'running' && <span className="text-xs font-semibold text-muted">Syncing…</span>}
             {syncStatus === 'ok' && <span className="text-xs font-semibold text-ok">OK</span>}

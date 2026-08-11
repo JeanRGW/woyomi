@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { pullSync, pushSync, syncConfigured, type SyncConfig } from './sync'
+import { makeSyncingStore, pullSync, pushSync, syncConfigured, type SyncConfig } from './sync'
 import type { LibraryStore } from '@woyomi/core'
 
 const config: SyncConfig = { server: 'https://sync.test/', user: 'alice/one', token: 'secret' }
@@ -89,5 +89,27 @@ describe('pullSync', () => {
   it('reports HTTP failures', async () => {
     vi.stubGlobal('fetch', async () => new Response('', { status: 401 }))
     await expect(pullSync(store(), config)).rejects.toThrow('sync pull -> HTTP 401')
+  })
+})
+
+describe('makeSyncingStore', () => {
+  it('marks dirty on writes but not on reads or importJson', () => {
+    const markDirty = vi.fn()
+    const local = store()
+    const proxy = makeSyncingStore(local, markDirty)
+
+    proxy.remove('m')
+    proxy.setSeenMany('m', ['e1'])
+    proxy.get('m')
+    proxy.importJson('{}')
+
+    expect(markDirty).toHaveBeenCalledTimes(2)
+  })
+
+  it('delegates to the underlying store and preserves `this`', async () => {
+    const markDirty = vi.fn()
+    const proxied = makeSyncingStore(store(), markDirty)
+    await proxied.exportJson()
+    expect(markDirty).not.toHaveBeenCalled()
   })
 })
