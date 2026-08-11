@@ -13,14 +13,19 @@ describe('sync api', () => {
     const put = await server.request('/api/sync/bob', {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ entries: [{ media: { id: 's/1', title: 'T', mediaId: '1', sourceId: 's', type: 'manga' }, status: 'reading', addedAt: 1 }], progress: [] })
+      body: JSON.stringify({
+        entries: [{ media: { id: 's/1', title: 'T', mediaId: '1', sourceId: 's', type: 'manga' }, status: 'reading', addedAt: 1 }],
+        progress: [],
+        history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 2 }]
+      })
     })
     expect(put.status).toBe(200)
 
     const get = await server.request('/api/sync/bob', { headers: { authorization: `Bearer ${TOKEN}` } })
     expect(get.status).toBe(200)
-    const data = (await get.json()) as { entries: Array<{ media: { title: string } }> }
+    const data = (await get.json()) as { entries: Array<{ media: { title: string } }>; history: Array<{ openedAt: number }> }
     expect(data.entries[0]?.media.title).toBe('T')
+    expect(data.history[0]?.openedAt).toBe(2)
   })
 })
 

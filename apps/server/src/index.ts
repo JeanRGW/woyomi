@@ -174,7 +174,8 @@ function authed(c: { req: { header: (k: string) => string | undefined } }): bool
 
 const SyncBody = z.object({
   entries: z.array(z.any()),
-  progress: z.array(z.any())
+  progress: z.array(z.any()),
+  history: z.array(z.any()).optional()
 })
 
 app.get('/api/sync/:user', async (c) => {

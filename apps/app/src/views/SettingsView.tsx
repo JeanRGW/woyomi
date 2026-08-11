@@ -5,6 +5,7 @@ import { navigate } from '../App'
 import { Btn, Page, SectionHeading, TextInput, Toggle } from '../components'
 import { Icon } from '../icons'
 import { scrapeRequest } from '../scrape'
+import { pullSync, pushSync, syncConfigured, type SyncConfig } from '../sync'
 
 export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   const [plugins, setPlugins] = useState(runtime.registry.list())
@@ -13,6 +14,10 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   const [proxyStatus, setProxyStatus] = useState<'idle' | 'testing' | 'ok' | 'failed'>('idle')
   const [proxyError, setProxyError] = useState('')
   const [proxySaved, setProxySaved] = useState(false)
+  const [syncConfig, setSyncConfig] = useState<SyncConfig>({ server: '', user: '', token: '' })
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'running' | 'ok' | 'failed'>('idle')
+  const [syncError, setSyncError] = useState('')
+  const [syncSaved, setSyncSaved] = useState(false)
 
   const refresh = useCallback(() => setPlugins(runtime.registry.list()), [runtime])
   useEffect(() => {
@@ -21,6 +26,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
       setProxyUrlInput(cfg.url)
       setProxyToken(cfg.token)
     })
+    runtime.getSyncConfig().then(setSyncConfig)
   }, [refresh, runtime])
 
   async function exportJson() {
@@ -55,6 +61,29 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
     } catch (e) {
       setProxyStatus('failed')
       setProxyError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function saveSync() {
+    await runtime.setSyncConfig(syncConfig)
+    setSyncSaved(true)
+    window.setTimeout(() => setSyncSaved(false), 2000)
+  }
+
+  async function runSync(op: 'push' | 'pull') {
+    if (!syncConfigured(syncConfig)) {
+      setSyncError('Enter a server URL and user first')
+      return
+    }
+    setSyncStatus('running')
+    setSyncError('')
+    try {
+      if (op === 'push') await pushSync(runtime.store, syncConfig)
+      else await pullSync(runtime.store, syncConfig)
+      setSyncStatus('ok')
+    } catch (e) {
+      setSyncStatus('failed')
+      setSyncError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -159,6 +188,49 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
           </div>
         </>
       )}
+
+      <SectionHeading title="Library sync" />
+      <div className="rounded-2xl border border-line-soft bg-surface p-4">
+        <p className="mb-3 text-xs text-muted">Sync library, progress, and history with a self-hosted woyomi server.</p>
+        <div className="flex flex-col gap-2">
+          <TextInput
+            type="url"
+            placeholder="https://your-server.example"
+            value={syncConfig.server}
+            onChange={(e) => setSyncConfig((current) => ({ ...current, server: e.target.value }))}
+            aria-label="Sync server URL"
+          />
+          <TextInput
+            placeholder="User"
+            value={syncConfig.user}
+            onChange={(e) => setSyncConfig((current) => ({ ...current, user: e.target.value }))}
+            aria-label="Sync user"
+          />
+          <TextInput
+            type="password"
+            placeholder="Token"
+            value={syncConfig.token}
+            onChange={(e) => setSyncConfig((current) => ({ ...current, token: e.target.value }))}
+            aria-label="Sync token"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Btn variant="soft" onClick={saveSync} disabled={syncStatus === 'running'}>
+              Save sync
+            </Btn>
+            <Btn variant="soft" onClick={() => runSync('push')} disabled={syncStatus === 'running'}>
+              Push now
+            </Btn>
+            <Btn variant="soft" onClick={() => runSync('pull')} disabled={syncStatus === 'running'}>
+              Pull now
+            </Btn>
+            {syncSaved && <span className="text-xs font-semibold text-ok">Saved</span>}
+            {syncStatus === 'running' && <span className="text-xs font-semibold text-muted">Syncing…</span>}
+            {syncStatus === 'ok' && <span className="text-xs font-semibold text-ok">OK</span>}
+            {syncStatus === 'failed' && <span className="text-xs font-semibold text-danger">{syncError || 'Failed'}</span>}
+          </div>
+          {syncStatus === 'idle' && syncError && <div className="text-xs font-semibold text-danger">{syncError}</div>}
+        </div>
+      </div>
 
       <SectionHeading title="Data" />
       <div className="flex flex-col gap-2 rounded-2xl border border-line-soft bg-surface p-4 sm:flex-row">

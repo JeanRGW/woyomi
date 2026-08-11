@@ -20,6 +20,7 @@ import {
 } from '@woyomi/core'
 import { SqliteStore } from './sqlite-store'
 import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, type ScrapeConfig } from './scrape'
+import type { SyncConfig } from './sync'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
 declare global {
@@ -115,6 +116,9 @@ export interface AppRuntime {
   /** Web-mode scrape proxy config. */
   getScrapeConfig(): Promise<ScrapeConfig>
   setScrapeConfig(config: ScrapeConfig): Promise<void>
+  /** Server library-sync config. */
+  getSyncConfig(): Promise<SyncConfig>
+  setSyncConfig(config: SyncConfig): Promise<void>
   /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
@@ -298,6 +302,16 @@ async function initRuntime(): Promise<AppRuntime> {
       setScrapeConfig(config)
       await prefs.set('__app', 'scrape.url', config.url)
       await prefs.set('__app', 'scrape.token', config.token)
+    },
+    getSyncConfig: async () => ({
+      server: (await prefs.get<string>('__app', 'sync.server')) ?? '',
+      user: (await prefs.get<string>('__app', 'sync.user')) ?? '',
+      token: (await prefs.get<string>('__app', 'sync.token')) ?? ''
+    }),
+    setSyncConfig: async (config) => {
+      await prefs.set('__app', 'sync.server', config.server)
+      await prefs.set('__app', 'sync.user', config.user)
+      await prefs.set('__app', 'sync.token', config.token)
     },
     async installExternal(plugin) {
       const provider = createFetchProvider()
