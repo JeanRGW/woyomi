@@ -4,20 +4,21 @@
 @theme {
   --font-sans: 'Manrope', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-  /* After-dark reading den: plum-ink surfaces, rose protagonist */
-  --color-ink: oklch(0.165 0.012 320);
-  --color-surface: oklch(0.205 0.014 320);
-  --color-surface-2: oklch(0.24 0.016 320);
-  --color-surface-3: oklch(0.285 0.02 320);
-  --color-line: oklch(0.31 0.02 320);
-  --color-line-soft: oklch(0.26 0.016 320);
-  --color-fg: oklch(0.94 0.008 320);
-  --color-muted: oklch(0.66 0.025 320);
-  --color-faint: oklch(0.5 0.02 320);
+  /* Woyomi brand: deep navy #071224 surfaces, bright blue #0874FF accent */
+  --color-ink: oklch(0.155 0.025 262);
+  --color-surface: oklch(0.185 0.03 262);
+  --color-surface-2: oklch(0.215 0.032 262);
+  --color-surface-3: oklch(0.255 0.035 262);
+  --color-line: oklch(0.275 0.035 262);
+  --color-line-soft: oklch(0.225 0.03 262);
+  --color-fg: oklch(0.94 0.008 262);
+  --color-muted: oklch(0.66 0.025 262);
+  --color-faint: oklch(0.5 0.02 262);
 
-  --color-accent: oklch(0.68 0.21 12);
-  --color-accent-deep: oklch(0.56 0.19 12);
-  --color-accent-soft: oklch(0.68 0.21 12 / 0.14);
+  /* #0874FF */
+  --color-accent: oklch(0.585 0.21 262);
+  --color-accent-deep: oklch(0.48 0.18 262);
+  --color-accent-soft: oklch(0.585 0.21 262 / 0.16);
 
   --color-ok: oklch(0.72 0.17 155);
   --color-ok-soft: oklch(0.72 0.17 155 / 0.12);

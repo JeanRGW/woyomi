@@ -10,6 +10,7 @@ import { StoreView } from './views/StoreView'
 import { SettingsView } from './views/SettingsView'
 import { PluginSettingsView } from './views/PluginSettingsView'
 import { Icon, type IconName } from './icons'
+import logoUrl from './assets/woyomi-logo-horizontal-reverse.svg'
 
 export type Route =
   | { name: 'browse' }
@@ -101,9 +102,7 @@ export function App() {
     return (
       <div className="grid h-full place-items-center bg-ink">
         <div className="flex flex-col items-center gap-3">
-          <div className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-accent to-accent-deep shadow-lg shadow-accent/25">
-            <Icon name="library" size={24} className="text-white" />
-          </div>
+          <img src={logoUrl} alt="woyomi" className="h-10" />
           <p className="text-sm text-muted">Loading engine…</p>
         </div>
       </div>
@@ -116,14 +115,8 @@ export function App() {
     <div className="flex h-full bg-ink text-fg">
       {!bare && (
         <aside className="hidden w-60 shrink-0 flex-col border-r border-line-soft bg-surface/30 md:flex">
-          <div className="flex items-center gap-3 px-5 pb-6 pt-6">
-            <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-accent to-accent-deep shadow-md shadow-accent/25">
-              <Icon name="library" size={18} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-[15px] font-extrabold tracking-tight">woyomi</div>
-              <div className="text-[11px] font-medium text-faint">multi-source library</div>
-            </div>
+          <div className="flex items-center px-5 pb-6 pt-6">
+            <img src={logoUrl} alt="woyomi" className="h-7" />
           </div>
           <nav className="flex flex-col gap-1 px-3">
             {tabs.map((t) => (
