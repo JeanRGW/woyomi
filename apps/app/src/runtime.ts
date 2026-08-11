@@ -254,6 +254,8 @@ async function initRuntime(): Promise<AppRuntime> {
   await loadFromBundle(videoBuilt.default, 'bundled')
   const tsundokuBuilt = await import('@woyomi/plugin-tsundoku/dist/tsundoku.plugin.js?raw')
   await loadFromBundle(tsundokuBuilt.default, 'bundled')
+  const animefireBuilt = await import('@woyomi/plugin-animefire/dist/animefire.plugin.js?raw')
+  await loadFromBundle(animefireBuilt.default, 'bundled')
 
   // Rehydrate externally-installed plugins across restarts.
   for (const plugin of await plugins.list()) {

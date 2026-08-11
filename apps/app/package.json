@@ -8,6 +8,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "build:plugin-mangadex": "pnpm --filter @woyomi/plugin-mangadex build:plugin",
+    "build:plugin-animefire": "pnpm --filter @woyomi/plugin-animefire build:plugin",
     "build:plugin-examplevideo": "pnpm --filter @woyomi/plugin-examplevideo build:plugin",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@woyomi/core": "workspace:*",
+    "@woyomi/plugin-animefire": "workspace:*",
     "@woyomi/plugin-examplevideo": "workspace:*",
     "@woyomi/plugin-mangadex": "workspace:*",
     "@woyomi/plugin-tsundoku": "workspace:*",

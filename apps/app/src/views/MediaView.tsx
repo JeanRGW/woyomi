@@ -24,6 +24,9 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       setSeen(new Set(prog?.seenEpisodeIds ?? []))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      // getMedia failed (e.g. dead/phantom entry); the library lookup still
+      // resolves, so a broken entry keeps its Remove action.
+      setEntry(await runtime.store.get(`${sourceId}/${mediaId}`))
     }
   }, [runtime, sourceId, mediaId])
 
@@ -72,17 +75,19 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       <Page>
         <BackButton />
         <Banner tone="error">{error}</Banner>
-        <div className="mt-4">
-          <Btn
-            variant="danger"
-            onClick={async () => {
-              await runtime.store.remove(`${sourceId}/${mediaId}`)
-              navigate({ name: 'library' })
-            }}
-          >
-            Remove from library
-          </Btn>
-        </div>
+        {entry && (
+          <div className="mt-4">
+            <Btn
+              variant="danger"
+              onClick={async () => {
+                await runtime.store.remove(entry.media.id)
+                navigate({ name: 'library' })
+              }}
+            >
+              Remove from library
+            </Btn>
+          </div>
+        )}
       </Page>
     )
   if (!media)

@@ -45,7 +45,8 @@ app.get('/health', (c) => c.json({ ok: true }))
 const repoDirs = [
   join(REPO_DIR, 'plugins', 'mangadex', 'dist'),
   join(REPO_DIR, 'plugins', 'examplevideo', 'dist'),
-  join(REPO_DIR, 'plugins', 'tsundoku', 'dist')
+  join(REPO_DIR, 'plugins', 'tsundoku', 'dist'),
+  join(REPO_DIR, 'plugins', 'animefire', 'dist')
 ]
 
 app.get('/repo', async (c) => {
