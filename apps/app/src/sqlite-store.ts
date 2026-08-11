@@ -1,6 +1,6 @@
 import Database from '@tauri-apps/plugin-sql'
 import type { PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
-import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry } from '@woyomi/core'
+import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry, SyncEdits, SyncPayload } from '@woyomi/core'
 import type { LibraryStore } from '@woyomi/core'
 
 /**
@@ -45,8 +45,9 @@ export class SqliteStore implements LibraryStore {
   async add(media: Media, status: LibraryStatus): Promise<void> {
     const db = await this.db()
     const existing = await this.get(media.id)
-    const meta: LibraryEntry = { media, status, addedAt: existing?.addedAt ?? Date.now() }
+    const meta: LibraryEntry = { media, status, addedAt: existing?.addedAt ?? Date.now(), updatedAt: Date.now() }
     await db.execute('INSERT OR REPLACE INTO library (id, meta) VALUES ($1, $2)', [media.id, JSON.stringify(meta)])
+    await this.clearTombstone('entries', media.id)
   }
 
   async updateStatus(mediaId: string, status: LibraryStatus): Promise<void> {
@@ -59,6 +60,7 @@ export class SqliteStore implements LibraryStore {
     // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
     const db = await this.db()
     await db.execute('DELETE FROM library WHERE id = $1', [mediaId])
+    await this.putTombstone('entries', mediaId)
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -84,6 +86,7 @@ export class SqliteStore implements LibraryStore {
     const progress: ProgressEntry = { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() }
     const db = await this.db()
     await db.execute('INSERT OR REPLACE INTO progress (media_id, seen) VALUES ($1, $2)', [mediaId, JSON.stringify(progress)])
+    await this.clearTombstone('progress', mediaId)
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
@@ -98,6 +101,7 @@ export class SqliteStore implements LibraryStore {
     const db = await this.db()
     if (seen.size === 0) {
       await db.execute('DELETE FROM progress WHERE media_id = $1', [mediaId])
+      await this.putTombstone('progress', mediaId)
     } else {
       const progress: ProgressEntry = { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() }
       await db.execute('INSERT OR REPLACE INTO progress (media_id, seen) VALUES ($1, $2)', [mediaId, JSON.stringify(progress)])
@@ -114,6 +118,7 @@ export class SqliteStore implements LibraryStore {
     const entry: HistoryEntry = { media, episode, openedAt: Date.now() }
     const db = await this.db()
     await db.execute('INSERT OR REPLACE INTO history (episode_id, row) VALUES ($1, $2)', [episode.id, JSON.stringify(entry)])
+    await this.clearTombstone('history', episode.id)
   }
 
   async listHistory(): Promise<HistoryEntry[]> {
@@ -125,6 +130,7 @@ export class SqliteStore implements LibraryStore {
   async removeHistory(episodeId: string): Promise<void> {
     const db = await this.db()
     await db.execute('DELETE FROM history WHERE episode_id = $1', [episodeId])
+    await this.putTombstone('history', episodeId)
   }
 
   async exportJson(): Promise<string> {
@@ -132,12 +138,13 @@ export class SqliteStore implements LibraryStore {
       version: 1,
       entries: await this.list(),
       progress: await this.listProgress(),
-      history: await this.listHistory()
+      history: await this.listHistory(),
+      tombstones: await this.readTombstones()
     })
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[]; history?: HistoryEntry[] }
+    const data = JSON.parse(json) as SyncPayload
     const db = await this.db()
     for (const e of data.entries ?? []) await db.execute('INSERT OR REPLACE INTO library (id, meta) VALUES ($1, $2)', [e.media.id, JSON.stringify(e)])
     for (const p of data.progress ?? []) await db.execute('INSERT OR REPLACE INTO progress (media_id, seen) VALUES ($1, $2)', [p.mediaId, JSON.stringify(p)])
@@ -145,12 +152,39 @@ export class SqliteStore implements LibraryStore {
       const entry: HistoryEntry = { media: h.media, episode: h.episode, openedAt: h.openedAt }
       await db.execute('INSERT OR REPLACE INTO history (episode_id, row) VALUES ($1, $2)', [h.episode.id, JSON.stringify(entry)])
     }
+    await this.setTombstones(data.tombstones)
   }
 
   private async listProgress(): Promise<ProgressEntry[]> {
     const db = await this.db()
     const rows = await db.select<Array<{ seen: string }>>('SELECT seen FROM progress')
     return rows.map((r) => JSON.parse(r.seen) as ProgressEntry)
+  }
+
+  // Tombstones live in the `preferences` table under a reserved key (no schema
+  // change). Map is id -> deletedAt. ponytail: never GC'd here.
+  private async readTombstones(): Promise<SyncEdits> {
+    const db = await this.db()
+    const rows = await db.select<Array<{ value: string }>>('SELECT value FROM preferences WHERE key = $1', ['__app/sync.tombstones'])
+    return rows[0] ? (JSON.parse(rows[0].value) as SyncEdits) : { entries: [], progress: [], history: [] }
+  }
+
+  private async setTombstones(t: SyncEdits): Promise<void> {
+    const db = await this.db()
+    await db.execute('INSERT OR REPLACE INTO preferences (key, value) VALUES ($1, $2)', ['__app/sync.tombstones', JSON.stringify(t)])
+  }
+
+  private async putTombstone(kind: 'entries' | 'progress' | 'history', id: string): Promise<void> {
+    const t = await this.readTombstones()
+    const list = t[kind].filter((x) => x.id !== id)
+    list.push({ id, deletedAt: Date.now() })
+    await this.setTombstones({ ...t, [kind]: list })
+  }
+
+  private async clearTombstone(kind: 'entries' | 'progress' | 'history', id: string): Promise<void> {
+    const t = await this.readTombstones()
+    const list = t[kind].filter((x) => x.id !== id)
+    if (list.length !== t[kind].length) await this.setTombstones({ ...t, [kind]: list })
   }
 
   /** Reuses this store's database connection; shares the SQLite file. */

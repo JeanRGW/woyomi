@@ -9,7 +9,9 @@ import type {
   PluginStore,
   PreferencesApi,
   PreferenceValue,
-  ProgressEntry
+  ProgressEntry,
+  SyncEdits,
+  SyncPayload
 } from './types.js'
 
 /** In-memory store used for tests and non-persistent scenarios. */
@@ -17,19 +19,25 @@ export class MemoryStore implements LibraryStore {
   private entries = new Map<string, LibraryEntry>()
   private progress = new Map<string, ProgressEntry>()
   private history = new Map<string, HistoryEntry>()
+  private tombEntries = new Map<string, number>()
+  private tombProgress = new Map<string, number>()
+  private tombHistory = new Map<string, number>()
 
   async add(media: Media, status: LibraryStatus): Promise<void> {
-    this.entries.set(media.id, { media, status, addedAt: this.entries.get(media.id)?.addedAt ?? Date.now() })
+    const prev = this.entries.get(media.id)
+    this.entries.set(media.id, { media, status, addedAt: prev?.addedAt ?? Date.now(), updatedAt: Date.now() })
+    this.tombEntries.delete(media.id)
   }
 
   async updateStatus(mediaId: string, status: LibraryStatus): Promise<void> {
     const entry = this.entries.get(mediaId)
-    if (entry) entry.status = status
+    if (entry) this.entries.set(mediaId, { ...entry, status, updatedAt: Date.now() })
   }
 
   async remove(mediaId: string): Promise<void> {
     // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
     this.entries.delete(mediaId)
+    this.tombEntries.set(mediaId, Date.now())
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -49,6 +57,7 @@ export class MemoryStore implements LibraryStore {
     const seen = new Set(existing?.seenEpisodeIds ?? [])
     for (const id of episodeIds) seen.add(id)
     this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
+    this.tombProgress.delete(mediaId)
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
@@ -60,8 +69,10 @@ export class MemoryStore implements LibraryStore {
     if (!existing) return
     const seen = new Set(existing.seenEpisodeIds)
     for (const id of episodeIds) seen.delete(id)
-    if (seen.size === 0) this.progress.delete(mediaId)
-    else this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
+    if (seen.size === 0) {
+      this.progress.delete(mediaId)
+      this.tombProgress.set(mediaId, Date.now())
+    } else this.progress.set(mediaId, { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })
   }
 
   async getProgress(mediaId: string): Promise<ProgressEntry | undefined> {
@@ -70,6 +81,7 @@ export class MemoryStore implements LibraryStore {
 
   async addHistory(media: Media, episode: Episode): Promise<void> {
     this.history.set(episode.id, { media, episode, openedAt: Date.now() })
+    this.tombHistory.delete(episode.id)
   }
 
   async listHistory(): Promise<HistoryEntry[]> {
@@ -78,6 +90,7 @@ export class MemoryStore implements LibraryStore {
 
   async removeHistory(episodeId: string): Promise<void> {
     this.history.delete(episodeId)
+    this.tombHistory.set(episodeId, Date.now())
   }
 
   async exportJson(): Promise<string> {
@@ -85,15 +98,32 @@ export class MemoryStore implements LibraryStore {
       version: 1,
       entries: [...this.entries.values()],
       progress: [...this.progress.values()],
-      history: [...this.history.values()]
+      history: [...this.history.values()],
+      tombstones: {
+        entries: [...this.tombEntries].map(([id, deletedAt]) => ({ id, deletedAt })),
+        progress: [...this.tombProgress].map(([id, deletedAt]) => ({ id, deletedAt })),
+        history: [...this.tombHistory].map(([id, deletedAt]) => ({ id, deletedAt }))
+      }
     })
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[]; history?: HistoryEntry[] }
+    const data = JSON.parse(json) as SyncPayload
     if (data.entries) for (const e of data.entries) this.entries.set(e.media.id, e)
     if (data.progress) for (const p of data.progress) this.progress.set(p.mediaId, p)
     if (data.history) for (const h of data.history) this.history.set(h.episode.id, h)
+    for (const t of data.tombstones?.entries ?? []) {
+      this.entries.delete(t.id)
+      this.tombEntries.set(t.id, t.deletedAt)
+    }
+    for (const t of data.tombstones?.progress ?? []) {
+      this.progress.delete(t.id)
+      this.tombProgress.set(t.id, t.deletedAt)
+    }
+    for (const t of data.tombstones?.history ?? []) {
+      this.history.delete(t.id)
+      this.tombHistory.set(t.id, t.deletedAt)
+    }
   }
 }
 
@@ -191,23 +221,25 @@ export class IndexedDbStore implements LibraryStore {
   async add(media: Media, status: LibraryStatus): Promise<void> {
     const db = await this.db()
     const existing = await this.get(media.id)
-    const addedAt = existing?.addedAt ?? Date.now()
-    return new Promise((resolve, reject) => {
+    const meta: LibraryEntry = { ...existing, media, status, addedAt: existing?.addedAt ?? Date.now(), updatedAt: Date.now() }
+    await new Promise((resolve, reject) => {
       const tx = db.transaction('library', 'readwrite')
-      tx.objectStore('library').put({ ...media, meta: { media, status, addedAt } })
-      tx.oncomplete = () => resolve()
+      tx.objectStore('library').put({ ...media, meta })
+      tx.oncomplete = () => resolve(null)
       tx.onerror = () => reject(tx.error)
     })
+    await this.clearTombstone('entries', media.id)
   }
 
   async updateStatus(mediaId: string, status: LibraryStatus): Promise<void> {
-    await this.updateMeta(mediaId, (meta) => ({ ...meta, status }))
+    await this.updateMeta(mediaId, (meta) => ({ ...meta, status, updatedAt: Date.now() }))
   }
 
   async remove(mediaId: string): Promise<void> {
     const db = await this.db()
     // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
     await request(db.transaction('library', 'readwrite').objectStore('library').delete(mediaId)).then(() => undefined)
+    await this.putTombstone('entries', mediaId)
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -231,7 +263,8 @@ export class IndexedDbStore implements LibraryStore {
     const seen = new Set(existing?.seenEpisodeIds ?? [])
     for (const id of episodeIds) seen.add(id)
     const row: ProgressEntry = { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() }
-    return request(db.transaction('progress', 'readwrite').objectStore('progress').put(row)).then(() => undefined)
+    await request(db.transaction('progress', 'readwrite').objectStore('progress').put(row)).then(() => undefined)
+    await this.clearTombstone('progress', mediaId)
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
@@ -245,8 +278,10 @@ export class IndexedDbStore implements LibraryStore {
     const seen = new Set(existing.seenEpisodeIds)
     for (const id of episodeIds) seen.delete(id)
     const store = db.transaction('progress', 'readwrite').objectStore('progress')
-    if (seen.size === 0) return request(store.delete(mediaId)).then(() => undefined)
-    return request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)
+    if (seen.size === 0) {
+      await request(store.delete(mediaId)).then(() => undefined)
+      await this.putTombstone('progress', mediaId)
+    } else await request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)
   }
 
   async getProgress(mediaId: string): Promise<ProgressEntry | undefined> {
@@ -257,7 +292,8 @@ export class IndexedDbStore implements LibraryStore {
   async addHistory(media: Media, episode: Episode): Promise<void> {
     const db = await this.db()
     const row = { key: episode.id, media, episode, openedAt: Date.now() }
-    return request(db.transaction('history', 'readwrite').objectStore('history').put(row)).then(() => undefined)
+    await request(db.transaction('history', 'readwrite').objectStore('history').put(row)).then(() => undefined)
+    await this.clearTombstone('history', episode.id)
   }
 
   async listHistory(): Promise<HistoryEntry[]> {
@@ -270,7 +306,8 @@ export class IndexedDbStore implements LibraryStore {
 
   async removeHistory(episodeId: string): Promise<void> {
     const db = await this.db()
-    return request(db.transaction('history', 'readwrite').objectStore('history').delete(episodeId)).then(() => undefined)
+    await request(db.transaction('history', 'readwrite').objectStore('history').delete(episodeId)).then(() => undefined)
+    await this.putTombstone('history', episodeId)
   }
 
   async exportJson(): Promise<string> {
@@ -280,11 +317,12 @@ export class IndexedDbStore implements LibraryStore {
       const p = await this.getProgress(e.media.id)
       if (p) progress.push(p)
     }
-    return JSON.stringify({ version: 1, entries, progress, history: await this.listHistory() })
+    const tombstones = await this.readTombstones()
+    return JSON.stringify({ version: 1, entries, progress, history: await this.listHistory(), tombstones })
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as { version: number; entries?: LibraryEntry[]; progress?: ProgressEntry[]; history?: HistoryEntry[] }
+    const data = JSON.parse(json) as SyncPayload
     const db = await this.db()
     await new Promise((resolve, reject) => {
       const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
@@ -297,6 +335,7 @@ export class IndexedDbStore implements LibraryStore {
       tx.oncomplete = () => resolve(null)
       tx.onerror = () => reject(tx.error)
     })
+    await this.setTombstones(data.tombstones)
   }
 
   private async updateMeta(mediaId: string, updater: (meta: LibraryEntry) => LibraryEntry): Promise<void> {
@@ -304,6 +343,41 @@ export class IndexedDbStore implements LibraryStore {
     if (!meta) return
     const db = await this.db()
     return request(db.transaction('library', 'readwrite').objectStore('library').put({ ...meta.media, meta: updater(meta) })).then(() => undefined)
+  }
+
+  // Tombstones persist in the `preferences` object store under a reserved key
+  // (reuses the DB handle + schema, no migration). The map is id -> deletedAt.
+  // ponytail: tombstones are never GC'd here. Add pruning when they measurably grow.
+  private async readTombstones(): Promise<SyncEdits> {
+    const db = await this.db()
+    const row = await request<{ value: SyncEdits } | undefined>(db.transaction('preferences', 'readonly').objectStore('preferences').get('__app/sync.tombstones'))
+    return (
+      row?.value ?? {
+        entries: [],
+        progress: [],
+        history: []
+      }
+    )
+  }
+
+  private async setTombstones(t: SyncEdits): Promise<void> {
+    const db = await this.db()
+    await request(db.transaction('preferences', 'readwrite').objectStore('preferences').put({ key: '__app/sync.tombstones', value: t })).then(
+      () => undefined
+    )
+  }
+
+  private async putTombstone(kind: 'entries' | 'progress' | 'history', id: string): Promise<void> {
+    const t = await this.readTombstones()
+    const list = t[kind].filter((x) => x.id !== id)
+    list.push({ id, deletedAt: Date.now() })
+    await this.setTombstones({ ...t, [kind]: list })
+  }
+
+  private async clearTombstone(kind: 'entries' | 'progress' | 'history', id: string): Promise<void> {
+    const t = await this.readTombstones()
+    const list = t[kind].filter((x) => x.id !== id)
+    if (list.length !== t[kind].length) await this.setTombstones({ ...t, [kind]: list })
   }
 }
 

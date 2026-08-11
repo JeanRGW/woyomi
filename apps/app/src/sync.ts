@@ -32,6 +32,9 @@ export async function pushSync(store: LibraryStore, config: SyncConfig): Promise
     syncInit(config, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: await store.exportJson() })
   )
   if (!res.ok) throwHttp(res, 'push')
+  // The server merges its stored state with our payload and returns the result;
+  // adopting it keeps our local copy in step with any concurrent edits.
+  await store.importJson(await res.text())
 }
 
 export async function pullSync(store: LibraryStore, config: SyncConfig): Promise<void> {

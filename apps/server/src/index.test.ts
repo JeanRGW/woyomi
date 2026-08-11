@@ -1,7 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { server, isPrivateTarget } from './index'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { server, isPrivateTarget, mergeLibraries } from './index'
+import type { LibraryEntry, SyncPayload } from '@woyomi/core'
 
 const TOKEN = 'changeme'
+
+const originalDataDir = process.env.DATA_DIR
+
+beforeEach(() => {
+  process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'woyomi-server-test-'))
+})
+afterEach(() => {
+  if (process.env.DATA_DIR) rmSync(process.env.DATA_DIR, { recursive: true, force: true })
+  if (originalDataDir === undefined) delete process.env.DATA_DIR
+  else process.env.DATA_DIR = originalDataDir
+})
+
+function entry(id: string, status = 'reading', updatedAt = 10): LibraryEntry {
+  return {
+    media: { id, title: id, mediaId: id, sourceId: 's', type: 'manga' },
+    status: status as LibraryEntry['status'],
+    addedAt: updatedAt,
+    updatedAt
+  }
+}
+
+function payload(overrides: Partial<SyncPayload> = {}): SyncPayload {
+  return { version: 1, entries: [], progress: [], history: [], tombstones: { entries: [], progress: [], history: [] }, ...overrides }
+}
 
 describe('sync api', () => {
   it('requires auth', async () => {
@@ -10,22 +38,92 @@ describe('sync api', () => {
   })
 
   it('round-trips library json with auth', async () => {
-    const put = await server.request('/api/sync/bob', {
+    const put = await server.request(`/api/sync/bob`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        entries: [{ media: { id: 's/1', title: 'T', mediaId: '1', sourceId: 's', type: 'manga' }, status: 'reading', addedAt: 1 }],
-        progress: [],
-        history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 2 }]
-      })
+      body: JSON.stringify(
+        payload({
+          entries: [entry('s/1', 'reading', 1)],
+          history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 2 }]
+        })
+      )
     })
     expect(put.status).toBe(200)
 
-    const get = await server.request('/api/sync/bob', { headers: { authorization: `Bearer ${TOKEN}` } })
-    expect(get.status).toBe(200)
+    const get = await server.request(`/api/sync/bob`, { headers: { authorization: `Bearer ${TOKEN}` } })
     const data = (await get.json()) as { entries: Array<{ media: { title: string } }>; history: Array<{ openedAt: number }> }
-    expect(data.entries[0]?.media.title).toBe('T')
+    expect(data.entries[0]?.media.title).toBe('s/1')
     expect(data.history[0]?.openedAt).toBe(2)
+  })
+
+  it('returns the merged payload from PUT', async () => {
+    const res = await server.request(`/api/sync/carol`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload({ entries: [entry('s/1', 'reading', 5)] }))
+    })
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as SyncPayload
+    expect(data.entries.map((e) => e.media.id)).toEqual(['s/1'])
+    expect(data.tombstones.entries).toEqual([])
+  })
+})
+
+describe('mergeLibraries', () => {
+  it('unions seenEpisodeIds across devices', () => {
+    const prev = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 1 }] })
+    const inc = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 2 }] })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.progress).toEqual([{ mediaId: 's/1', seenEpisodeIds: ['e1', 'e2'], updatedAt: 2 }])
+  })
+
+  it('keeps the entry with the newer updatedAt', () => {
+    const prev = payload({ entries: [entry('s/1', 'reading', 5)] })
+    const inc = payload({ entries: [entry('s/1', 'completed', 10)] })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.entries[0]?.status).toBe('completed')
+  })
+
+  it('a newer tombstone beats an older live entry', () => {
+    const prev = payload({ entries: [entry('s/1', 'reading', 5)] })
+    const inc = payload({ tombstones: { entries: [{ id: 's/1', deletedAt: 10 }] } })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.entries).toEqual([])
+    expect(merged.tombstones.entries).toEqual([{ id: 's/1', deletedAt: 10 }])
+  })
+
+  it('a newer re-add beats an older tombstone', () => {
+    const prev = payload({ tombstones: { entries: [{ id: 's/1', deletedAt: 5 }] } })
+    const inc = payload({ entries: [entry('s/1', 'reading', 10)] })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.entries.map((e) => e.media.id)).toEqual(['s/1'])
+    expect(merged.tombstones.entries).toEqual([])
+  })
+
+  it('keeps history by max openedAt', () => {
+    const prev = payload({ history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 5 }] })
+    const inc = payload({ history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 10 }] })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.history[0]?.openedAt).toBe(10)
+  })
+
+  it('a history tombstone removes the row when newer than openedAt', () => {
+    const prev = payload({ history: [{ media: { id: 's/1', mediaId: '1', sourceId: 's', title: 'T', type: 'manga' }, episode: { id: 'e/1', number: 1, mediaId: '1' }, openedAt: 5 }] })
+    const inc = payload({ tombstones: { history: [{ id: 'e/1', deletedAt: 10 }] } })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.history).toEqual([])
+  })
+
+  it('keeps the entry from an empty stored state', () => {
+    const merged = mergeLibraries(payload(), payload({ entries: [entry('s/1')] }))
+    expect(merged.entries).toHaveLength(1)
+  })
+
+  it('a progress tombstone removes the row when newer than updatedAt', () => {
+    const prev = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 5 }] })
+    const inc = payload({ tombstones: { progress: [{ id: 's/1', deletedAt: 10 }] } })
+    const merged = mergeLibraries(prev, inc)
+    expect(merged.progress).toEqual([])
   })
 })
 

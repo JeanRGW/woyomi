@@ -166,6 +166,29 @@ export interface LibraryEntry {
   media: Media
   status: LibraryStatus
   addedAt: number
+  /** last mutation time; defaults to `addedAt` for legacy rows; used for sync merge */
+  updatedAt?: number
+}
+
+/** A deleted id + when it was deleted, carried so other devices don't resurrect it. */
+export interface SyncTombstone {
+  id: string
+  deletedAt: number
+}
+
+export interface SyncEdits {
+  entries: SyncTombstone[]
+  progress: SyncTombstone[]
+  history: SyncTombstone[]
+}
+
+/** The library payload exchanged with the sync server (union of full JSON export + tombstones). */
+export interface SyncPayload {
+  version: number
+  entries: LibraryEntry[]
+  progress: ProgressEntry[]
+  history: HistoryEntry[]
+  tombstones: SyncEdits
 }
 
 export interface ProgressEntry {

@@ -35,10 +35,19 @@ describe('syncConfigured', () => {
 })
 
 describe('pushSync', () => {
-  it('PUTs the exported library with auth and encoded user', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 200 }))
+  it('PUTs the exported library (records + tombstones) and adopts the response', async () => {
+    const merged = JSON.stringify({ version: 1, entries: [], progress: [], history: [], tombstones: { entries: [], progress: [], history: [] } })
+    const fetchMock = vi.fn(async () => new Response(merged, { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    const local = store(JSON.stringify({ version: 1, entries: [{ id: 'entry' }], progress: [], history: [{ id: 'history' }] }))
+    const local = store(
+      JSON.stringify({
+        version: 1,
+        entries: [{ id: 'entry' }],
+        progress: [],
+        history: [{ id: 'history' }],
+        tombstones: { entries: [{ id: 'gone', deletedAt: 5 }], progress: [], history: [] }
+      })
+    )
 
     await pushSync(local, config)
 
@@ -50,8 +59,15 @@ describe('pushSync', () => {
       version: 1,
       entries: [{ id: 'entry' }],
       progress: [],
-      history: [{ id: 'history' }]
+      history: [{ id: 'history' }],
+      tombstones: { entries: [{ id: 'gone', deletedAt: 5 }], progress: [], history: [] }
     })
+    expect(local.importJson).toHaveBeenCalledWith(merged)
+  })
+
+  it('reports HTTP failures', async () => {
+    vi.stubGlobal('fetch', async () => new Response('', { status: 401 }))
+    await expect(pushSync(store(), config)).rejects.toThrow('sync push -> HTTP 401')
   })
 })
 
