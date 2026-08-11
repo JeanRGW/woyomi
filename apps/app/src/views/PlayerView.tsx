@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Hls from 'hls.js'
 import type { Episode, Media, StreamSource } from '@woyomi/core'
-import type { AppRuntime } from '../runtime'
+import { playableStreamUrl, type AppRuntime } from '../runtime'
 import { recordOpen } from '../hooks'
 import { BackButton, Banner, Page } from '../components'
 
@@ -44,14 +44,21 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
   useEffect(() => {
     const video = videoRef.current
     if (!video || !stream) return
-    if (stream.kind === 'hls' && Hls.isSupported()) {
-      const hls = new Hls()
-      hls.loadSource(stream.url)
-      hls.attachMedia(video)
-      return () => hls.destroy()
-    }
-    video.src = stream.url
+    let hls: Hls | undefined
+    let cancelled = false
+    playableStreamUrl(stream).then((url) => {
+      if (cancelled) return
+      if (stream.kind === 'hls' && Hls.isSupported()) {
+        hls = new Hls()
+        hls.loadSource(url)
+        hls.attachMedia(video)
+      } else {
+        video.src = url
+      }
+    })
     return () => {
+      cancelled = true
+      hls?.destroy()
       video.src = ''
     }
   }, [stream])

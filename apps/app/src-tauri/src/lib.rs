@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::sync::OnceLock;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,9 +72,99 @@ async fn fetch_url(
     Ok(FetchResult { status, headers, body })
 }
 
+/// Base URL of the localhost media-stream proxy. The player points the <video>
+/// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. animefire's
+/// Referer) play; the proxy forwards Range for seeking.
+#[tauri::command]
+fn stream_proxy_base() -> String {
+    format!("http://127.0.0.1:{}", stream_proxy_port())
+}
+
 #[derive(Default)]
 pub struct AppState {
     pub client: reqwest::Client,
+}
+
+/// Ephemeral localhost HTTP proxy that streams media with custom headers (e.g.
+/// the Referer animefire requires) and forwards Range so the <video> can seek.
+/// Bound to 127.0.0.1 on an ephemeral port; started on first use.
+fn stream_proxy_port() -> &'static u16 {
+    static PORT: OnceLock<u16> = OnceLock::new();
+    PORT.get_or_init(|| {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("failed to bind stream proxy");
+        let port = server.server_addr().to_ip().expect("stream proxy not IP").port();
+        std::thread::spawn(move || serve_streams(server));
+        port
+    })
+}
+
+fn serve_streams(server: tiny_http::Server) {
+    // No total timeout on the proxy client — a 122MB stream must not be aborted
+    // mid-download like the 15s fetch_url client would.
+    let client = reqwest::blocking::Client::builder().build().expect("failed to build stream proxy client");
+    for request in server.incoming_requests() {
+        let client = client.clone();
+        let _ = std::thread::spawn(move || {
+            if let Err(e) = proxy_one(&client, request) {
+                eprintln!("stream proxy: {e}");
+            }
+        });
+    }
+}
+
+fn proxy_one(client: &reqwest::blocking::Client, request: tiny_http::Request) -> Result<(), String> {
+    // tiny_http gives the path+query (relative); parse against a dummy base so
+    // the query string (url + headers) is reachable.
+    let parsed = url::Url::parse(&format!("http://127.0.0.1{}", request.url())).map_err(|e| format!("bad request url: {e}"))?;
+    let target = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "url")
+        .map(|(_, v)| v.into_owned())
+        .ok_or("missing url param")?;
+    let headers = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "headers")
+        .map(|(_, v)| serde_json::from_str::<std::collections::HashMap<String, String>>(v.as_ref()))
+        .transpose()
+        .map_err(|e| format!("bad headers param: {e}"))?
+        .unwrap_or_default();
+
+    let mut builder = client.get(&target);
+    for (k, v) in headers {
+        builder = builder.header(k, v);
+    }
+    // Forward Range so seeking works on the proxy URL.
+    if let Some(range) = request.headers().iter().find(|h| h.field.equiv("Range")) {
+        let value = range.value.as_str().to_string();
+        if !value.is_empty() {
+            builder = builder.header("Range", value);
+        }
+    }
+
+    let resp = builder.send().map_err(|e| format!("upstream request failed: {e}"))?;
+    let status = resp.status();
+
+    let mut response = tiny_http::Response::empty(status.as_u16());
+    // Forward length/range headers so the media element can seek.
+    for name in ["content-type", "content-length", "content-range", "accept-ranges"] {
+        if let Some(v) = resp.headers().get(name) {
+            if let Ok(s) = v.to_str() {
+                let hdr = tiny_http::Header::from_bytes(name.as_bytes(), s.as_bytes())
+                    .map_err(|e| format!("bad {name} header: {e:?}"))?;
+                response = response.with_header(hdr);
+            }
+        }
+    }
+
+    struct UpstreamBody(reqwest::blocking::Response);
+    impl Read for UpstreamBody {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+
+    let stream = UpstreamBody(resp);
+    request.respond(response.with_data(stream, None)).map_err(|e| format!("respond: {e}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,7 +180,7 @@ pub fn run() {
                 .build()
                 .expect("failed to build http client"),
         })
-        .invoke_handler(tauri::generate_handler![fetch_url])
+        .invoke_handler(tauri::generate_handler![fetch_url, stream_proxy_base])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

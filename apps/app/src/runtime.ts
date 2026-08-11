@@ -36,6 +36,20 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__
 }
 
+/**
+ * Resolve the URL the <video> should load. Streams with custom headers (e.g.
+ * animefire's Referer) can't be played directly, so in the native shell we
+ * route them through the localhost stream proxy, which applies the headers
+ * and forwards Range for seeking. Header-free streams play directly.
+ * Web mode: the proxy endpoint is a server-side phase (not yet implemented).
+ */
+export async function playableStreamUrl(stream: { url: string; headers?: Record<string, string> }): Promise<string> {
+  if (!stream.headers || Object.keys(stream.headers).length === 0) return stream.url
+  if (!isTauri()) return stream.url
+  const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
+  return `${base}/stream?url=${encodeURIComponent(stream.url)}&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`
+}
+
 /** Upper bound on an installable plugin bundle, to keep installs sane. */
 const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
 

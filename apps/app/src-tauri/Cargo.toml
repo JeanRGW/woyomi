@@ -20,7 +20,9 @@ tauri-plugin-fs = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "charset"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "charset", "blocking"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 sha2 = "0.10"
 http = "1"
+url = "2"
+tiny_http = "0.12"
