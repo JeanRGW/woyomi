@@ -121,7 +121,7 @@ export function EmptyState({ icon, title, hint }: { icon: IconName; title: strin
 export function BackButton() {
   return (
     <button
-      onClick={() => history.back()}
+      onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'library' }))}
       className="mb-4 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-surface/80 px-3.5 text-sm font-semibold text-muted backdrop-blur transition-colors hover:bg-surface-2 hover:text-fg"
     >
       <Icon name="back" size={17} />

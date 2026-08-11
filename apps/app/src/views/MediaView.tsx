@@ -70,7 +70,19 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   if (error)
     return (
       <Page>
+        <BackButton />
         <Banner tone="error">{error}</Banner>
+        <div className="mt-4">
+          <Btn
+            variant="danger"
+            onClick={async () => {
+              await runtime.store.remove(`${sourceId}/${mediaId}`)
+              navigate({ name: 'library' })
+            }}
+          >
+            Remove from library
+          </Btn>
+        </div>
       </Page>
     )
   if (!media)
