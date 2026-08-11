@@ -19,7 +19,7 @@ import {
   type SandboxTransport
 } from '@woyomi/core'
 import { SqliteStore } from './sqlite-store'
-import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, type ScrapeConfig } from './scrape'
+import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, streamProxyUrl, type ScrapeConfig } from './scrape'
 import { makeSyncingStore, startAutoSync, type SyncConfig } from './sync'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
@@ -41,11 +41,17 @@ export function isTauri(): boolean {
  * animefire's Referer) can't be played directly, so in the native shell we
  * route them through the localhost stream proxy, which applies the headers
  * and forwards Range for seeking. Header-free streams play directly.
- * Web mode: the proxy endpoint is a server-side phase (not yet implemented).
+ * Web mode: routes through the self-hosted /api/scrape proxy when one is
+ * configured (no CORS limits), else direct fetch — which works only for
+ * CORS-enabled APIs like MangaDex. Header-gated streams (e.g. animefire's
+ * Referer MP4s) are routed through the same server's /api/stream endpoint.
  */
 export async function playableStreamUrl(stream: { url: string; headers?: Record<string, string> }): Promise<string> {
   if (!stream.headers || Object.keys(stream.headers).length === 0) return stream.url
-  if (!isTauri()) return stream.url
+  if (!isTauri()) {
+    const cfg = getScrapeConfig()
+    return cfg.url ? streamProxyUrl(cfg, stream) : stream.url
+  }
   const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
   return `${base}/stream?url=${encodeURIComponent(stream.url)}&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`
 }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -262,5 +263,95 @@ describe('scrape proxy guardrails', () => {
     expect(sent.host).toBeUndefined()
     expect(sent.authorization).toBeUndefined()
     expect(sent['x-plugin']).toBe('1')
+  })
+})
+
+describe('stream proxy (/api/stream)', () => {
+  const originalFetch = globalThis.fetch
+  const originalScrapeEnabled = process.env.SCRAPE_ENABLED
+  const originalScrapeToken = process.env.SCRAPE_TOKEN
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const h = new Headers(init?.headers)
+      if (h.get('range') === 'bytes=0-0' && h.get('referer') === 'https://site/') {
+        return new Response('x', { status: 206, headers: { 'content-range': 'bytes 0-0/5' } })
+      }
+      return new Response('body', { status: 200, headers: { 'content-type': 'video/mp4' } })
+    })
+    process.env.SCRAPE_ENABLED = 'true'
+    delete process.env.SCRAPE_TOKEN
+  })
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    process.env.SCRAPE_ENABLED = originalScrapeEnabled
+    if (originalScrapeToken === undefined) delete process.env.SCRAPE_TOKEN
+    else process.env.SCRAPE_TOKEN = originalScrapeToken
+    vi.restoreAllMocks()
+  })
+
+  it('returns 403 when scrape proxy is disabled', async () => {
+    process.env.SCRAPE_ENABLED = 'false'
+    const res = await server.request('/api/stream?url=https://v.example/e.m4v')
+    expect(res.status).toBe(403)
+  })
+
+  it('returns 401 when a token is set but not supplied', async () => {
+    process.env.SCRAPE_TOKEN = 'secret'
+    const res = await server.request('/api/stream?url=https://v.example/e.m4v')
+    expect(res.status).toBe(401)
+  })
+
+  it('requires the url param', async () => {
+    const res = await server.request('/api/stream')
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects non-http targets', async () => {
+    const res = await server.request('/api/stream?url=file:///etc/passwd')
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects private targets (SSRF)', async () => {
+    const res = await server.request('/api/stream?url=http://127.0.0.1/x')
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects bad headers JSON', async () => {
+    const res = await server.request('/api/stream?url=https://v.example/e.m4v&headers=%%bad')
+    expect(res.status).toBe(400)
+  })
+
+  it('streams the upstream body with forwarded headers and Range', async () => {
+    const headers = encodeURIComponent(JSON.stringify({ Referer: 'https://site/' }))
+    const res = await server.request(
+      `/api/stream?url=https://v.example/e.m4v&headers=${headers}`,
+      { headers: { range: 'bytes=0-0' } }
+    )
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe('bytes 0-0/5')
+    expect(await res.text()).toBe('x')
+
+    const [url, init] = (globalThis.fetch as Mock).mock.calls[0]! as unknown as [string, RequestInit]
+    expect(url).toBe('https://v.example/e.m4v')
+    const sent = new Headers(init.headers)
+    expect(sent.get('referer')).toBe('https://site/')
+    expect(sent.get('range')).toBe('bytes=0-0')
+    expect(sent.get('authorization')).toBeNull()
+    expect(sent.get('content-length')).toBeNull()
+  })
+
+  it('passes the token via query', async () => {
+    process.env.SCRAPE_TOKEN = 'secret'
+    const res = await server.request('/api/stream?url=https://v.example/e.m4v&token=secret')
+    expect(res.status).toBe(200)
+    const res2 = await server.request('/api/stream?url=https://v.example/e.m4v&token=nope')
+    expect(res2.status).toBe(401)
+  })
+
+  it('strips hop-by-hop response headers', async () => {
+    ;(globalThis.fetch as Mock).mockResolvedValueOnce(new Response('x', { headers: { 'transfer-encoding': 'chunked' } }))
+    const res = await server.request('/api/stream?url=https://v.example/e.m4v')
+    expect(res.headers.get('transfer-encoding')).toBeNull()
   })
 })

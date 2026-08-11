@@ -29,12 +29,14 @@ A plugin never calls `fetch` itself. It receives a `SourceContext` whose
 - **native (Tauri):** routes to a Rust `fetch_url` command (reqwest). No CORS
   — source sites are reachable directly.
 - **browser/web mode:** routes through the optional self-hosted `/api/scrape`
-  proxy (configured under **Settings → Web proxy**). Empty URL = direct
-  `fetch`, which works only for CORS-enabled APIs like MangaDex. To self-host
-  the proxy securely, run `apps/server` with `SCRAPE_ENABLED=true` (optionally
-  `SCRAPE_TOKEN=...` for a shared key the app sends as `Bearer`). The endpoint
-  is off by default so the bundled server is not an open proxy, and when
-  enabled it is hardened (timeout, response-size cap, SSRF blocklist).
+   proxy (configured under **Settings → Web proxy**). Header-gated media (e.g.
+   animefire's Referer MP4s) additionally route through `/api/stream` on the same
+   server (`?token=` when a `SCRAPE_TOKEN` is set). Empty URL = direct
+   `fetch`, which works only for CORS-enabled APIs like MangaDex. To self-host
+   the proxy securely, run `apps/server` with `SCRAPE_ENABLED=true` (optionally
+   `SCRAPE_TOKEN=...` for a shared key the app sends as `Bearer`). The endpoint
+   is off by default so the bundled server is not an open proxy, and when
+   enabled it is hardened (timeout, SSRF blocklist).
 
 Plugins are bundled into self-contained IIFEs by `plugin-builder` and either
 ship with the app (bundled) or are installed from remote repositories

@@ -172,6 +172,69 @@ app.post('/api/scrape', async (c) => {
   return c.json({ status: res.status, headers: outHeaders, body: text })
 })
 
+/**
+ * Stream media for the web build: applies caller-supplied headers (e.g. the
+ * Referer animefire requires) and forwards Range for <video> seeking. Gated
+ * like /api/scrape (SCRAPE_ENABLED + optional SCRAPE_TOKEN via ?token=).
+ * <video> can't send headers, so the token travels in the query string.
+ * ponytail: token-in-query is a log smell; fine for a personal self-hosted box.
+ * Reuses the scrape proxy's SSRF guard verbatim.
+ */
+app.get('/api/stream', async (c) => {
+  if (!scrapeEnabled()) return c.json({ error: 'scrape proxy disabled' }, 403)
+  const token = scrapeToken()
+  if (token && c.req.query('token') !== token) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+
+  const target = c.req.query('url')
+  const headersJson = c.req.query('headers')
+  if (!target) return c.json({ error: 'missing url param' }, 400)
+  const parsedTarget = new URL(target)
+  if (parsedTarget.protocol !== 'https:' && parsedTarget.protocol !== 'http:') {
+    return c.json({ error: 'only http(s) targets are allowed' }, 400)
+  }
+  if (isPrivateTarget(parsedTarget)) return c.json({ error: 'private targets are not allowed' }, 400)
+
+  let headers: Record<string, string> = {}
+  if (headersJson) {
+    try {
+      const parsed = JSON.parse(headersJson)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        headers = parsed as Record<string, string>
+      }
+    } catch {
+      return c.json({ error: 'bad headers param' }, 400)
+    }
+  }
+
+  const upHeaders: Record<string, string> = { 'user-agent': 'woyomi/0.1 (+web)', ...headers }
+  delete upHeaders['content-length']
+  delete upHeaders['host']
+  delete upHeaders['authorization']
+
+  const range = c.req.header('range')
+
+  let res: Response
+  try {
+    res = await fetch(target, {
+      method: 'GET',
+      headers: range ? { ...upHeaders, range } : upHeaders,
+      signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
+    })
+  } catch {
+    return c.json({ error: 'upstream request failed or timed out' }, 502)
+  }
+
+  const outHeaders: Record<string, string> = {}
+  res.headers.forEach((v, k) => {
+    const lk = k.toLowerCase()
+    if (!['transfer-encoding', 'connection'].includes(lk)) outHeaders[k] = v
+  })
+  if (!res.body) return c.json({ error: 'upstream returned no body' }, 502)
+  return c.body(res.body as ReadableStream, res.status as never, outHeaders as Record<string, string>)
+})
+
 function authed(c: { req: { header: (k: string) => string | undefined } }): boolean {
   return c.req.header('authorization') === `Bearer ${OWNER_TOKEN}`
 }

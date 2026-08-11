@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { annotateFetchError, isNetworkError, proxyUrl, scrapeRequest, shouldProxy } from './scrape'
+import {
+  annotateFetchError,
+  isNetworkError,
+  proxyUrl,
+  scrapeRequest,
+  shouldProxy,
+  streamProxyUrl
+} from './scrape'
 import type { ScrapeConfig } from './scrape'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -62,6 +69,30 @@ describe('shouldProxy', () => {
   })
   it('returns false when no proxy is configured', () => {
     expect(shouldProxy({ url: '', token: '' }, 'https://example.com/')).toBe(false)
+  })
+})
+
+describe('streamProxyUrl', () => {
+  it('builds a /api/stream URL with url and headers params', () => {
+    const cfg: ScrapeConfig = { url: 'http://localhost:8787/', token: '' }
+    const out = streamProxyUrl(cfg, { url: 'https://v.example/e.m4v', headers: { Referer: 'https://site/' } })
+    expect(out).toBe('http://localhost:8787/api/stream?url=https%3A%2F%2Fv.example%2Fe.m4v&headers=%7B%22Referer%22%3A%22https%3A%2F%2Fsite%2F%22%7D')
+  })
+  it('omits the token param when no token is set', () => {
+    const cfg: ScrapeConfig = { url: 'http://p.test', token: '' }
+    const out = streamProxyUrl(cfg, { url: 'https://v.example/e.m4v' })
+    expect(out).toContain('/api/stream?url=')
+    expect(out).not.toContain('token=')
+  })
+  it('appends the token param when set', () => {
+    const cfg: ScrapeConfig = { url: 'http://p.test', token: 'secret' }
+    const out = streamProxyUrl(cfg, { url: 'https://v.example/e.m4v' })
+    expect(out).toContain('token=secret')
+  })
+  it('serializes an absent headers map as empty JSON', () => {
+    const cfg: ScrapeConfig = { url: 'http://p.test', token: '' }
+    const out = streamProxyUrl(cfg, { url: 'https://v.example/e.m4v' })
+    expect(out).toContain('headers=%7B%7D')
   })
 })
 

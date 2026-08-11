@@ -14,6 +14,17 @@ export function proxyUrl(baseUrl: string): string {
 }
 
 /**
+ * Stream-media endpoint: like proxyUrl but for GET /api/stream. A <video> can't
+ * send headers, so the token rides in the query string when set.
+ */
+export function streamProxyUrl(config: ScrapeConfig, stream: { url: string; headers?: Record<string, string> }): string {
+  const base = `${config.url.replace(/\/+$/, '')}/api/stream`
+  const params = new URLSearchParams({ url: stream.url, headers: JSON.stringify(stream.headers ?? {}) })
+  if (config.token) params.set('token', config.token)
+  return `${base}?${params.toString()}`
+}
+
+/**
  * Whether a target should route through the proxy. Requests to the proxy's
  * own origin (e.g. the plugin repo served from the same self-hosted server)
  * must NOT be proxied — the proxy's SSRF guard would reject them.
