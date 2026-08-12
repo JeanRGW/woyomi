@@ -76,6 +76,31 @@ pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
   `sandbox.ts` / `sandbox-worker-host.ts`); `loadBundle` in `loader.ts` is used
   only by `plugin-builder` for build-time manifest capture.
 
+### i18n (UI text) — mandatory for the app
+
+All user-facing UI strings in `apps/app` MUST go through the i18n catalog —
+**no hardcoded text in components**. Add or change a string by editing the
+catalog, never by inlining text in JSX/aria/placeholders.
+
+- Catalogs: `apps/app/src/i18n/messages.ts` (`en` defines the canonical key
+  set), `apps/app/src/i18n/pt.ts` (pt-BR). `LocaleId` = the locale keys;
+  `Messages = Record<MessageKey, string>` is the shape every locale must
+  satisfy, so `typecheck` enforces full coverage — a new key added to `en`
+  without a translation breaks the build.
+- Usage: `const t = useT()` (or `useI18n()` for `locale`/`setLocale`), then
+  `t('view.key')`, `t('view.key', { name })` for interpolation, and
+  `t('view.key', { count })` to select the `key.one` plural form when
+  `count === 1` (base key is the plural/"other" form).
+- Key conventions: flat keys prefix-grouped by view (`nav.*`, `browse.*`,
+  `reader.*`, `status.*`, `type.*` …). Media-type-aware labels (reading vs
+  watching) are picked via helpers like `libraryStatusLabelKey`.
+- Adding a locale: create a `Messages`-typed catalog, add it to `messages`,
+  extend `localeNameKey`, and add a `settings.lang.<id>` self-name key to
+  every catalog. The Settings language selector lists locales automatically.
+- Not translated (by design): plugin-provided content (source names,
+  descriptions, prefs) and diagnostic error messages thrown by
+  `runtime.ts`/`provider.ts`/`sync.ts`/`scrape.ts`.
+
 ## Quirks / gotchas
 
 - Strict TS via `tsconfig.base.json`: `verbatimModuleSyntax` (must write
