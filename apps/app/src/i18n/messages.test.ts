@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaType } from '@woyomi/core'
-import { libraryStatusFilterKey, libraryStatusLabelKey, mediaTypeLabelKey, translate } from './messages'
+import { libraryStatusFilterKey, libraryStatusLabelKey, mediaTypeLabelKey, messages, translate, type MessageKey } from './messages'
 
 describe('translate', () => {
   it('resolves keys from the catalog', () => {
@@ -56,5 +56,20 @@ describe('mediaTypeLabelKey', () => {
     expect(mediaTypeLabelKey('novel')).toBe('type.novel')
     expect(mediaTypeLabelKey('movie')).toBe('type.movie')
     expect(mediaTypeLabelKey('series')).toBe('type.series')
+  })
+})
+
+describe('pt catalog', () => {
+  it('covers every English key', () => {
+    for (const key of Object.keys(messages.en) as MessageKey[]) {
+      expect(typeof messages.pt[key], `${key} missing in pt`).toBe('string')
+    }
+  })
+
+  it('resolves pt strings and plurals', () => {
+    expect(translate('pt', 'nav.library')).toBe('Biblioteca')
+    expect(translate('pt', 'media.chapterCount', { count: 1 })).toBe('1 capítulo')
+    expect(translate('pt', 'media.chapterCount', { count: 3 })).toBe('3 capítulos')
+    expect(translate('pt', 'status.watching')).toBe('assistindo')
   })
 })

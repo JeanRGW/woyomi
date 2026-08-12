@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import type { AppRuntime } from '../runtime'
 import { isTauri } from '../runtime'
 import { navigate } from '../App'
-import { useT } from '../i18n'
-import { Btn, Page, SectionHeading, TextInput, Toggle } from '../components'
+import { useI18n } from '../i18n'
+import { localeNameKey, messages, type LocaleId } from '../i18n/messages'
+import { Btn, Page, SectionHeading, SelectInput, TextInput, Toggle } from '../components'
 import { Icon } from '../icons'
 import { scrapeRequest } from '../scrape'
 import { pullSync, pushSync, syncConfigured, type SyncConfig } from '../sync'
 
 export function SettingsView({ runtime }: { runtime: AppRuntime }) {
-  const t = useT()
+  const { t, locale, setLocale } = useI18n()
   const [plugins, setPlugins] = useState(runtime.registry.list())
   const [proxyUrlInput, setProxyUrlInput] = useState('')
   const [proxyToken, setProxyToken] = useState('')
@@ -97,6 +98,25 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
     <Page>
       <div className="mb-5 md:mb-7">
         <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">{t('nav.settings')}</h1>
+      </div>
+
+      <SectionHeading title={t('settings.language')} />
+      <div className="mb-4 rounded-2xl border border-line-soft bg-surface p-4">
+        <SelectInput
+          value={locale}
+          aria-label={t('settings.language')}
+          onChange={(e) => {
+            const next = e.target.value as LocaleId
+            setLocale(next)
+            void runtime.setLocale(next)
+          }}
+        >
+          {Object.keys(messages).map((id) => (
+            <option key={id} value={id}>
+              {t(localeNameKey(id as LocaleId))}
+            </option>
+          ))}
+        </SelectInput>
       </div>
 
       <SectionHeading title={t('settings.plugins')} />

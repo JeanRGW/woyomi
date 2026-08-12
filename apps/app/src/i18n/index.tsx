@@ -37,3 +37,11 @@ export function useT(): T {
 export function useLocale(): LocaleId {
   return useContext(I18nContext).locale
 }
+
+export function useSetLocale(): (locale: LocaleId) => void {
+  return useContext(I18nContext).setLocale
+}
+
+export function useI18n(): I18nContextValue {
+  return useContext(I18nContext)
+}

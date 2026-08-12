@@ -1,12 +1,12 @@
 import { isVideoType, type LibraryStatus, type MediaStatus, type MediaType } from '@woyomi/core'
+import { pt } from './pt'
 
 /**
- * Message catalogs keyed by locale. Flat keys, prefix-grouped by view/area.
- * Add a locale by exporting its full catalog here — `Messages` (below) is the
- * shape a locale must satisfy, so typecheck enforces full-key coverage.
+ * Flat message keys, prefix-grouped by view/area. `en` defines the canonical
+ * key set; `Messages` is the shape every locale must satisfy (typed full
+ * coverage). Add a locale by adding `{ id, catalog }` to `messages`.
  */
-export const messages = {
-  en: {
+const en = {
     // navigation
     'nav.browse': 'Browse',
     'nav.library': 'Library',
@@ -146,6 +146,9 @@ export const messages = {
     'settings.importLibrary': 'Import library',
     'settings.enterServerUrl': 'Enter a server URL first',
     'settings.enterServerAndUser': 'Enter a server URL and user first',
+    'settings.language': 'Language',
+    'settings.lang.en': 'English',
+    'settings.lang.pt': 'Português',
 
     // plugin settings
     'pluginSettings.title': 'Plugin settings',
@@ -189,11 +192,12 @@ export const messages = {
     'reader.pageFailed': 'Page failed to load',
     'reader.tapToRetry': 'Tap to retry',
     'reader.pageAlt': 'page {number}'
-  }
 } as const
 
+export const messages = { en, pt } as const
+
 export type LocaleId = keyof typeof messages
-export type MessageKey = keyof (typeof messages)['en']
+export type MessageKey = keyof typeof en
 
 /** The shape a locale catalog must satisfy (used by future locale files). */
 export type Messages = Record<MessageKey, string>
@@ -249,4 +253,14 @@ export const MEDIA_TYPE_KEY: Record<MediaType, MessageKey> = {
 
 export function mediaTypeLabelKey(type: MediaType): MessageKey {
   return MEDIA_TYPE_KEY[type]
+}
+
+/** Self-named locale label (e.g. "English" stays English in every catalog). */
+const LOCALE_NAME_KEY: Record<LocaleId, MessageKey> = {
+  en: 'settings.lang.en',
+  pt: 'settings.lang.pt'
+}
+
+export function localeNameKey(locale: LocaleId): MessageKey {
+  return LOCALE_NAME_KEY[locale]
 }

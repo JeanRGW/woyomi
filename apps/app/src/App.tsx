@@ -9,8 +9,8 @@ import { PlayerView } from './views/PlayerView'
 import { StoreView } from './views/StoreView'
 import { SettingsView } from './views/SettingsView'
 import { PluginSettingsView } from './views/PluginSettingsView'
-import { useT } from './i18n'
-import type { MessageKey } from './i18n/messages'
+import { useSetLocale, useT } from './i18n'
+import { messages, type MessageKey } from './i18n/messages'
 import { Icon, type IconName } from './icons'
 import logoUrl from './assets/woyomi-logo-horizontal-reverse.svg'
 
@@ -88,12 +88,21 @@ function isActive(route: Route, tab: Route): boolean {
 
 export function App() {
   const t = useT()
+  const setLocale = useSetLocale()
   const [runtime, setRuntime] = useState<AppRuntime | null>(null)
   const [route, setRoute] = useState<Route>(parseHash(window.location.hash))
 
   useEffect(() => {
     getRuntime().then(setRuntime)
   }, [])
+
+  // Re-apply a stored language once the runtime (and its prefs) is available.
+  useEffect(() => {
+    if (!runtime) return
+    runtime.getLocale().then((locale) => {
+      if (locale && locale in messages) setLocale(locale)
+    })
+  }, [runtime, setLocale])
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(window.location.hash))

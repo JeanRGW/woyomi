@@ -21,6 +21,7 @@ import {
 import { SqliteStore } from './sqlite-store'
 import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, streamProxyUrl, type ScrapeConfig } from './scrape'
 import { makeSyncingStore, startAutoSync, type SyncConfig } from './sync'
+import type { LocaleId } from './i18n/messages'
 
 /** Tauri command bridge — resolves only when running inside the native shell. */
 declare global {
@@ -142,6 +143,9 @@ export interface AppRuntime {
   /** Auto-sync toggle (default on); sets whether writes/start sync automatically. */
   getAutoSyncEnabled(): Promise<boolean>
   setAutoSyncEnabled(enabled: boolean): Promise<void>
+  /** Persisted UI language override; undefined = auto-detect from the OS/browser. */
+  getLocale(): Promise<LocaleId | undefined>
+  setLocale(locale: LocaleId): Promise<void>
   /**
    * Download + verify + load an external plugin bundle.
    * Throws on sha256 mismatch, invalid manifest, or apiVersion mismatch.
@@ -345,6 +349,8 @@ async function initRuntime(): Promise<AppRuntime> {
     },
     getAutoSyncEnabled: autoSyncEnabled,
     setAutoSyncEnabled: (enabled: boolean) => prefs.set('__app', 'autoSync.enabled', enabled),
+    getLocale: async () => await prefs.get<LocaleId>('__app', 'locale'),
+    setLocale: (locale: LocaleId) => prefs.set('__app', 'locale', locale),
     async installExternal(plugin) {
       const provider = createFetchProvider()
       const codeRes = await provider(plugin.url)
