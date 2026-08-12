@@ -7,7 +7,7 @@ target/
 .env
 .DS_Store
 apps/app/src-tauri/target/
-apps/app/src-tauri/gen/
+apps/app/src-tauri/gen/schemas/
 apps/app/dist/
 .turbo/
 .commandcode/
