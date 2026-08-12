@@ -9,6 +9,7 @@ import { PlayerView } from './views/PlayerView'
 import { StoreView } from './views/StoreView'
 import { SettingsView } from './views/SettingsView'
 import { PluginSettingsView } from './views/PluginSettingsView'
+import { DownloadsView } from './views/DownloadsView'
 import { useSetLocale, useT } from './i18n'
 import { messages, type MessageKey } from './i18n/messages'
 import { Icon, type IconName } from './icons'
@@ -18,6 +19,7 @@ export type Route =
   | { name: 'browse' }
   | { name: 'library' }
   | { name: 'history' }
+  | { name: 'downloads' }
   | { name: 'media'; sourceId: string; mediaId: string }
   | { name: 'reader'; sourceId: string; mediaId: string; episodeId: string }
   | { name: 'player'; sourceId: string; mediaId: string; episodeId: string }
@@ -36,6 +38,8 @@ function parseHash(hash: string): Route {
       return { name: 'player', sourceId: rest[0] ?? '', mediaId: rest[1] ?? '', episodeId: rest.slice(2).join('/') }
     case 'store':
       return { name: 'store' }
+    case 'downloads':
+      return { name: 'downloads' }
     case 'settings':
       return rest[0] === 'plugins' ? { name: 'plugin-settings' } : { name: 'settings' }
     case 'history':
@@ -56,6 +60,8 @@ export function navigate(route: Route, opts?: { replace?: boolean }): void {
         ? '#/library'
         : route.name === 'history'
           ? '#/history'
+          : route.name === 'downloads'
+            ? '#/downloads'
           : route.name === 'store'
             ? '#/store'
             : route.name === 'settings'
@@ -192,6 +198,8 @@ function Content({ route, runtime }: { route: Route; runtime: AppRuntime }) {
       return <HistoryView runtime={runtime} />
     case 'library':
       return <LibraryView runtime={runtime} />
+    case 'downloads':
+      return <DownloadsView runtime={runtime} />
     case 'media':
       return <MediaView runtime={runtime} sourceId={route.sourceId} mediaId={route.mediaId} />
     case 'reader':

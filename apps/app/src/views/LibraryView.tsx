@@ -5,6 +5,7 @@ import { useT } from '../i18n'
 import { libraryStatusFilterKey } from '../i18n/messages'
 import { Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader } from '../components'
 import { Icon } from '../icons'
+import { navigate } from '../App'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
@@ -27,6 +28,12 @@ export function LibraryView({ runtime }: { runtime: AppRuntime }) {
   return (
     <Page wide>
       <PageHeader title={t('nav.library')}>
+        {runtime.downloads && (
+          <Btn variant="ghost" onClick={() => navigate({ name: 'downloads' })}>
+            <Icon name="download" size={16} />
+            {t('downloads.title')}
+          </Btn>
+        )}
         <Btn variant="ghost" onClick={refresh} aria-label={t('common.refresh')}>
           <Icon name="refresh" size={16} />
           {t('common.refresh')}

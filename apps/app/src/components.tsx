@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 import type { Media } from '@woyomi/core'
+import type { DownloadState } from './downloads'
 import { navigate } from './App'
 import { Icon, type IconName } from './icons'
 import { useT } from './i18n'
@@ -189,14 +190,26 @@ export function EpisodeRow({
   label,
   active,
   onOpen,
-  onToggleSeen
+  onToggleSeen,
+  downloadState,
+  onDownload
 }: {
   label: string
   active: boolean
   onOpen: () => void
   onToggleSeen: () => void
+  downloadState?: DownloadState
+  onDownload?: () => void
 }) {
   const t = useT()
+  const downloadLabel =
+    downloadState === 'queued'
+      ? t('downloads.stateQueued')
+      : downloadState === 'downloading'
+        ? t('downloads.stateDownloading')
+        : downloadState === 'complete'
+          ? t('downloads.stateComplete')
+          : t('downloads.download')
   return (
     <div
       className={`flex items-center justify-between gap-2 rounded-xl border border-line-soft bg-surface px-3 py-2 transition-colors hover:border-accent/50 ${
@@ -218,6 +231,20 @@ export function EpisodeRow({
             <Icon name="check" size={12} />
             {t('common.seen')}
           </span>
+        )}
+        {onDownload && (
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={downloadState === 'queued' || downloadState === 'downloading' || downloadState === 'complete'}
+            title={downloadLabel}
+            aria-label={downloadLabel}
+            className={`grid size-9 cursor-pointer place-items-center rounded-lg transition-colors disabled:cursor-default ${
+              downloadState === 'complete' ? 'text-accent' : 'text-faint hover:bg-surface-2 hover:text-fg disabled:hover:bg-transparent disabled:hover:text-faint'
+            }`}
+          >
+            <Icon name={downloadState === 'complete' ? 'check' : 'download'} size={17} />
+          </button>
         )}
         <button
           onClick={onToggleSeen}

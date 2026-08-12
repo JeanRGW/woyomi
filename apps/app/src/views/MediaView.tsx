@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
 import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
+import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
+import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '../i18n/messages'
 import { BackButton, Banner, Btn, CoverArt, EpisodeRow, Page, SelectInput } from '../components'
@@ -15,9 +17,14 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [entry, setEntry] = useState<LibraryEntry | undefined>()
   const [seen, setSeen] = useState<Set<string>>(new Set())
+  const [downloads, setDownloads] = useState<DownloadRecord[]>([])
+  const [qualityEpisode, setQualityEpisode] = useState<Episode>()
+  const [qualities, setQualities] = useState<string[]>([])
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    setMedia(null)
+    setError('')
     try {
       const [m, eps] = await Promise.all([runtime.engine.getMedia(sourceId, mediaId), runtime.engine.getEpisodes(sourceId, mediaId)])
       setMedia(m)
@@ -37,6 +44,15 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     load()
   }, [load])
 
+  useEffect(() => {
+    const manager = runtime.downloads
+    setDownloads([])
+    if (!manager) return
+    const refresh = async () => setDownloads((await manager.list()).filter((record) => record.media.id === `${sourceId}/${mediaId}`))
+    void refresh()
+    return manager.subscribe(() => void refresh())
+  }, [runtime.downloads, sourceId, mediaId])
+
   const descriptionHtml = useMemo(
     () => (media?.synopsis ? marked.parse(media.synopsis, { async: false }) : ''),
     [media?.synopsis]
@@ -53,6 +69,40 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     await runtime.store[method](media!.id, ep.id)
     const prog = await runtime.store.getProgress(media!.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
+  }
+
+  async function downloadEpisode(episode: Episode) {
+    const manager = runtime.downloads
+    if (!manager || !media) return
+    setError('')
+    try {
+      if (!isVideoType(media.type)) {
+        await manager.enqueueReader(media, episode)
+        return
+      }
+      const available = await manager.getVideoQualities(media, episode)
+      if (available.length === 0) {
+        setError(t('downloads.hlsUnsupported'))
+        return
+      }
+      const saved = await runtime.engine.prefs.get<string>('__app', 'downloads.videoQuality')
+      setQualities(saved && available.includes(saved) ? [saved, ...available.filter((quality) => quality !== saved)] : available)
+      setQualityEpisode(episode)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function chooseQuality(quality: string) {
+    if (!runtime.downloads || !media || !qualityEpisode) return
+    try {
+      await runtime.downloads.enqueueVideo(media, qualityEpisode, quality)
+      await runtime.engine.prefs.set('__app', 'downloads.videoQuality', quality)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setQualityEpisode(undefined)
+    }
   }
 
   async function markAllSeen() {
@@ -73,7 +123,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }
 
-  if (error)
+  if (error && !media)
     return (
       <Page>
         <BackButton />
@@ -160,6 +210,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         </div>
 
         {descriptionHtml && <div className="prose-body mt-6" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />}
+        {error && <Banner tone="error">{error}</Banner>}
 
         <div className="mb-3 mt-8 flex items-center gap-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
@@ -179,10 +230,42 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               active={seen.has(ep.id)}
               onOpen={() => (video ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
               onToggleSeen={() => toggleSeen(ep)}
+              downloadState={downloads.find((record) => record.id === ep.id)?.state}
+              onDownload={runtime.downloads ? () => void downloadEpisode(ep) : undefined}
             />
           ))}
         </div>
       </div>
+      {qualityEpisode && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="download-quality-title">
+          <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-4 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="download-quality-title" className="text-lg font-bold">
+                {t('downloads.chooseQuality')}
+              </h2>
+              <Btn
+                variant="ghost"
+                className="size-10 px-0"
+                onClick={() => setQualityEpisode(undefined)}
+                aria-label={t('common.close')}
+                title={t('common.close')}
+              >
+                <Icon name="x" size={18} />
+              </Btn>
+            </div>
+            <div className="mt-4 flex flex-col gap-2">
+              {qualities.map((quality) => (
+                <Btn key={quality} variant="soft" onClick={() => void chooseQuality(quality)}>
+                  {t('downloads.quality', { quality })}
+                </Btn>
+              ))}
+              <Btn variant="ghost" onClick={() => setQualityEpisode(undefined)}>
+                {t('downloads.cancel')}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

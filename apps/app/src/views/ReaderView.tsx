@@ -39,10 +39,20 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
 
   useEffect(() => {
     let cancelled = false
-    runtime.engine
-      .getChapterContent(sourceId, mediaId, episodeId)
-      .then((c) => !cancelled && setContent(c))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    ;(async () => {
+      try {
+        const local = await runtime.downloads?.localChapterContent(episodeId)
+        if (cancelled) return
+        if (local) {
+          setContent(local)
+          return
+        }
+        const chapterContent = await runtime.engine.getChapterContent(sourceId, mediaId, episodeId)
+        if (!cancelled) setContent(chapterContent)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
     return () => {
       cancelled = true
     }
@@ -52,12 +62,25 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      let metadata: [Media, Episode[]]
       try {
-        const [m, eps, prog] = await Promise.all([
-          runtime.engine.getMedia(sourceId, mediaId),
-          runtime.engine.getEpisodes(sourceId, mediaId),
-          runtime.store.getProgress(`${sourceId}/${mediaId}`)
-        ])
+        metadata = await Promise.all([runtime.engine.getMedia(sourceId, mediaId), runtime.engine.getEpisodes(sourceId, mediaId)])
+      } catch {
+        try {
+          const record = await runtime.downloads?.get(episodeId)
+          if (cancelled || record?.state !== 'complete' || record.kind === 'mp4') return
+          setMedia(record.media)
+          setEpisodes([record.episode])
+          await recordOpen(runtime, record.media, record.episode)
+        } catch {
+          // titles/chapter nav just stay minimal
+        }
+        return
+      }
+
+      const [m, eps] = metadata
+      try {
+        const prog = await runtime.store.getProgress(m.id)
         if (cancelled) return
         setMedia(m)
         setEpisodes(eps)

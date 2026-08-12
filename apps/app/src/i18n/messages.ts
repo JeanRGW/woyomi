@@ -80,6 +80,25 @@ const en = {
     'library.emptyTitle': 'Nothing here yet',
     'library.emptyHint': 'Add titles from Browse and they will show up in your library.',
 
+    // downloads
+    'downloads.title': 'Downloads',
+    'downloads.emptyTitle': 'Nothing downloaded yet',
+    'downloads.emptyHint': 'Download a chapter or episode from its title page for offline access.',
+    'downloads.stateQueued': 'Queued',
+    'downloads.stateDownloading': 'Downloading',
+    'downloads.stateComplete': 'Downloaded',
+    'downloads.stateFailed': 'Failed',
+    'downloads.download': 'Download',
+    'downloads.chooseQuality': 'Choose download quality',
+    'downloads.quality': '{quality}',
+    'downloads.cancel': 'Cancel',
+    'downloads.hlsUnsupported': 'Offline download is unavailable because this episode only provides HLS streams.',
+    'downloads.bytes': '{bytes}',
+    'downloads.progressAssets': '{completed} of {total} files',
+    'downloads.open': 'Open download',
+    'downloads.retry': 'Retry download',
+    'downloads.remove': 'Remove download',
+
     // media detail
     'media.addToLibrary': 'Add to library…',
     'media.remove': 'Remove',

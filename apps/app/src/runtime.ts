@@ -18,6 +18,7 @@ import {
   type SandboxCtx,
   type SandboxTransport
 } from '@woyomi/core'
+import { DownloadManager } from './downloads'
 import { SqliteStore } from './sqlite-store'
 import { annotateFetchError, isNetworkError, scrapeRequest, shouldProxy, streamProxyUrl, type ScrapeConfig } from './scrape'
 import { makeSyncingStore, startAutoSync, type SyncConfig } from './sync'
@@ -124,6 +125,7 @@ export interface AppRuntime {
   registry: PluginRegistry
   store: LibraryStore
   plugins: PluginStore
+  downloads?: DownloadManager
   installed: Map<string, string> // pluginId -> version
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
@@ -165,9 +167,10 @@ async function initRuntime(): Promise<AppRuntime> {
   let store: LibraryStore
   let plugins: PluginStore
   let prefs: PreferencesApi
+  let sqlite: SqliteStore | undefined
 
   if (native) {
-    const sqlite = new SqliteStore()
+    sqlite = new SqliteStore()
     store = sqlite
     plugins = sqlite.pluginStore()
     prefs = sqlite.preferencesApi()
@@ -207,7 +210,7 @@ async function initRuntime(): Promise<AppRuntime> {
   })
   const registry = new PluginRegistry()
 
-    /** Context handed to the sandbox: fetch routes through the engine's throttle+timeout. */
+  /** Context handed to the sandbox: fetch routes through the engine's throttle+timeout. */
   function sandboxCtx(): SandboxCtx {
     return {
       fetch: (sourceId, url, init) => engine.getSourceFetch(sourceId)(url, init),
@@ -314,11 +317,17 @@ async function initRuntime(): Promise<AppRuntime> {
     await prefs.set(pluginId, 'plugin.enabled', enabled)
   }
 
+  const downloads = sqlite
+    ? new DownloadManager(engine, sqlite.downloadStore(), (cmd, args) => window.__TAURI_INTERNALS__!.invoke(cmd, args))
+    : undefined
+  await downloads?.initialize()
+
   return {
     engine,
     registry,
     store,
     plugins,
+    downloads,
     installed,
     setInstalled(id, version) {
       installed.set(id, version)

@@ -2,6 +2,7 @@ import Database from '@tauri-apps/plugin-sql'
 import type { PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
 import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry, SyncEdits, SyncPayload } from '@woyomi/core'
 import type { LibraryStore } from '@woyomi/core'
+import type { DownloadRecord, DownloadStore } from './downloads'
 
 /**
  * SQLite-backed LibraryStore for the Tauri native build, via tauri-plugin-sql
@@ -35,6 +36,10 @@ export class SqliteStore implements LibraryStore {
         await db.execute(`CREATE TABLE IF NOT EXISTS plugins (
           id TEXT PRIMARY KEY,
           bundle TEXT NOT NULL
+        )`)
+        await db.execute(`CREATE TABLE IF NOT EXISTS downloads (
+          id TEXT PRIMARY KEY,
+          row TEXT NOT NULL
         )`)
         return db
       })
@@ -195,6 +200,38 @@ export class SqliteStore implements LibraryStore {
   /** Reuses this store's database connection; shares the SQLite file. */
   preferencesApi(): SqlitePreferencesApi {
     return new SqlitePreferencesApi(this.db.bind(this))
+  }
+
+  /** Reuses this store's database connection; shares the SQLite file. */
+  downloadStore(): SqliteDownloadStore {
+    return new SqliteDownloadStore(this.db.bind(this))
+  }
+}
+
+/** `DownloadStore` over the `downloads` table of the same SQLite database. */
+export class SqliteDownloadStore implements DownloadStore {
+  constructor(private db: () => Promise<Database>) {}
+
+  async list(): Promise<DownloadRecord[]> {
+    const db = await this.db()
+    const rows = await db.select<Array<{ row: string }>>('SELECT row FROM downloads')
+    return rows.map((item) => JSON.parse(item.row) as DownloadRecord).sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  async get(id: string): Promise<DownloadRecord | undefined> {
+    const db = await this.db()
+    const rows = await db.select<Array<{ row: string }>>('SELECT row FROM downloads WHERE id = $1', [id])
+    return rows[0] ? (JSON.parse(rows[0].row) as DownloadRecord) : undefined
+  }
+
+  async save(record: DownloadRecord): Promise<void> {
+    const db = await this.db()
+    await db.execute('INSERT OR REPLACE INTO downloads (id, row) VALUES ($1, $2)', [record.id, JSON.stringify(record)])
+  }
+
+  async remove(id: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM downloads WHERE id = $1', [id])
   }
 }
 

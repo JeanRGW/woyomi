@@ -75,6 +75,25 @@ export const pt: Messages = {
   'library.emptyTitle': 'Nada aqui ainda',
   'library.emptyHint': 'Adicione títulos em Navegar e eles aparecerão na sua biblioteca.',
 
+  // downloads
+  'downloads.title': 'Downloads',
+  'downloads.emptyTitle': 'Nenhum download ainda',
+  'downloads.emptyHint': 'Baixe um capítulo ou episódio na página do título para acessá-lo offline.',
+  'downloads.stateQueued': 'Na fila',
+  'downloads.stateDownloading': 'Baixando',
+  'downloads.stateComplete': 'Baixado',
+  'downloads.stateFailed': 'Falhou',
+  'downloads.download': 'Baixar',
+  'downloads.chooseQuality': 'Escolha a qualidade do download',
+  'downloads.quality': '{quality}',
+  'downloads.cancel': 'Cancelar',
+  'downloads.hlsUnsupported': 'O download offline não está disponível porque este episódio oferece apenas streams HLS.',
+  'downloads.bytes': '{bytes}',
+  'downloads.progressAssets': '{completed} de {total} arquivos',
+  'downloads.open': 'Abrir download',
+  'downloads.retry': 'Tentar download novamente',
+  'downloads.remove': 'Remover download',
+
   // media detail
   'media.addToLibrary': 'Adicionar à biblioteca…',
   'media.remove': 'Remover',

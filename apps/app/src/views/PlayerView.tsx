@@ -10,6 +10,7 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
   const t = useT()
   const [streams, setStreams] = useState<StreamSource[]>([])
   const [stream, setStream] = useState<StreamSource | null>(null)
+  const [localUrl, setLocalUrl] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [media, setMedia] = useState<Media | null>(null)
   const [episode, setEpisode] = useState<Episode | null>(null)
@@ -19,6 +20,16 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
     let cancelled = false
     ;(async () => {
       try {
+        const local = await runtime.downloads?.localVideo(episodeId)
+        if (cancelled) return
+        if (local) {
+          setMedia(local.record.media)
+          setEpisode(local.record.episode)
+          setLocalUrl(local.url)
+          await recordOpen(runtime, local.record.media, local.record.episode)
+          return
+        }
+
         const m = await runtime.engine.getMedia(sourceId, mediaId)
         const eps = await runtime.engine.getEpisodes(sourceId, mediaId)
         const ep = eps.find((e) => e.id === episodeId)
@@ -44,11 +55,18 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
   }, [runtime, sourceId, mediaId, episodeId, t])
 
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !stream) return
+    const videoElement = videoRef.current
+    if (!videoElement || (!stream && !localUrl)) return
+    const video = videoElement
     let hls: Hls | undefined
     let cancelled = false
-    playableStreamUrl(stream).then((url) => {
+    async function load(): Promise<void> {
+      if (localUrl) {
+        video.src = localUrl
+        return
+      }
+      if (!stream) return
+      const url = await playableStreamUrl(stream)
       if (cancelled) return
       if (stream.kind === 'hls' && Hls.isSupported()) {
         hls = new Hls()
@@ -57,13 +75,16 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
       } else {
         video.src = url
       }
+    }
+    void load().catch((e: unknown) => {
+      if (!cancelled) setError(e instanceof Error ? e.message : String(e))
     })
     return () => {
       cancelled = true
       hls?.destroy()
       video.src = ''
     }
-  }, [stream])
+  }, [stream, localUrl])
 
   if (error)
     return (
@@ -79,23 +100,24 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
       <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{media?.title ?? t('player.playing')}</h1>
       {episode && <div className="mt-1 text-sm font-medium text-muted">{t('common.episode', { number: episode.number })}</div>}
       <video ref={videoRef} controls autoPlay className="mt-4 w-full rounded-2xl bg-black shadow-2xl shadow-black/50 ring-1 ring-white/10" />
-      {streams.length > 0 ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {streams.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => setStream(s)}
-              className={`min-h-9 cursor-pointer rounded-full px-4 text-[13px] font-bold transition-all active:scale-[0.96] ${
-                stream?.url === s.url ? 'bg-accent text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
-              }`}
-            >
-              {s.quality ?? s.kind}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="mt-4 text-sm text-muted">{t('player.noStreams')}</p>
-      )}
+      {!localUrl &&
+        (streams.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {streams.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => setStream(s)}
+                className={`min-h-9 cursor-pointer rounded-full px-4 text-[13px] font-bold transition-all active:scale-[0.96] ${
+                  stream?.url === s.url ? 'bg-accent text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
+                }`}
+              >
+                {s.quality ?? s.kind}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-muted">{t('player.noStreams')}</p>
+        ))}
     </div>
   )
 }
