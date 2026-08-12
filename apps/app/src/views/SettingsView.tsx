@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import type { AppRuntime } from '../runtime'
 import { isTauri } from '../runtime'
 import { navigate } from '../App'
+import { useT } from '../i18n'
 import { Btn, Page, SectionHeading, TextInput, Toggle } from '../components'
 import { Icon } from '../icons'
 import { scrapeRequest } from '../scrape'
 import { pullSync, pushSync, syncConfigured, type SyncConfig } from '../sync'
 
 export function SettingsView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
   const [plugins, setPlugins] = useState(runtime.registry.list())
   const [proxyUrlInput, setProxyUrlInput] = useState('')
   const [proxyToken, setProxyToken] = useState('')
@@ -57,7 +59,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
     setProxyError('')
     try {
       const config = { url: proxyUrlInput.trim(), token: proxyToken.trim() }
-      if (!config.url) throw new Error('Enter a server URL first')
+      if (!config.url) throw new Error(t('settings.enterServerUrl'))
       await scrapeRequest(config, 'https://example.com/')
       setProxyStatus('ok')
     } catch (e) {
@@ -74,7 +76,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
 
   async function runSync(op: 'push' | 'pull') {
     if (!syncConfigured(syncConfig)) {
-      setSyncError('Enter a server URL and user first')
+      setSyncError(t('settings.enterServerAndUser'))
       return
     }
     setSyncStatus('running')
@@ -94,10 +96,10 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
   return (
     <Page>
       <div className="mb-5 md:mb-7">
-        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Settings</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">{t('nav.settings')}</h1>
       </div>
 
-      <SectionHeading title="Plugins" />
+      <SectionHeading title={t('settings.plugins')} />
       <div className="flex flex-col gap-2">
         {plugins.map((p) => (
           <div key={p.registration.manifest.id} className="flex items-center gap-3 rounded-2xl border border-line-soft bg-surface p-3.5">
@@ -122,12 +124,12 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
                   refresh()
                 }}
               >
-                Uninstall
+                {t('settings.uninstall')}
               </Btn>
             )}
             <Toggle
               checked={p.enabled}
-              label={`${p.enabled ? 'Disable' : 'Enable'} ${p.registration.manifest.name}`}
+              label={t(p.enabled ? 'settings.disable' : 'settings.enable', { name: p.registration.manifest.name })}
               onChange={() => {
                 void runtime.setPluginEnabled(p.registration.manifest.id, !p.enabled).then(refresh)
               }}
@@ -144,9 +146,9 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
           <Icon name="sliders" size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-bold">Plugin settings</div>
+          <div className="text-sm font-bold">{t('settings.pluginSettings')}</div>
           <div className="text-xs text-muted">
-            {prefsCount > 0 ? `Options from ${prefsCount} plugin${prefsCount === 1 ? '' : 's'}` : 'Per-source toggles and plugin options'}
+            {prefsCount > 0 ? t('settings.pluginOptions', { count: prefsCount }) : t('settings.pluginOptionsGeneric')}
           </div>
         </div>
         <Icon name="chevronRight" size={18} className="shrink-0 text-faint" />
@@ -154,80 +156,77 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
 
       {!isTauri() && (
         <>
-          <SectionHeading title="Web proxy (scrape)" />
+          <SectionHeading title={t('settings.webProxy')} />
           <div className="rounded-2xl border border-line-soft bg-surface p-4">
-            <p className="mb-3 text-xs text-muted">
-              Used in the browser build to fetch sources that don't allow CORS (e.g. HTML scrapers). Leave the URL empty to use
-              direct fetch. Point it at a self-hosted server with <code className="text-accent">SCRAPE_ENABLED=true</code>.
-            </p>
+            <p className="mb-3 text-xs text-muted">{t('settings.webProxyHint')}</p>
             <div className="flex flex-col gap-2">
               <TextInput
                 type="url"
                 placeholder="https://your-server.example"
                 value={proxyUrlInput}
                 onChange={(e) => setProxyUrlInput(e.target.value)}
-                aria-label="Proxy server URL"
+                aria-label={t('settings.proxyUrl')}
               />
               <TextInput
                 type="password"
-                placeholder="Key (optional, matches SCRAPE_TOKEN)"
+                placeholder={t('settings.proxyKeyPlaceholder')}
                 value={proxyToken}
                 onChange={(e) => setProxyToken(e.target.value)}
-                aria-label="Proxy key"
+                aria-label={t('settings.proxyKey')}
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Btn variant="soft" onClick={saveProxy} disabled={proxyStatus === 'testing'}>
-                  Save proxy
+                  {t('settings.saveProxy')}
                 </Btn>
                 <Btn variant="soft" onClick={testProxy} disabled={proxyStatus === 'testing'}>
-                  {proxyStatus === 'testing' ? 'Testing…' : 'Test connection'}
+                  {proxyStatus === 'testing' ? t('common.testing') : t('settings.testConnection')}
                 </Btn>
-                {proxySaved && <span className="text-xs font-semibold text-ok">Saved</span>}
-                {proxyStatus === 'ok' && <span className="text-xs font-semibold text-ok">OK</span>}
-                {proxyStatus === 'failed' && <span className="text-xs font-semibold text-danger">{proxyError || 'Failed'}</span>}
+                {proxySaved && <span className="text-xs font-semibold text-ok">{t('common.saved')}</span>}
+                {proxyStatus === 'ok' && <span className="text-xs font-semibold text-ok">{t('common.ok')}</span>}
+                {proxyStatus === 'failed' && <span className="text-xs font-semibold text-danger">{proxyError || t('common.failed')}</span>}
               </div>
             </div>
           </div>
         </>
       )}
 
-      <SectionHeading title="Library sync" />
+      <SectionHeading title={t('settings.librarySync')} />
       <div className="rounded-2xl border border-line-soft bg-surface p-4">
-        <p className="mb-3 text-xs text-muted">Sync library, progress, and history with a self-hosted woyomi server.</p>
+        <p className="mb-3 text-xs text-muted">{t('settings.syncHint')}</p>
         <div className="flex flex-col gap-2">
           <TextInput
             type="url"
             placeholder="https://your-server.example"
             value={syncConfig.server}
             onChange={(e) => setSyncConfig((current) => ({ ...current, server: e.target.value }))}
-            aria-label="Sync server URL"
+            aria-label={t('settings.syncServer')}
           />
           <TextInput
-            placeholder="User"
+            placeholder={t('settings.syncUserPlaceholder')}
             value={syncConfig.user}
             onChange={(e) => setSyncConfig((current) => ({ ...current, user: e.target.value }))}
-            aria-label="Sync user"
+            aria-label={t('settings.syncUser')}
           />
           <TextInput
             type="password"
-            placeholder="Token"
+            placeholder={t('settings.syncTokenPlaceholder')}
             value={syncConfig.token}
             onChange={(e) => setSyncConfig((current) => ({ ...current, token: e.target.value }))}
-            aria-label="Sync token"
+            aria-label={t('settings.syncToken')}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Btn variant="soft" onClick={saveSync} disabled={syncStatus === 'running'}>
-              Save sync
+              {t('settings.saveSync')}
             </Btn>
             <Btn variant="soft" onClick={() => runSync('push')} disabled={syncStatus === 'running'}>
-              Push now
+              {t('settings.push')}
             </Btn>
             <Btn variant="soft" onClick={() => runSync('pull')} disabled={syncStatus === 'running'}>
-              Pull now
+              {t('settings.pull')}
             </Btn>
             <Toggle
               checked={autoSyncEnabled}
-              label={autoSyncEnabled ? 'Auto-sync on' : 'Auto-sync off'}
+              label={autoSyncEnabled ? t('settings.autoSyncOn') : t('settings.autoSyncOff')}
               onChange={() => {
                 const next = !autoSyncEnabled
                 setAutoSyncEnabledState(next)
@@ -235,26 +234,26 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
               }}
             />
             <span className="text-xs text-muted">
-              {autoSyncEnabled ? 'Syncs on app open and after each library change' : 'Syncing manually only'}
+              {autoSyncEnabled ? t('settings.syncOnOpen') : t('settings.syncManual')}
             </span>
-            {syncSaved && <span className="text-xs font-semibold text-ok">Saved</span>}
-            {syncStatus === 'running' && <span className="text-xs font-semibold text-muted">Syncing…</span>}
-            {syncStatus === 'ok' && <span className="text-xs font-semibold text-ok">OK</span>}
-            {syncStatus === 'failed' && <span className="text-xs font-semibold text-danger">{syncError || 'Failed'}</span>}
+            {syncSaved && <span className="text-xs font-semibold text-ok">{t('common.saved')}</span>}
+            {syncStatus === 'running' && <span className="text-xs font-semibold text-muted">{t('settings.syncing')}</span>}
+            {syncStatus === 'ok' && <span className="text-xs font-semibold text-ok">{t('common.ok')}</span>}
+            {syncStatus === 'failed' && <span className="text-xs font-semibold text-danger">{syncError || t('common.failed')}</span>}
           </div>
           {syncStatus === 'idle' && syncError && <div className="text-xs font-semibold text-danger">{syncError}</div>}
         </div>
       </div>
 
-      <SectionHeading title="Data" />
+      <SectionHeading title={t('settings.data')} />
       <div className="flex flex-col gap-2 rounded-2xl border border-line-soft bg-surface p-4 sm:flex-row">
         <Btn variant="soft" onClick={exportJson} className="flex-1">
           <Icon name="download" size={16} />
-          Export library
+          {t('settings.exportLibrary')}
         </Btn>
         <label className="inline-flex min-h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl bg-surface-2 px-4 text-sm font-semibold transition-all hover:bg-surface-3 active:scale-[0.97]">
           <Icon name="upload" size={16} />
-          Import library
+          {t('settings.importLibrary')}
           <input type="file" accept="application/json" hidden onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
         </label>
       </div>

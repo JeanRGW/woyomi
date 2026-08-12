@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { isVideoType, type HistoryEntry } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
+import { useLocale, useT } from '../i18n'
 import { EmptyState, Page, PageHeader } from '../components'
 import { Icon } from '../icons'
 
 export function HistoryView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
+  const locale = useLocale()
   const [history, setHistory] = useState<HistoryEntry[]>([])
 
   const refresh = useCallback(async () => setHistory(await runtime.store.listHistory()), [runtime])
@@ -27,9 +30,9 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
 
   return (
     <Page>
-      <PageHeader title="History" />
+      <PageHeader title={t('nav.history')} />
       {history.length === 0 ? (
-        <EmptyState icon="history" title="Nothing watched or read yet" hint="Open a chapter or video and it will land here." />
+        <EmptyState icon="history" title={t('history.emptyTitle')} hint={t('history.emptyHint')} />
       ) : (
         <div className="flex flex-col gap-2">
           {history.map((h) => (
@@ -48,22 +51,22 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-bold">{h.media.title}</div>
                   <div className="truncate text-xs font-medium text-muted">
-                    {isVideoType(h.media.type) ? `Episode ${h.episode.number}` : `Chapter ${h.episode.number}`}
-                    {h.episode.title ? ` — ${h.episode.title}` : ''}
+                    {t(isVideoType(h.media.type) ? 'common.episode' : 'common.chapter', { number: h.episode.number })}
+                    {h.episode.title ? t('common.title', { title: h.episode.title }) : ''}
                   </div>
-                  <div className="mt-0.5 text-[11px] text-faint">{formatOpened(h.openedAt)}</div>
+                  <div className="mt-0.5 text-[11px] text-faint">{formatOpened(h.openedAt, locale)}</div>
                 </div>
               </button>
               <button
                 onClick={() => open(h)}
-                aria-label="Resume"
+                aria-label={t('history.resume')}
                 className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl bg-accent-soft text-accent transition-colors hover:bg-accent hover:text-white"
               >
                 <Icon name={isVideoType(h.media.type) ? 'play' : 'library'} size={16} />
               </button>
               <button
                 onClick={() => remove(h)}
-                aria-label="Remove from history"
+                aria-label={t('history.remove')}
                 className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl text-faint transition-colors hover:bg-danger-soft hover:text-danger"
               >
                 <Icon name="trash" size={16} />
@@ -76,7 +79,7 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
   )
 }
 
-function formatOpened(ts: number): string {
+function formatOpened(ts: number, locale: string): string {
   const d = new Date(ts)
-  return d.toLocaleString()
+  return d.toLocaleString(locale)
 }

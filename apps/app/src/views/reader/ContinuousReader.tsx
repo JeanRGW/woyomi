@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { PageView } from './reader-nav'
 import { prefixReady } from './reader-nav'
 import { useTouchGestures } from './pinch'
+import { useT } from '../../i18n'
 import { ReaderImage } from './ImagePage'
 
 /**
@@ -26,6 +27,7 @@ export function ContinuousReader({
   onViewChange: (view: PageView) => void
   onToggleChrome: () => void
 }) {
+  const t = useT()
   const total = images.length
   const containerRef = useRef<HTMLDivElement>(null)
   const ratiosRef = useRef(new Map<number, number>()) // file page -> width/height
@@ -158,7 +160,7 @@ export function ContinuousReader({
               {/* w-full forces every page to the strip width, aspect kept */}
               <ReaderImage
                 src={src}
-                alt={`page ${i + 1}`}
+                alt={t('reader.pageAlt', { number: i + 1 })}
                 eager={i <= targetPage}
                 className="block h-auto w-full"
                 onLoad={(e) => {

@@ -1,10 +1,12 @@
 import type { Episode } from '@woyomi/core'
+import { useT } from '../../i18n'
 import { Chip, Toggle } from '../../components'
 import { Icon } from '../../icons'
 import type { ReaderBackground, ReaderFit, ReaderMode, ReadingDirection } from './reader-nav'
 import type { ReaderPrefs } from './reader-prefs'
 
 function Sheet({ title, onClose, side, children }: { title: string; onClose: () => void; side: 'right' | 'bottom'; children: React.ReactNode }) {
+  const t = useT()
   return (
     <div className="absolute inset-0 z-30" role="dialog" aria-label={title}>
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
@@ -17,7 +19,7 @@ function Sheet({ title, onClose, side, children }: { title: string; onClose: () 
       >
         <div className="flex items-center justify-between border-b border-line-soft px-4 py-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted">{title}</h2>
-          <button type="button" aria-label="Close" onClick={onClose} className="grid size-9 cursor-pointer place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg">
+          <button type="button" aria-label={t('common.close')} onClick={onClose} className="grid size-9 cursor-pointer place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg">
             <Icon name="x" size={18} />
           </button>
         </div>
@@ -62,60 +64,61 @@ export function ReaderSettingsSheet({
   isImages: boolean
   onClose: () => void
 }) {
+  const t = useT()
   return (
-    <Sheet title="Reader settings" onClose={onClose} side="right">
+    <Sheet title={t('reader.readerSettings')} onClose={onClose} side="right">
       {isImages && (
         <>
           <ChipRow<ReaderMode>
-            label="Reading mode"
+            label={t('reader.readingMode')}
             value={prefs.mode}
             onChange={(v) => setPref('mode', v)}
             options={[
-              { value: 'continuous', label: 'Strip' },
-              { value: 'paged', label: 'Pages' }
+              { value: 'continuous', label: t('reader.strip') },
+              { value: 'paged', label: t('reader.pages') }
             ]}
           />
           <ChipRow<ReadingDirection>
-            label="Direction"
+            label={t('reader.direction')}
             value={prefs.mode === 'paged' ? prefs.direction : 'vertical'}
             onChange={(v) => setPref('direction', v)}
             options={
               prefs.mode === 'paged'
                 ? [
-                    { value: 'rtl', label: 'Right to left' },
-                    { value: 'ltr', label: 'Left to right' }
+                    { value: 'rtl', label: t('reader.rightToLeft') },
+                    { value: 'ltr', label: t('reader.leftToRight') }
                   ]
-                : [{ value: 'vertical', label: 'Vertical' }]
+                : [{ value: 'vertical', label: t('reader.vertical') }]
             }
           />
           {prefs.mode === 'paged' && (
             <ChipRow<ReaderFit>
-              label="Fit"
+              label={t('reader.fit')}
               value={prefs.fit}
               onChange={(v) => setPref('fit', v)}
               options={[
-                { value: 'page', label: 'Fit screen' },
-                { value: 'width', label: 'Fit width' }
+                { value: 'page', label: t('reader.fitScreen') },
+                { value: 'width', label: t('reader.fitWidth') }
               ]}
             />
           )}
         </>
       )}
       <ChipRow<ReaderBackground>
-        label="Background"
+        label={t('reader.background')}
         value={prefs.background}
         onChange={(v) => setPref('background', v)}
         options={[
-          { value: 'ink', label: 'Ink' },
-          { value: 'black', label: 'Black' },
-          { value: 'sepia', label: 'Sepia' }
+          { value: 'ink', label: t('reader.ink') },
+          { value: 'black', label: t('reader.black') },
+          { value: 'sepia', label: t('reader.sepia') }
         ]}
       />
-      {isImages && <ToggleRow label="Tap to navigate" checked={prefs.tapNav} onChange={(v) => setPref('tapNav', v)} />}
+      {isImages && <ToggleRow label={t('reader.tapToNavigate')} checked={prefs.tapNav} onChange={(v) => setPref('tapNav', v)} />}
       {isImages && prefs.mode === 'continuous' && (
         <div className="mb-4">
           <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-muted">
-            <span>Strip width</span>
+            <span>{t('reader.stripWidth')}</span>
             <span className="tabular-nums">{prefs.stripWidth}%</span>
           </div>
           <input
@@ -125,15 +128,15 @@ export function ReaderSettingsSheet({
             step={5}
             value={prefs.stripWidth}
             onChange={(e) => setPref('stripWidth', Number(e.target.value))}
-            aria-label="Strip width"
+            aria-label={t('reader.stripWidth')}
             className="w-full accent-accent"
           />
         </div>
       )}
       {isImages && prefs.mode === 'paged' && (
-        <ToggleRow label="Double page" checked={prefs.doublePage} onChange={(v) => setPref('doublePage', v)} />
+        <ToggleRow label={t('reader.doublePage')} checked={prefs.doublePage} onChange={(v) => setPref('doublePage', v)} />
       )}
-      <ToggleRow label="Auto-advance to next chapter" checked={prefs.autoNext} onChange={(v) => setPref('autoNext', v)} />
+      <ToggleRow label={t('reader.autoAdvance')} checked={prefs.autoNext} onChange={(v) => setPref('autoNext', v)} />
     </Sheet>
   )
 }
@@ -151,8 +154,9 @@ export function ChapterDrawer({
   onJump: (episode: Episode) => void
   onClose: () => void
 }) {
+  const t = useT()
   return (
-    <Sheet title="Chapters" onClose={onClose} side="bottom">
+    <Sheet title={t('reader.chapters')} onClose={onClose} side="bottom">
       <div className="flex flex-col gap-1">
         {episodes.map((ep) => {
           const isCurrent = ep.id === currentId
@@ -167,8 +171,8 @@ export function ChapterDrawer({
             >
               <span className="min-w-0 flex-1 truncate">
                 {ep.number}
-                {ep.season != null ? ` · S${ep.season}` : ''}
-                {ep.title ? ` — ${ep.title}` : ''}
+                {ep.season != null ? t('common.season', { season: ep.season }) : ''}
+                {ep.title ? t('common.title', { title: ep.title }) : ''}
               </span>
               {seen.has(ep.id) && <Icon name="check" size={14} className="shrink-0 text-accent" />}
             </button>

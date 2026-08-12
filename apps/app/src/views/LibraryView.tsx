@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { LibraryEntry, LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
+import { useT } from '../i18n'
+import { libraryStatusFilterKey } from '../i18n/messages'
 import { Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader } from '../components'
 import { Icon } from '../icons'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
 export function LibraryView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
   const [entries, setEntries] = useState<LibraryEntry[]>([])
   const [filter, setFilter] = useState<LibraryStatus | 'all'>('all')
 
@@ -23,24 +26,24 @@ export function LibraryView({ runtime }: { runtime: AppRuntime }) {
 
   return (
     <Page wide>
-      <PageHeader title="Library">
-        <Btn variant="ghost" onClick={refresh} aria-label="Refresh">
+      <PageHeader title={t('nav.library')}>
+        <Btn variant="ghost" onClick={refresh} aria-label={t('common.refresh')}>
           <Icon name="refresh" size={16} />
-          Refresh
+          {t('common.refresh')}
         </Btn>
       </PageHeader>
       <div className="no-scrollbar -mx-4 mb-5 flex gap-2 overflow-x-auto px-4 md:-mx-8 md:px-8">
         <Chip active={filter === 'all'} onClick={() => setFilter('all')}>
-          All · {entries.length}
+          {t('library.all')} · {entries.length}
         </Chip>
         {STATUSES.map((s) => (
           <Chip key={s} active={filter === s} onClick={() => setFilter(s)}>
-            {s} · {counts[s] ?? 0}
+            {t(libraryStatusFilterKey(s))} · {counts[s] ?? 0}
           </Chip>
         ))}
       </div>
       {filtered.length === 0 ? (
-        <EmptyState icon="library" title="Nothing here yet" hint="Add titles from Browse and they will show up in your library." />
+        <EmptyState icon="library" title={t('library.emptyTitle')} hint={t('library.emptyHint')} />
       ) : (
         <MediaGrid>
           {filtered.map((e) => (

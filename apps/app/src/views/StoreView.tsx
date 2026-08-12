@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react'
 import { fetchRepoIndex, type RepoPlugin } from '../provider'
 import type { AppRuntime } from '../runtime'
 import { createFetchProvider } from '../runtime'
+import type { MediaType } from '@woyomi/core'
+import { useT } from '../i18n'
+import { MEDIA_TYPE_KEY } from '../i18n/messages'
 import { Banner, Btn, EmptyState, Page, PageHeader, SectionHeading, TextInput } from '../components'
 import { Icon } from '../icons'
 
 const DEFAULT_REPOS = ['http://localhost:8787/repo']
 
 export function StoreView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
   const [repos, setRepos] = useState<string[]>(DEFAULT_REPOS)
   const [repoInput, setRepoInput] = useState('')
   const [plugins, setPlugins] = useState<RepoPlugin[]>([])
@@ -47,7 +51,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
     setMessage('')
     try {
       await runtime.installExternal({ id: p.id, version: p.version, url: p.url, sha256: p.sha256, manifestUrl: p.manifestUrl })
-      setMessage(`Installed ${p.name} ${p.version}`)
+      setMessage(t('store.installedMessage', { name: p.name, version: p.version }))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -55,17 +59,19 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
     }
   }
 
+  const mediaTypeLabel = (mt: string) => (mt in MEDIA_TYPE_KEY ? t(MEDIA_TYPE_KEY[mt as MediaType]) : mt)
+
   return (
     <Page>
-      <PageHeader title="Plugins">
+      <PageHeader title={t('nav.plugins')}>
         <Btn variant="ghost" onClick={refresh} disabled={busy}>
           <Icon name="refresh" size={16} className={busy ? 'animate-spin' : ''} />
-          {busy ? 'Refreshing…' : 'Refresh'}
+          {busy ? t('common.refreshing') : t('common.refresh')}
         </Btn>
       </PageHeader>
 
       <div className="flex gap-2">
-        <TextInput placeholder="Add repo URL (e.g. https://host/plugins)" value={repoInput} onChange={(e) => setRepoInput(e.target.value)} />
+        <TextInput placeholder={t('store.addRepoPlaceholder')} value={repoInput} onChange={(e) => setRepoInput(e.target.value)} />
         <Btn
           variant="primary"
           onClick={() => {
@@ -75,7 +81,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
           }}
         >
           <Icon name="plus" size={16} />
-          Add repo
+          {t('store.addRepo')}
         </Btn>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -84,7 +90,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
             {r}
             <button
               onClick={() => setRepos((list) => list.filter((x) => x !== r))}
-              aria-label={`Remove repo ${r}`}
+              aria-label={t('store.removeRepo', { url: r })}
               className="grid size-6 cursor-pointer place-items-center rounded-full text-faint transition-colors hover:bg-danger-soft hover:text-danger"
             >
               <Icon name="x" size={13} />
@@ -95,12 +101,12 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
       {error && <Banner tone="error">{error}</Banner>}
       {message && <Banner tone="ok">{message}</Banner>}
 
-      <SectionHeading title="Available" />
+      <SectionHeading title={t('store.available')} />
       {plugins.length === 0 ? (
         busy ? (
-          <p className="text-sm text-muted">Loading…</p>
+          <p className="text-sm text-muted">{t('common.loading')}</p>
         ) : (
-          <EmptyState icon="plugins" title="No plugins found" hint="Add a plugin repository URL above to discover installable sources." />
+          <EmptyState icon="plugins" title={t('store.emptyTitle')} hint={t('store.emptyHint')} />
         )
       ) : (
         <div className="flex flex-col gap-2">
@@ -124,8 +130,8 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                     </span>
                   </div>
                   <div className="text-xs font-medium capitalize text-muted">
-                    {p.mediaTypes.join(', ')}
-                    {p.nsfw ? ' · NSFW' : ''}
+                    {p.mediaTypes.map(mediaTypeLabel).join(', ')}
+                    {p.nsfw ? ` · ${t('store.nsfw')}` : ''}
                   </div>
                   {p.description && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{p.description}</div>}
                 </div>
@@ -134,16 +140,16 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                     {installedVer === p.version ? (
                       <>
                         <Icon name="check" size={15} />
-                        Installed
+                        {t('store.installed')}
                       </>
                     ) : (
-                      `Update (${p.version})`
+                      t('store.update', { version: p.version })
                     )}
                   </Btn>
                 ) : (
                   <Btn variant="primary" onClick={() => install(p)} disabled={busy} className="shrink-0">
                     <Icon name="download" size={15} />
-                    Install
+                    {t('store.install')}
                   </Btn>
                 )}
               </div>

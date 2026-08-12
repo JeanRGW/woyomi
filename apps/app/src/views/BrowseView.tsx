@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HomeSection, SearchResults, Source } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import type { SourceResults } from '@woyomi/core'
+import { useT } from '../i18n'
 import { Banner, Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader, SectionHeading, SelectInput, TextInput } from '../components'
 import { Icon } from '../icons'
 
@@ -72,6 +73,7 @@ function Segmented<T extends string>({
 }
 
 export function BrowseView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
   const [mode, setMode] = useState<'home' | 'search'>('home')
   const [sources, setSources] = useState<Source[]>(runtime.registry.sources())
 
@@ -81,8 +83,15 @@ export function BrowseView({ runtime }: { runtime: AppRuntime }) {
 
   return (
     <Page wide>
-      <PageHeader title="Browse">
-        <Segmented options={[{ value: 'home', label: 'Home' }, { value: 'search', label: 'Search' }]} value={mode} onChange={setMode} />
+      <PageHeader title={t('nav.browse')}>
+        <Segmented
+          options={[
+            { value: 'home', label: t('browse.home') },
+            { value: 'search', label: t('browse.search') }
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
       </PageHeader>
       {mode === 'home' ? <HomeTab runtime={runtime} sources={sources} /> : <SearchTab runtime={runtime} sources={sources} />}
     </Page>
@@ -95,6 +104,7 @@ function homeSources(runtime: AppRuntime, sources: Source[]): Source[] {
 }
 
 function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] }) {
+  const t = useT()
   const [pinned, setPinned] = useState<string[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const avail = useMemo(() => homeSources(runtime, sources), [runtime, sources])
@@ -115,7 +125,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
     await runtime.setLandingSources(next)
   }
 
-  if (pinned === null) return <p className="text-sm text-muted">Loading…</p>
+  if (pinned === null) return <p className="text-sm text-muted">{t('common.loading')}</p>
 
   const pinnedSources = avail.filter((s) => pinned.includes(s.id))
   const selectedSource = avail.find((s) => s.id === selected)
@@ -123,7 +133,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
   return (
     <div>
       {pinnedSources.length === 0 && !selectedSource && (
-        <EmptyState icon="pin" title="Your home is empty" hint="Pin a source below and its sections will land here." />
+        <EmptyState icon="pin" title={t('browse.homeEmptyTitle')} hint={t('browse.homeEmptyHint')} />
       )}
       {pinnedSources.map((s) => (
         <HomeSource key={s.id} runtime={runtime} source={s} pinned onTogglePin={() => togglePin(s.id)} queue={queue} />
@@ -132,7 +142,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
         <HomeSource key={selectedSource.id} runtime={runtime} source={selectedSource} pinned={false} onTogglePin={() => togglePin(selectedSource.id)} queue={queue} />
       )}
 
-      <SectionHeading title="All sources" />
+      <SectionHeading title={t('browse.allSources')} />
       <div className="flex flex-wrap gap-2">
         {avail.map((s) => {
           const isPinned = pinned.includes(s.id)
@@ -143,7 +153,7 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
             </Chip>
           )
         })}
-        {avail.length === 0 && <p className="text-sm text-muted">No sources expose a homepage.</p>}
+        {avail.length === 0 && <p className="text-sm text-muted">{t('browse.noHomeSources')}</p>}
       </div>
     </div>
   )
@@ -163,6 +173,7 @@ function HomeSource({
   queue: SectionQueue
 }) {
   const [sections, setSections] = useState<HomeSection[]>([])
+  const t = useT()
 
   useEffect(() => {
     let cancelled = false
@@ -181,7 +192,7 @@ function HomeSource({
         <h2 className="text-lg font-extrabold tracking-tight">{source.name}</h2>
         <Btn variant="ghost" className="min-h-8 px-2.5 text-xs" onClick={onTogglePin}>
           <Icon name="pin" size={13} className={pinned ? 'text-accent' : ''} />
-          {pinned ? 'Unpin' : 'Pin'}
+          {pinned ? t('browse.unpin') : t('browse.pin')}
         </Btn>
       </div>
       {sections.map((sec) => (
@@ -206,6 +217,7 @@ function SectionRail({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sentinel, sentinelNear] = useNearViewport<HTMLDivElement>()
+  const t = useT()
 
   useEffect(() => {
     let cancelled = false
@@ -258,7 +270,7 @@ function SectionRail({
           >
             <span className="flex flex-col items-center gap-1 text-xs font-bold">
               <Icon name="chevronRight" size={20} />
-              {loading ? 'Loading…' : 'More'}
+              {loading ? t('common.loading') : t('browse.loadMore')}
             </span>
           </button>
         )}
@@ -269,6 +281,7 @@ function SectionRail({
 }
 
 function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] }) {
+  const t = useT()
   const [mode, setMode] = useState<'all' | 'single'>('all')
   const [sourceId, setSourceId] = useState(sources[0]?.id ?? '')
   const [query, setQuery] = useState('')
@@ -318,7 +331,10 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
     <div>
       <div className="flex flex-wrap items-center gap-3">
         <Segmented
-          options={[{ value: 'all', label: 'All sources' }, { value: 'single', label: 'Single source' }]}
+          options={[
+            { value: 'all', label: t('browse.allSources') },
+            { value: 'single', label: t('browse.singleSource') }
+          ]}
           value={mode}
           onChange={setMode}
         />
@@ -337,20 +353,20 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
           <Icon name="search" size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
           <TextInput
             className="pl-10"
-            placeholder="Search titles…"
+            placeholder={t('browse.searchPlaceholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && run()}
           />
         </div>
         <Btn variant="primary" onClick={() => run()} disabled={loading}>
-          {loading ? 'Searching…' : 'Search'}
+          {loading ? t('browse.searching') : t('browse.search')}
         </Btn>
       </div>
       {error && <Banner tone="error">{error}</Banner>}
       {!hasResults && !loading && !error && (
         <div className="mt-6">
-          <EmptyState icon="search" title="Search every source at once" hint="Results are grouped per source. Pick a single source for paged results." />
+          <EmptyState icon="search" title={t('browse.searchEmptyTitle')} hint={t('browse.searchEmptyHint')} />
         </div>
       )}
 
@@ -364,7 +380,7 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
             <MediaGrid>{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
             {r.hasNextPage && (
               <Btn variant="outline" className="mt-4 w-full" onClick={() => run((r.page ?? 1) + 1)} disabled={loading}>
-                {loading ? 'Loading…' : `Load more from ${r.sourceName}`}
+                {loading ? t('common.loading') : t('browse.loadMoreFrom', { name: r.sourceName })}
               </Btn>
             )}
           </div>
@@ -376,7 +392,7 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
           </div>
           {single?.hasNextPage && (
             <Btn variant="outline" className="mt-4 w-full" onClick={() => run((single.page ?? 1) + 1)} disabled={loading}>
-              {loading ? 'Loading…' : 'Load more'}
+              {loading ? t('common.loading') : t('browse.loadMore')}
             </Btn>
           )}
         </>

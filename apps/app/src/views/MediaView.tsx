@@ -3,11 +3,14 @@ import { marked } from 'marked'
 import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
+import { useT } from '../i18n'
+import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '../i18n/messages'
 import { BackButton, Banner, Btn, CoverArt, EpisodeRow, Page, SelectInput } from '../components'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
 export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime; sourceId: string; mediaId: string }) {
+  const t = useT()
   const [media, setMedia] = useState<Awaited<ReturnType<AppRuntime['engine']['getMedia']>> | null>(null)
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [entry, setEntry] = useState<LibraryEntry | undefined>()
@@ -84,7 +87,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
                 navigate({ name: 'library' })
               }}
             >
-              Remove from library
+              {t('media.removeFromLibrary')}
             </Btn>
           </div>
         )}
@@ -93,7 +96,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   if (!media)
     return (
       <div className="grid h-full place-items-center">
-        <p className="text-sm text-muted">Loading…</p>
+        <p className="text-sm text-muted">{t('common.loading')}</p>
       </div>
     )
 
@@ -117,15 +120,15 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
           <div className="min-w-0 flex-1 pt-1">
             <h1 className="text-xl font-extrabold leading-tight tracking-tight md:text-3xl">{media.title}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider">
-              <span className="rounded-full bg-accent-soft px-2.5 py-1 text-accent">{media.type}</span>
+              <span className="rounded-full bg-accent-soft px-2.5 py-1 text-accent">{t(mediaTypeLabelKey(media.type))}</span>
               <span className="rounded-full bg-surface-2 px-2.5 py-1 text-muted">{media.sourceId}</span>
-              {media.status && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-muted">{media.status}</span>}
+              {media.status && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-muted">{t(mediaStatusLabelKey(media.status))}</span>}
             </div>
             {media.tags && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {media.tags.map((t) => (
-                  <span key={t} className="rounded-full border border-line px-2.5 py-0.5 text-[11px] font-medium text-muted">
-                    {t}
+                {media.tags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-line px-2.5 py-0.5 text-[11px] font-medium text-muted">
+                    {tag}
                   </span>
                 ))}
               </div>
@@ -133,11 +136,11 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <SelectInput value={entry?.status ?? ''} onChange={(e) => e.target.value && setStatus(e.target.value as LibraryStatus)}>
                 <option value="" disabled>
-                  Add to library…
+                  {t('media.addToLibrary')}
                 </option>
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {t(libraryStatusLabelKey(s, media.type))}
                   </option>
                 ))}
               </SelectInput>
@@ -149,7 +152,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
                     setEntry(undefined)
                   }}
                 >
-                  Remove
+                  {t('media.remove')}
                 </Btn>
               )}
             </div>
@@ -160,17 +163,19 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
 
         <div className="mb-3 mt-8 flex items-center gap-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
-            {episodes.length} {video ? 'episodes' : 'chapters'}
+            {t(video ? 'media.episodeCount' : 'media.chapterCount', { count: episodes.length })}
           </h2>
           <Btn variant="ghost" className="ml-auto min-h-8 px-2.5 text-xs" onClick={allSeen ? markAllUnseen : markAllSeen}>
-            {allSeen ? 'Mark all unseen' : 'Mark all seen'}
+            {allSeen ? t('media.markAllUnseen') : t('media.markAllSeen')}
           </Btn>
         </div>
         <div className="flex flex-col gap-1.5">
           {episodes.map((ep) => (
             <EpisodeRow
               key={ep.id}
-              label={`${ep.number}${ep.season != null ? ` · S${ep.season}` : ''}${ep.title ? ` — ${ep.title}` : ''}`}
+              label={`${ep.number}${ep.season != null ? t('common.season', { season: ep.season }) : ''}${
+                ep.title ? t('common.title', { title: ep.title }) : ''
+              }`}
               active={seen.has(ep.id)}
               onOpen={() => (video ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
               onToggleSeen={() => toggleSeen(ep)}

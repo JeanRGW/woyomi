@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react'
+import { useT } from '../../i18n'
 
 /**
  * Page image with an inline error + tap-to-retry fallback (per-image state so
@@ -21,6 +22,7 @@ export function ReaderImage({
   onLoad?: (e: React.SyntheticEvent<HTMLImageElement>) => void
   onError?: () => void
 }) {
+  const t = useT()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
@@ -34,8 +36,8 @@ export function ReaderImage({
         }}
         className="mx-auto flex h-48 w-full max-w-md cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-line text-sm text-muted hover:text-fg"
       >
-        <span>Page failed to load</span>
-        <span className="text-xs font-bold text-accent">Tap to retry</span>
+        <span>{t('reader.pageFailed')}</span>
+        <span className="text-xs font-bold text-accent">{t('reader.tapToRetry')}</span>
       </button>
     )
   }

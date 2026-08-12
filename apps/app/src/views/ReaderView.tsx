@@ -3,6 +3,7 @@ import type { ChapterContent, Episode, Media } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { recordOpen } from '../hooks'
+import { useT } from '../i18n'
 import { BackButton, Banner, Page } from '../components'
 import { findAdjacent, restorePage, viewLabel, type PageView } from './reader/reader-nav'
 import { BACKGROUNDS, getReadPosition, saveReadPosition, useReaderPrefs } from './reader/reader-prefs'
@@ -16,6 +17,7 @@ export function ReaderView({ runtime, sourceId, mediaId, episodeId }: { runtime:
 }
 
 function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
+  const t = useT()
   const [content, setContent] = useState<ChapterContent | null>(null)
   const [error, setError] = useState('')
   const [media, setMedia] = useState<Media | null>(null)
@@ -143,7 +145,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   if (!content || (content.type === 'pages' && initialPage === null)) {
     return (
       <div className="grid h-full place-items-center">
-        <p className="text-sm text-muted">Loading chapter…</p>
+        <p className="text-sm text-muted">{t('common.loadingChapter')}</p>
       </div>
     )
   }
@@ -152,7 +154,9 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const empty = isImages ? total === 0 : !content.html.trim()
   const chapter = episodes.find((e) => e.id === episodeId)
   const chapterLabel = chapter
-    ? `Chapter ${chapter.number}${chapter.season != null ? ` · S${chapter.season}` : ''}${chapter.title ? ` — ${chapter.title}` : ''}`
+    ? `${t('common.chapter', { number: chapter.number })}${chapter.season != null ? t('common.season', { season: chapter.season }) : ''}${
+        chapter.title ? t('common.title', { title: chapter.title }) : ''
+      }`
     : ''
   const continuousView = { start: view.start, count: 1 as const, readingStart: view.start, readingEnd: view.start }
   const labelView = prefs.mode === 'paged' ? view : continuousView
@@ -164,7 +168,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
     <div className="relative h-full min-h-0 overflow-hidden" style={{ backgroundColor: BACKGROUNDS[prefs.background] }}>
       {empty ? (
         <div className="grid h-full place-items-center px-4">
-          <p className="mx-auto max-w-md py-10 text-center text-sm text-muted">This chapter has no viewable content.</p>
+          <p className="mx-auto max-w-md py-10 text-center text-sm text-muted">{t('reader.emptyChapter')}</p>
         </div>
       ) : isImages ? (
         prefs.mode === 'paged' ? (

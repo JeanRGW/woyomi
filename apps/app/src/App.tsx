@@ -9,6 +9,8 @@ import { PlayerView } from './views/PlayerView'
 import { StoreView } from './views/StoreView'
 import { SettingsView } from './views/SettingsView'
 import { PluginSettingsView } from './views/PluginSettingsView'
+import { useT } from './i18n'
+import type { MessageKey } from './i18n/messages'
 import { Icon, type IconName } from './icons'
 import logoUrl from './assets/woyomi-logo-horizontal-reverse.svg'
 
@@ -71,12 +73,12 @@ export function navigate(route: Route, opts?: { replace?: boolean }): void {
   }
 }
 
-const tabs: Array<{ route: Route; label: string; icon: IconName }> = [
-  { route: { name: 'browse' }, label: 'Browse', icon: 'browse' },
-  { route: { name: 'library' }, label: 'Library', icon: 'library' },
-  { route: { name: 'history' }, label: 'History', icon: 'history' },
-  { route: { name: 'store' }, label: 'Plugins', icon: 'plugins' },
-  { route: { name: 'settings' }, label: 'Settings', icon: 'settings' }
+const tabs: Array<{ route: Route; labelKey: MessageKey; icon: IconName }> = [
+  { route: { name: 'browse' }, labelKey: 'nav.browse', icon: 'browse' },
+  { route: { name: 'library' }, labelKey: 'nav.library', icon: 'library' },
+  { route: { name: 'history' }, labelKey: 'nav.history', icon: 'history' },
+  { route: { name: 'store' }, labelKey: 'nav.plugins', icon: 'plugins' },
+  { route: { name: 'settings' }, labelKey: 'nav.settings', icon: 'settings' }
 ]
 
 function isActive(route: Route, tab: Route): boolean {
@@ -85,6 +87,7 @@ function isActive(route: Route, tab: Route): boolean {
 }
 
 export function App() {
+  const t = useT()
   const [runtime, setRuntime] = useState<AppRuntime | null>(null)
   const [route, setRoute] = useState<Route>(parseHash(window.location.hash))
 
@@ -103,7 +106,7 @@ export function App() {
       <div className="grid h-full place-items-center bg-ink">
         <div className="flex flex-col items-center gap-3">
           <img src={logoUrl} alt="woyomi" className="h-10" />
-          <p className="text-sm text-muted">Loading engine…</p>
+          <p className="text-sm text-muted">{t('common.loadingEngine')}</p>
         </div>
       </div>
     )
@@ -119,16 +122,16 @@ export function App() {
             <img src={logoUrl} alt="woyomi" className="h-7" />
           </div>
           <nav className="flex flex-col gap-1 px-3">
-            {tabs.map((t) => (
+            {tabs.map((tab) => (
               <button
-                key={t.label}
-                onClick={() => navigate(t.route)}
+                key={tab.labelKey}
+                onClick={() => navigate(tab.route)}
                 className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${
-                  isActive(route, t.route) ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg'
+                  isActive(route, tab.route) ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg'
                 }`}
               >
-                <Icon name={t.icon} size={19} />
-                {t.label}
+                <Icon name={tab.icon} size={19} />
+                {t(tab.labelKey)}
               </button>
             ))}
           </nav>
@@ -136,7 +139,7 @@ export function App() {
             <div className="mt-auto px-5 pb-5">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
                 <span className="size-1.5 rounded-full bg-ok" />
-                native
+                {t('common.native')}
               </span>
             </div>
           )}
@@ -153,16 +156,16 @@ export function App() {
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           <div className="grid grid-cols-5">
-            {tabs.map((t) => (
+            {tabs.map((tab) => (
               <button
-                key={t.label}
-                onClick={() => navigate(t.route)}
+                key={tab.labelKey}
+                onClick={() => navigate(tab.route)}
                 className={`flex flex-col items-center gap-1 py-2 text-[10px] font-bold transition-colors ${
-                  isActive(route, t.route) ? 'text-accent' : 'text-muted'
+                  isActive(route, tab.route) ? 'text-accent' : 'text-muted'
                 }`}
               >
-                <Icon name={t.icon} size={21} />
-                {t.label}
+                <Icon name={tab.icon} size={21} />
+                {t(tab.labelKey)}
               </button>
             ))}
           </div>

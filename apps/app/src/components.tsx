@@ -2,6 +2,8 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 import type { Media } from '@woyomi/core'
 import { navigate } from './App'
 import { Icon, type IconName } from './icons'
+import { useT } from './i18n'
+import { mediaStatusLabelKey, mediaTypeLabelKey } from './i18n/messages'
 
 /* ---------- Layout primitives ---------- */
 
@@ -119,13 +121,14 @@ export function EmptyState({ icon, title, hint }: { icon: IconName; title: strin
 }
 
 export function BackButton() {
+  const t = useT()
   return (
     <button
       onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'library' }))}
       className="mb-4 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-surface/80 px-3.5 text-sm font-semibold text-muted backdrop-blur transition-colors hover:bg-surface-2 hover:text-fg"
     >
       <Icon name="back" size={17} />
-      Back
+      {t('common.back')}
     </button>
   )
 }
@@ -155,6 +158,7 @@ export function CoverArt({ media, className = '' }: { media: Media; className?: 
 }
 
 export function MediaCard({ media, className = '' }: { media: Media; className?: string }) {
+  const t = useT()
   const [srcId, mediaId] = media.id.split('/')
   const open = () => navigate({ name: 'media', sourceId: srcId!, mediaId: mediaId! })
   return (
@@ -170,8 +174,8 @@ export function MediaCard({ media, className = '' }: { media: Media; className?:
       </div>
       <div className="mt-2 line-clamp-2 text-[13px] font-semibold leading-snug">{media.title}</div>
       <div className="mt-0.5 text-[11px] font-medium capitalize text-muted">
-        {media.type}
-        {media.status ? ` · ${media.status}` : ''}
+        {t(mediaTypeLabelKey(media.type))}
+        {media.status ? ` · ${t(mediaStatusLabelKey(media.status))}` : ''}
       </div>
     </div>
   )
@@ -192,6 +196,7 @@ export function EpisodeRow({
   onOpen: () => void
   onToggleSeen: () => void
 }) {
+  const t = useT()
   return (
     <div
       className={`flex items-center justify-between gap-2 rounded-xl border border-line-soft bg-surface px-3 py-2 transition-colors hover:border-accent/50 ${
@@ -211,13 +216,13 @@ export function EpisodeRow({
         {active && (
           <span className="hidden items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-bold text-accent sm:inline-flex">
             <Icon name="check" size={12} />
-            seen
+            {t('common.seen')}
           </span>
         )}
         <button
           onClick={onToggleSeen}
-          title={active ? 'Mark unseen' : 'Mark seen'}
-          aria-label={active ? 'Mark unseen' : 'Mark seen'}
+          title={active ? t('common.markUnseen') : t('common.markSeen')}
+          aria-label={active ? t('common.markUnseen') : t('common.markSeen')}
           className={`grid size-9 cursor-pointer place-items-center rounded-lg transition-colors ${
             active ? 'text-accent hover:bg-surface-2' : 'text-faint hover:bg-surface-2 hover:text-fg'
           }`}

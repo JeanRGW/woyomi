@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useMediaQuery } from '../../hooks'
+import { useT } from '../../i18n'
 import {
   clampZoom,
   focalZoomAdjust,
@@ -46,6 +47,7 @@ export function PagedReader({
   onToggleChrome: () => void
   onZoomChange: (z: ZoomClusterState) => void
 }) {
+  const t = useT()
   const total = images.length
   const wide = useMediaQuery('(min-width: 900px)')
   const double = doublePage && wide
@@ -220,7 +222,7 @@ export function PagedReader({
           const image = (
             <ReaderImage
               src={images[filePage] ?? ''}
-              alt={`page ${filePage + 1}`}
+              alt={t('reader.pageAlt', { number: filePage + 1 })}
               eager
               className={double ? 'block' : pageImageClass(fit)}
               // double: each page is contained in a half-width slot (no rem

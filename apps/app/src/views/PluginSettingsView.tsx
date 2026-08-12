@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppRuntime } from '../runtime'
 import { navigate } from '../App'
+import { useT } from '../i18n'
 import { EmptyState, Page } from '../components'
 import { PluginSettings } from './PluginSettings'
 import { Icon } from '../icons'
 
 /** Dedicated page holding every installed plugin's settings: source toggles + declared prefs. */
 export function PluginSettingsView({ runtime }: { runtime: AppRuntime }) {
+  const t = useT()
   const [plugins, setPlugins] = useState(runtime.registry.list())
 
   const refresh = useCallback(() => setPlugins(runtime.registry.list()), [runtime])
@@ -23,15 +25,15 @@ export function PluginSettingsView({ runtime }: { runtime: AppRuntime }) {
         className="mb-4 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-surface/80 px-3.5 text-sm font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-fg"
       >
         <Icon name="back" size={17} />
-        Settings
+        {t('nav.settings')}
       </button>
       <div className="mb-5 md:mb-7">
-        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Plugin settings</h1>
-        <p className="mt-1 text-sm text-muted">Every option exposed by your installed plugins, in one place.</p>
+        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">{t('pluginSettings.title')}</h1>
+        <p className="mt-1 text-sm text-muted">{t('pluginSettings.subtitle')}</p>
       </div>
 
       {configurable.length === 0 ? (
-        <EmptyState icon="sliders" title="Nothing to configure" hint="Installed plugins do not expose any settings yet." />
+        <EmptyState icon="sliders" title={t('pluginSettings.emptyTitle')} hint={t('pluginSettings.emptyHint')} />
       ) : (
         <div className="flex flex-col gap-3">
           {configurable.map((p) => (
@@ -46,7 +48,7 @@ export function PluginSettingsView({ runtime }: { runtime: AppRuntime }) {
 
               {p.registration.sources.length > 1 && (
                 <div className="mt-3 border-t border-line-soft pt-3">
-                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Sources</div>
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">{t('pluginSettings.sources')}</div>
                   <div className="flex flex-wrap gap-2">
                     {p.registration.sources.map((s) => {
                       const enabled = runtime.registry.isSourceEnabled(s.id)

@@ -3,9 +3,11 @@ import Hls from 'hls.js'
 import type { Episode, Media, StreamSource } from '@woyomi/core'
 import { playableStreamUrl, type AppRuntime } from '../runtime'
 import { recordOpen } from '../hooks'
+import { useT } from '../i18n'
 import { BackButton, Banner, Page } from '../components'
 
 export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
+  const t = useT()
   const [streams, setStreams] = useState<StreamSource[]>([])
   const [stream, setStream] = useState<StreamSource | null>(null)
   const [error, setError] = useState('')
@@ -22,7 +24,7 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
         const ep = eps.find((e) => e.id === episodeId)
         if (cancelled) return
         if (!ep) {
-          setError('Episode not found')
+          setError(t('player.episodeNotFound'))
           return
         }
         setMedia(m)
@@ -39,7 +41,7 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
     return () => {
       cancelled = true
     }
-  }, [runtime, sourceId, mediaId, episodeId])
+  }, [runtime, sourceId, mediaId, episodeId, t])
 
   useEffect(() => {
     const video = videoRef.current
@@ -74,8 +76,8 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-5 md:py-8">
       <BackButton />
-      <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{media?.title ?? 'Playing…'}</h1>
-      {episode && <div className="mt-1 text-sm font-medium text-muted">Episode {episode.number}</div>}
+      <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{media?.title ?? t('player.playing')}</h1>
+      {episode && <div className="mt-1 text-sm font-medium text-muted">{t('common.episode', { number: episode.number })}</div>}
       <video ref={videoRef} controls autoPlay className="mt-4 w-full rounded-2xl bg-black shadow-2xl shadow-black/50 ring-1 ring-white/10" />
       {streams.length > 0 ? (
         <div className="mt-4 flex flex-wrap gap-2">
@@ -92,7 +94,7 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
           ))}
         </div>
       ) : (
-        <p className="mt-4 text-sm text-muted">No playable streams returned.</p>
+        <p className="mt-4 text-sm text-muted">{t('player.noStreams')}</p>
       )}
     </div>
   )
