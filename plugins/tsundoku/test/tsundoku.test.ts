@@ -108,7 +108,8 @@ describe('tsundoku source', () => {
     expect(res.items).toHaveLength(2)
     const novel = res.items[0]!
     expect(novel.title).toBe('Como um Herói Realista Reconstruiu o Reino')
-    expect(novel.mediaId).toBe('como-um-heroi-realista-reconstruiu-o-reino')
+    expect(novel.mediaId).toBe('novel:como-um-heroi-realista-reconstruiu-o-reino')
+    expect(novel.id).toBe('tsundoku/novel:como-um-heroi-realista-reconstruiu-o-reino')
     expect(novel.type).toBe('novel')
     expect(novel.coverUrl).toContain('capa1.jpg')
     expect(res.items[1]?.type).toBe('manga')
@@ -128,6 +129,12 @@ describe('tsundoku source', () => {
     expect(m.synopsis).toContain('Uma história sobre um labirinto')
     expect(m.tags).toEqual(['Fantasia', 'Mecha'])
     expect(m.coverUrl).toContain('capa-rei.jpg')
+  })
+
+  it('preserves a novel type on the detail page', async () => {
+    const media = await tsundoku.getMedia({ ...ctx, fetch: fixtureFetch({ '/manga/': MEDIA_HTML }) }, 'novel:rei-do-labirinto')
+    expect(media.type).toBe('novel')
+    expect(media.mediaId).toBe('novel:rei-do-labirinto')
   })
 
   it('parses the chapter list into episodes with season/number', async () => {

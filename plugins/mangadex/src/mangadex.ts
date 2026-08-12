@@ -192,7 +192,7 @@ export function makeMangadexSource(def: MangadexLangDef): Source {
             if (Number.isNaN(num) || seen.has(numKey)) continue
             seen.add(numKey)
             episodes.push({
-              id: `mangadex/${mediaId}/${ch.id}`,
+              id: `${sourceId}/${mediaId}/${ch.id}`,
               mediaId,
               number: num,
               season: vol,

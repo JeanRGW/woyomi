@@ -128,6 +128,7 @@ describe('mangadex source', () => {
     expect(eps[0]?.season).toBe(1)
     expect(eps[1]?.season).toBe(2)
     expect(eps[3]?.number).toBe(42.5)
+    expect(eps[0]?.id).toBe('mangadex-en/abc-123/ch-1')
   })
 
   it('fetches all chapters of a series longer than the old 1000-offset cap', async () => {
@@ -204,6 +205,11 @@ describe('mangadex source', () => {
   it('tags each episode with its source language', async () => {
     const eps = await mangaDexSource.getEpisodes({ ...ctx, fetch: fixtureFetch({ '/feed?': chaptersFixture }) }, 'abc-123')
     expect(eps.every((e) => e.lang === 'en')).toBe(true)
+  })
+
+  it('scopes episode ids to the language source', async () => {
+    const eps = await ptBrSource.getEpisodes({ ...ctx, fetch: fixtureFetch({ '/feed?': chaptersFixture }) }, 'abc-123')
+    expect(eps[0]?.id).toBe('mangadex-ptbr/abc-123/ch-1')
   })
 
   it('returns an empty pages view for an image-less chapter', async () => {

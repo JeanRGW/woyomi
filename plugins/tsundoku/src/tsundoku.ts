@@ -19,14 +19,20 @@ function mapCard(a: Element): Media {
   const href = a.getAttribute('href') ?? ''
   const slug = href.replace(/\/+$/, '').split('/').pop() ?? ''
   const label = text(a.querySelector('.novelabel, .typename')) ?? ''
+  const type = /novel/i.test(label) ? 'novel' : 'manga'
+  const mediaId = type === 'novel' ? `novel:${slug}` : slug
   return {
-    id: `${sourceId}/${slug}`,
-    mediaId: slug,
+    id: `${sourceId}/${mediaId}`,
+    mediaId,
     sourceId,
     title: a.getAttribute('title') ?? text(a.querySelector('.tt a')) ?? 'Untitled',
-    type: /novel/i.test(label) ? 'novel' : 'manga',
+    type,
     coverUrl: a.querySelector('img.wp-post-image')?.getAttribute('src') ?? undefined
   }
+}
+
+function parseMediaId(mediaId: string): { slug: string; type: Media['type'] } {
+  return mediaId.startsWith('novel:') ? { slug: mediaId.slice(6), type: 'novel' } : { slug: mediaId, type: 'manga' }
 }
 
 function parseChapterLabel(label: string): { season?: number; number: number } {
@@ -98,7 +104,8 @@ export function makeTsundokuSource(): Source {
     },
 
     async getMedia(ctx, mediaId): Promise<Media> {
-      const doc = parseHtml(await fetchHtml(ctx.fetch, `${BASE}/manga/${mediaId}/`))
+      const { slug, type } = parseMediaId(mediaId)
+      const doc = parseHtml(await fetchHtml(ctx.fetch, `${BASE}/manga/${slug}/`))
       const alt = text(doc.querySelector('span.alternative'))
       const altTitles = alt?.split(';').map((s) => s.trim()).filter(Boolean)
       const tags = Array.from(doc.querySelectorAll<HTMLAnchorElement>('.info-desc .mgen a'))
@@ -110,7 +117,7 @@ export function makeTsundokuSource(): Source {
         sourceId,
         title: text(doc.querySelector('h1.entry-title')) ?? 'Untitled',
         altTitles: altTitles && altTitles.length > 0 ? altTitles : undefined,
-        type: 'manga',
+        type,
         coverUrl: doc.querySelector('img.wp-post-image')?.getAttribute('src') ?? undefined,
         synopsis: text(doc.querySelector('.entry-content-single')),
         tags: tags.length > 0 ? tags : undefined
@@ -118,7 +125,8 @@ export function makeTsundokuSource(): Source {
     },
 
     async getEpisodes(ctx, mediaId): Promise<Episode[]> {
-      const doc = parseHtml(await fetchHtml(ctx.fetch, `${BASE}/manga/${mediaId}/`))
+      const { slug } = parseMediaId(mediaId)
+      const doc = parseHtml(await fetchHtml(ctx.fetch, `${BASE}/manga/${slug}/`))
       const episodes: Episode[] = []
       for (const li of Array.from(doc.querySelectorAll<HTMLLIElement>('li[data-num]'))) {
         if ((li.getAttribute('data-num') ?? '').includes('{{')) continue // skip the JS series-history template
