@@ -120,7 +120,9 @@ const en = {
     'settings.pluginOptions.one': 'Options from {count} plugin',
     'settings.pluginOptionsGeneric': 'Per-source toggles and plugin options',
     'settings.webProxy': 'Web proxy (scrape)',
-    'settings.webProxyHint': "Used in the browser build to fetch sources that don't allow CORS (e.g. HTML scrapers). Leave the URL empty to use direct fetch. Point it at a self-hosted server with SCRAPE_ENABLED=true.",
+    'settings.webProxyHint': "Used in the browser build to fetch sources that don't allow CORS (e.g. HTML scrapers). Leave the URL empty to use direct fetch. Point it at a self-hosted server with ",
+    'settings.webProxyHintCode': 'SCRAPE_ENABLED=true',
+    'settings.webProxyHintEnd': '.',
     'settings.proxyUrl': 'Proxy server URL',
     'settings.proxyKey': 'Proxy key',
     'settings.proxyKeyPlaceholder': 'Key (optional, matches SCRAPE_TOKEN)',
@@ -211,7 +213,13 @@ export function translate(locale: LocaleId, key: MessageKey, params?: Record<str
     const oneKey = `${key}.one` as MessageKey
     if (oneKey in table) text = table[oneKey]
   }
-  for (const [name, value] of Object.entries(params ?? {})) text = text.replaceAll(`{${name}}`, String(value))
+  if (params) {
+    // Numbers use the locale's formatting (e.g. pt-BR "1.000", not "1000").
+    const formatNumber = new Intl.NumberFormat(locale)
+    for (const [name, value] of Object.entries(params)) {
+      text = text.replaceAll(`{${name}}`, typeof value === 'number' ? formatNumber.format(value) : value)
+    }
+  }
   return text
 }
 

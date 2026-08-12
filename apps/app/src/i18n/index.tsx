@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- context + hooks co-located by design */
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { messages, translate, type LocaleId, type MessageKey } from './messages'
 
 const DEFAULT_LOCALE: LocaleId = 'en'
@@ -26,6 +26,10 @@ export const I18nContext = createContext<I18nContextValue>({
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<LocaleId>(detectLocale)
+  // Keep <html lang> in sync so screen readers and lang-aware features match the UI.
+  useEffect(() => {
+    if (typeof document !== 'undefined') document.documentElement.lang = locale
+  }, [locale])
   const value = useMemo<I18nContextValue>(() => ({ locale, setLocale, t: (key, params) => translate(locale, key, params) }), [locale])
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }

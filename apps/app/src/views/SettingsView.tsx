@@ -178,7 +178,11 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
         <>
           <SectionHeading title={t('settings.webProxy')} />
           <div className="rounded-2xl border border-line-soft bg-surface p-4">
-            <p className="mb-3 text-xs text-muted">{t('settings.webProxyHint')}</p>
+            <p className="mb-3 text-xs text-muted">
+              {t('settings.webProxyHint')}
+              <code className="text-accent">{t('settings.webProxyHintCode')}</code>
+              {t('settings.webProxyHintEnd')}
+            </p>
             <div className="flex flex-col gap-2">
               <TextInput
                 type="url"

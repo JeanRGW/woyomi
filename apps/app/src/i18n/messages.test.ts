@@ -72,4 +72,9 @@ describe('pt catalog', () => {
     expect(translate('pt', 'media.chapterCount', { count: 3 })).toBe('3 capítulos')
     expect(translate('pt', 'status.watching')).toBe('assistindo')
   })
+
+  it('formats numbers per locale', () => {
+    expect(translate('pt', 'media.episodeCount', { count: 1000 })).toBe('1.000 episódios')
+    expect(translate('en', 'media.episodeCount', { count: 1000 })).toBe('1,000 episodes')
+  })
 })
