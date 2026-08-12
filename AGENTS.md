@@ -59,7 +59,10 @@ pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
   `examplevideo`). They are **workspace packages that depend on
   `@woyomi/core`** and ship as bundled plugins via `?raw` imports.
 - `apps/app` — React 18 + Vite frontend and the Tauri 2 Rust shell
-  (`src-tauri/`). `src/runtime.ts` wires fetch/stores per runtime.
+  (`src-tauri/`). `src/runtime.ts` wires fetch/stores per runtime. Native
+  offline downloads live in `src/downloads.ts` (`DownloadManager`, foreground
+  queue) + a `downloads` SQLite table, backed by Rust `download_*` commands and
+  a loopback `/offline/<fileId>/<index>` Range server (see `src-tauri/src/lib.rs`).
 - `apps/server` — optional Hono backend.
 
 ### Plugin contract (enforced at build + load time)
@@ -107,6 +110,9 @@ catalog, never by inlining text in JSX/aria/placeholders.
   `import type`), `noUncheckedIndexedAccess`, `noUnusedLocals/Parameters`.
 - `mode:'dom'` fetches are stubbed in the Rust command and unsupported in
   browser mode.
+- **Downloads are native-only** (Tauri). `runtime.downloads` is undefined in
+  the browser build; UI gates on it. The `downloads` table is separate from
+  sync — never fold download metadata into `LibraryStore`/`SyncPayload`.
 - Test fixtures are inline objects in the test files (no `fixtures/` dir).
 - `apps/server/data/` (runtime data) and `.commandcode/` are not committed.
 

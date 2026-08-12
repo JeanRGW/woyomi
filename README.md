@@ -5,7 +5,8 @@ A multi-source content aggregator in the style of
 built as a **Tauri 2 desktop + Android app** with a modular TypeScript plugin
 system. Supports manga, anime, webnovels, movies, and series from pluggable
 sources, with a local library, episode/chapter tracking, a paged manga reader,
-a text novel reader, and an HLS/MP4 player.
+a text novel reader, an HLS/MP4 player, and offline downloads (manga pages,
+novel text, direct MP4) managed from a Downloads view.
 
 Project home: **https://woyomi.rgw.app**
 
@@ -179,6 +180,17 @@ See `plugins/tsundoku` for a reference HTML-scraping plugin.
   fallback path (native mpv/ExoPlayer) is a future phase.
 - `mode:'dom'` fetches (headless page rendering for JS-heavy sites) are stubbed
   in the Rust command and unsupported in browser mode.
+- **Downloads are native-only** (Tauri desktop/Android). The web build leaves
+  `runtime.downloads` unset, so the per-episode controls and Downloads view
+  are hidden there. Files live in private app-local storage
+  (`$APPLOCALDATA/downloads`); there is no user-selectable folder yet.
+- Only **direct MP4** can be downloaded — **HLS and DRM are not offline
+  assets** (MP4 quality is chosen when enqueuing). Downloads run on a
+  foreground queue, one asset at a time; an interrupted asset restarts from
+  zero (no byte-level resume), and the queue resumes where it left off on the
+  next launch.
+- Downloaded media is **device-local** and deliberately excluded from library
+  sync and JSON export.
 - The `/api/scrape` proxy is **off by default** (`SCRAPE_ENABLED=false`) so the
   bundled server is not an open proxy; when self-hosting, enable it and set
   `SCRAPE_TOKEN` to require a shared key. It is hardened (timeout,
