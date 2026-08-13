@@ -26,3 +26,9 @@ sha2 = "0.10"
 http = "1"
 url = "2"
 tiny_http = "0.12"
+
+# HACK(patch): Pin wry to 0.56.1 (fixes a Windows WebView2 crash on
+# resize/maximize, wry#1794) while tauri-runtime-wry 2.11.4 still pins wry 0.55.x.
+# Remove once a released tauri-runtime-wry depends on wry >= 0.56.1.
+[patch.crates-io]
+tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
