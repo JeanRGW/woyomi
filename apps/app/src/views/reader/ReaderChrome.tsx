@@ -98,7 +98,7 @@ export function ReaderChrome({
       <div
         className={`absolute inset-x-0 bottom-0 z-20 transition-opacity ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
       >
-        <div className="flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className="flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur" style={{ paddingBottom: 'var(--sab)' }}>
           <ChromeBtn label={t('reader.prevChapter')} onClick={onPrevChapter} disabled={!hasPrev}>
             <Icon name="chevronLeft" size={19} />
           </ChromeBtn>

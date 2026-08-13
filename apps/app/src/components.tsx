@@ -9,7 +9,7 @@ import { mediaStatusLabelKey, mediaTypeLabelKey } from './i18n/messages'
 /* ---------- Layout primitives ---------- */
 
 export function Page({ children, wide }: { children: ReactNode; wide?: boolean }) {
-  return <div className={`mx-auto w-full px-4 py-5 md:px-8 md:py-8 ${wide ? 'max-w-7xl' : 'max-w-6xl'}`}>{children}</div>
+  return <div className={`mx-auto w-full px-4 pb-5 pt-0 md:px-8 md:py-8 ${wide ? 'max-w-7xl' : 'max-w-6xl'}`}>{children}</div>
 }
 
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {

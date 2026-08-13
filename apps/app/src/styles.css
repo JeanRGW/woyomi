@@ -29,11 +29,27 @@
   --radius-2xl: 1.125rem;
 }
 
+/* Android's WebView never populates env() safe-area insets, so the native
+   shell bridges the real values into these variables; env() keeps iOS and
+   browser fallbacks working. Desktop resolves everything to 0px. */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
 html,
 body,
 #root {
   margin: 0;
   height: 100%;
+}
+
+body {
+  /* The body background paints behind the padding, so the status bar / cutout
+     area stays themed while all content shifts below it. */
+  padding: var(--sat) var(--sar) var(--sab) var(--sal);
 }
 
 body {

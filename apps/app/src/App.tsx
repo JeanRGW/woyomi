@@ -161,14 +161,14 @@ export function App() {
         </aside>
       )}
 
-      <main className={`min-w-0 flex-1 overflow-y-auto ${bare ? '' : 'pb-[calc(68px+env(safe-area-inset-bottom))] md:pb-0'}`}>
+      <main className={`min-w-0 flex-1 overflow-y-auto ${bare ? '' : 'pb-[calc(68px+var(--sab))] md:pb-0'}`}>
         <Content route={route} runtime={runtime} />
       </main>
 
       {!bare && (
         <nav
           className="fixed inset-x-0 bottom-0 z-40 border-t border-line-soft bg-surface/85 backdrop-blur-md md:hidden"
-          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          style={{ paddingBottom: 'var(--sab)' }}
         >
           <div className="grid grid-cols-5">
             {tabs.map((tab) => (
