@@ -1,0 +1,136 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --generate-notes --title "Woyomi $GITHUB_REF_NAME"
+          echo "release_id=$(gh release view "$GITHUB_REF_NAME" --json id --jq .id)" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: --bundles deb,rpm,appimage
+          - platform: windows-latest
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 xdg-utils
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+      - name: Derive app version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          jq --arg v "$version" '.version = $v' apps/app/package.json > apps/app/package.json.tmp && mv apps/app/package.json.tmp apps/app/package.json
+          sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
+          jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/app
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+
+  android:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.13846066"
+      - name: Setup Android signing
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+        run: |
+          case "$ANDROID_KEY_PASSWORD" in
+            *[:=\\#\ ]*) echo "ANDROID_KEY_PASSWORD must not contain ':', '=', '\\', '#', or spaces" >&2; exit 1 ;;
+          esac
+          cd apps/app/src-tauri/gen/android
+          printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS" > keystore.properties
+          printf 'password=%s\n' "$ANDROID_KEY_PASSWORD" >> keystore.properties
+          base64 -d <<< "$ANDROID_KEY_BASE64" > "$RUNNER_TEMP/keystore.jks"
+          printf 'storeFile=%s\n' "$RUNNER_TEMP/keystore.jks" >> keystore.properties
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+      - name: Derive app version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          jq --arg v "$version" '.version = $v' apps/app/package.json > apps/app/package.json.tmp && mv apps/app/package.json.tmp apps/app/package.json
+          sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
+          jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/app
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          mobile: android
+          args: --target aarch64 --apk
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
