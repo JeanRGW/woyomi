@@ -94,11 +94,19 @@ optional = true
 [dependencies.url]
 version = "2"
 
-[dependencies.wry]
+[target.'cfg(not(windows))'.dependencies.wry]
+version = "0.55.0"
+features = [
+    "protocol",
+    "os-webview",
+    "linux-body",
+]
+default-features = false
+
+[target.'cfg(windows)'.dependencies.wry]
 version = "0.56.1"
 features = [
     "os-webview",
-    "linux-body",
 ]
 default-features = false
 
