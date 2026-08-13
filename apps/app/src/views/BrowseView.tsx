@@ -120,8 +120,10 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
 
   async function togglePin(sourceId: string) {
     const cur = pinned ?? []
-    const next = cur.includes(sourceId) ? cur.filter((id) => id !== sourceId) : [...cur, sourceId]
+    const nowPinned = !cur.includes(sourceId)
+    const next = nowPinned ? [...cur, sourceId] : cur.filter((id) => id !== sourceId)
     setPinned(next)
+    if (nowPinned && selected === sourceId) setSelected(null)
     await runtime.setLandingSources(next)
   }
 
