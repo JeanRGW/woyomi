@@ -56,12 +56,15 @@ jobs:
         with:
           workspaces: apps/app/src-tauri
       - name: Derive app version from tag
+        shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           jq --arg v "$version" '.version = $v' apps/app/package.json > apps/app/package.json.tmp && mv apps/app/package.json.tmp apps/app/package.json
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile
+      - name: Build plugin tooling
+        run: pnpm --filter @woyomi/plugin-builder build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:
@@ -122,6 +125,8 @@ jobs:
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile
+      - name: Build plugin tooling
+        run: pnpm --filter @woyomi/plugin-builder build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:
