@@ -18,13 +18,16 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
     steps:
-      - name: Create draft release
+      - name: Create or reuse draft release
         id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "Woyomi $GITHUB_REF_NAME"
-          echo "release_id=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json id --jq .id)" >> "$GITHUB_OUTPUT"
+          if ! release_api_url=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json apiUrl --jq .apiUrl); then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "Woyomi $GITHUB_REF_NAME"
+            release_api_url=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json apiUrl --jq .apiUrl)
+          fi
+          echo "release_id=${release_api_url##*/}" >> "$GITHUB_OUTPUT"
 
   desktop:
     needs: create-release
@@ -63,8 +66,6 @@ jobs:
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile --prod=false
-      - name: Build plugin tooling
-        run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:
@@ -125,8 +126,6 @@ jobs:
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile --prod=false
-      - name: Build plugin tooling
-        run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:

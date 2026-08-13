@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "media-plugin-build": "./dist/cli.js"
+    "media-plugin-build": "./bin/media-plugin-build.js"
   },
   "exports": {
     ".": "./dist/cli.js",
