@@ -64,7 +64,7 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile
       - name: Build plugin tooling
-        run: pnpm --filter @woyomi/plugin-builder build
+        run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:
@@ -126,7 +126,7 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile
       - name: Build plugin tooling
-        run: pnpm --filter @woyomi/plugin-builder build
+        run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
       - uses: tauri-apps/tauri-action@v1
         env:
