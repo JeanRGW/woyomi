@@ -62,7 +62,7 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/package.json > apps/app/package.json.tmp && mv apps/app/package.json.tmp apps/app/package.json
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prod=false
       - name: Build plugin tooling
         run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
@@ -124,7 +124,7 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/package.json > apps/app/package.json.tmp && mv apps/app/package.json.tmp apps/app/package.json
           sed -i "s/^version = .*/version = \"$version\"/" apps/app/src-tauri/Cargo.toml
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prod=false
       - name: Build plugin tooling
         run: pnpm --filter @woyomi/plugin-builder... build
       - run: pnpm build
