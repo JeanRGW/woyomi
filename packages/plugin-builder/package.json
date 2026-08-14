@@ -1,17 +1,32 @@
 {
   "name": "@woyomi/plugin-builder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "bin",
+    "dist",
+    "LICENSE"
+  ],
   "type": "module",
   "bin": {
     "media-plugin-build": "bin/media-plugin-build.js"
   },
   "exports": {
-    ".": "./dist/cli.js",
-    "./build": "./dist/build.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./build": {
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.js"
+    },
+    "./gen-repo": {
+      "types": "./dist/gen-repo.d.ts",
+      "default": "./dist/gen-repo.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
