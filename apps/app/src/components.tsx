@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { Media } from '@woyomi/core'
 import type { DownloadState } from './downloads'
 import { navigate } from './App'
@@ -144,10 +144,12 @@ const TYPE_TINTS: Record<string, string> = {
   series: 'from-emerald-500/25'
 }
 
-export function CoverArt({ media, className = '' }: { media: Media; className?: string }) {
+export function CoverArt({ media, coverUrl = media.coverUrl, className = '' }: { media: Media; coverUrl?: string; className?: string }) {
   const tint = TYPE_TINTS[media.type] ?? 'from-accent/25'
-  if (media.coverUrl) {
-    return <img className={`aspect-[2/3] w-full object-cover ${className}`} src={media.coverUrl} alt="" loading="lazy" />
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [coverUrl])
+  if (coverUrl && !failed) {
+    return <img className={`aspect-[2/3] w-full object-cover ${className}`} src={coverUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
   }
   return (
     <div

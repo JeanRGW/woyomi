@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
-import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
-import type { AppRuntime } from '../runtime'
+import { isVideoType, sha256Hex, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
+import { isTauri, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
 import { Icon } from '../icons'
@@ -21,10 +21,14 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const [qualityEpisode, setQualityEpisode] = useState<Episode>()
   const [qualities, setQualities] = useState<string[]>([])
   const [error, setError] = useState('')
+  const [coverOverride, setCoverOverride] = useState<string>()
+  const [offlineSnapshot, setOfflineSnapshot] = useState(false)
 
   const load = useCallback(async () => {
     setMedia(null)
     setError('')
+    setCoverOverride(undefined)
+    setOfflineSnapshot(false)
     try {
       const [m, eps] = await Promise.all([runtime.engine.getMedia(sourceId, mediaId), runtime.engine.getEpisodes(sourceId, mediaId)])
       setMedia(m)
@@ -32,7 +36,22 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       setEntry(await runtime.store.get(m.id))
       const prog = await runtime.store.getProgress(m.id)
       setSeen(new Set(prog?.seenEpisodeIds ?? []))
+      void cacheMediaPage(runtime, m, eps)
     } catch (e) {
+      const cached = await runtime.mediaCache.get(`${sourceId}/${mediaId}`)
+      if (cached) {
+        setMedia(cached.media)
+        setEpisodes(cached.episodes)
+        setOfflineSnapshot(true)
+        setEntry(await runtime.store.get(cached.media.id))
+        const prog = await runtime.store.getProgress(cached.media.id)
+        setSeen(new Set(prog?.seenEpisodeIds ?? []))
+        if (cached.coverHash && isTauri()) {
+          const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
+          setCoverOverride(`${base}/covers/${cached.coverHash}`)
+        }
+        return
+      }
       setError(e instanceof Error ? e.message : String(e))
       // getMedia failed (e.g. dead/phantom entry); the library lookup still
       // resolves, so a broken entry keeps its Remove action.
@@ -152,12 +171,13 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
 
   const video = isVideoType(media.type)
   const allSeen = episodes.length > 0 && episodes.every((ep) => seen.has(ep.id))
+  const displayCoverUrl = coverOverride ?? media.coverUrl
 
   return (
     <div className="relative min-h-full">
-      {media.coverUrl && (
+      {displayCoverUrl && (
         <div className="pointer-events-none absolute inset-x-0 top-0 h-80 overflow-hidden">
-          <img src={media.coverUrl} alt="" className="h-full w-full scale-125 object-cover opacity-30 blur-3xl" />
+          <img src={displayCoverUrl} alt="" className="h-full w-full scale-125 object-cover opacity-30 blur-3xl" onError={(e) => (e.currentTarget.hidden = true)} />
           <div className="absolute inset-0 bg-gradient-to-b from-ink/20 via-ink/60 to-ink" />
         </div>
       )}
@@ -165,7 +185,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         <BackButton />
         <div className="flex gap-4 md:gap-6">
           <div className="w-28 shrink-0 overflow-hidden rounded-2xl shadow-2xl shadow-black/50 ring-1 ring-white/10 sm:w-36 md:w-44">
-            <CoverArt media={media} />
+            <CoverArt media={media} coverUrl={displayCoverUrl} />
           </div>
           <div className="min-w-0 flex-1 pt-1">
             <h1 className="text-xl font-extrabold leading-tight tracking-tight md:text-3xl">{media.title}</h1>
@@ -211,6 +231,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
 
         {descriptionHtml && <div className="prose-body mt-6" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />}
         {error && <Banner tone="error">{error}</Banner>}
+        {offlineSnapshot && <Banner tone="ok">{t('media.offlineSnapshot')}</Banner>}
 
         <div className="mb-3 mt-8 flex items-center gap-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
@@ -268,4 +289,12 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       )}
     </div>
   )
+}
+
+async function cacheMediaPage(runtime: AppRuntime, media: NonNullable<Awaited<ReturnType<AppRuntime['engine']['getMedia']>>>, episodes: Episode[]): Promise<void> {
+  const coverHash = media.coverUrl ? await sha256Hex(media.coverUrl) : undefined
+  await runtime.mediaCache.save(media.id, { media, episodes, coverHash })
+  if (media.coverUrl && isTauri()) {
+    void window.__TAURI_INTERNALS__!.invoke('cache_cover_image', { args: { url: media.coverUrl } }).catch(() => {})
+  }
 }

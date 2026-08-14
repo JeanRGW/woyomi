@@ -1,10 +1,12 @@
 import type {
+  CachedMediaPage,
   Episode,
   HistoryEntry,
   LibraryEntry,
   LibraryStatus,
   LibraryStore,
   Media,
+  MediaPageCache,
   PluginStoredBundle,
   PluginStore,
   PreferencesApi,
@@ -183,7 +185,7 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
  */
 export class IndexedDbStore implements LibraryStore {
   static readonly DB_NAME = 'woyomi'
-  static readonly VERSION = 3
+  static readonly VERSION = 4
 
   private dbPromise: Promise<IDBDatabase> | undefined
 
@@ -202,6 +204,7 @@ export class IndexedDbStore implements LibraryStore {
           if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'key' })
           if (!db.objectStoreNames.contains('preferences')) db.createObjectStore('preferences', { keyPath: 'key' })
           if (!db.objectStoreNames.contains('plugins')) db.createObjectStore('plugins', { keyPath: 'id' })
+          if (!db.objectStoreNames.contains('mediaPages')) db.createObjectStore('mediaPages', { keyPath: 'id' })
         }
       })
     }
@@ -216,6 +219,11 @@ export class IndexedDbStore implements LibraryStore {
   /** Reuses this store's open IndexedDB handle; shares the library DB file. */
   preferencesApi(): IndexedDbPreferencesApi {
     return new IndexedDbPreferencesApi(this.db.bind(this))
+  }
+
+  /** Reuses this store's open IndexedDB handle; shares the library DB file. */
+  mediaPageCache(): IndexedDbMediaPageCache {
+    return new IndexedDbMediaPageCache(this.db.bind(this))
   }
 
   async add(media: Media, status: LibraryStatus): Promise<void> {
@@ -378,6 +386,22 @@ export class IndexedDbStore implements LibraryStore {
     const t = await this.readTombstones()
     const list = t[kind].filter((x) => x.id !== id)
     if (list.length !== t[kind].length) await this.setTombstones({ ...t, [kind]: list })
+  }
+}
+
+/** Local, non-syncing cache of media details and episode lists. */
+export class IndexedDbMediaPageCache implements MediaPageCache {
+  constructor(private db: () => Promise<IDBDatabase>) {}
+
+  async get(mediaId: string): Promise<CachedMediaPage | undefined> {
+    const db = await this.db()
+    const row = await request<{ page: CachedMediaPage } | undefined>(db.transaction('mediaPages', 'readonly').objectStore('mediaPages').get(mediaId))
+    return row?.page
+  }
+
+  async save(mediaId: string, page: CachedMediaPage): Promise<void> {
+    const db = await this.db()
+    await request(db.transaction('mediaPages', 'readwrite').objectStore('mediaPages').put({ id: mediaId, page })).then(() => undefined)
   }
 }
 

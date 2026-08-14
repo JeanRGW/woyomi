@@ -104,6 +104,7 @@ export const pt: Messages = {
   'media.chapterCount.one': '{count} capítulo',
   'media.markAllSeen': 'Marcar todos como vistos',
   'media.markAllUnseen': 'Marcar todos como não vistos',
+  'media.offlineSnapshot': 'Exibindo cópia salva',
 
   // history
   'history.emptyTitle': 'Nada assistido ou lido ainda',

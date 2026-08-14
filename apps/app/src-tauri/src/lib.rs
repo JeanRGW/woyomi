@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
@@ -107,6 +108,18 @@ struct RemoveDownloadFilesArgs {
     file_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheCoverImageArgs {
+    url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedCoverImage {
+    file_hash: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadAssetStatus {
@@ -159,6 +172,75 @@ fn downloads_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_local_data_dir()
         .map(|path| path.join("downloads"))
         .map_err(|e| format!("resolve app local data directory: {e}"))
+}
+
+fn covers_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|path| path.join("covers"))
+        .map_err(|e| format!("resolve app local data directory: {e}"))
+}
+
+fn cover_hash(url: &str) -> String {
+    format!("{:x}", Sha256::digest(url.as_bytes()))
+}
+
+fn validate_cover_hash(hash: &str) -> Result<(), String> {
+    if hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("invalid cover hash".to_string())
+    }
+}
+
+#[tauri::command]
+async fn cache_cover_image(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    args: CacheCoverImageArgs,
+) -> Result<CachedCoverImage, String> {
+    let url = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid cover url: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("cover url must use http or https".to_string());
+    }
+    let file_hash = cover_hash(&args.url);
+    let root = covers_root(&app)?;
+    let image_path = root.join(&file_hash);
+    if tokio::fs::try_exists(&image_path)
+        .await
+        .map_err(|e| format!("check cached cover: {e}"))?
+    {
+        return Ok(CachedCoverImage { file_hash });
+    }
+
+    let response = state
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("download cover: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("cover returned HTTP {}", response.status()));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .filter(|value| value.starts_with("image/") && value.is_ascii() && !value.bytes().any(|byte| byte.is_ascii_control()))
+        .unwrap_or("image/jpeg")
+        .to_string();
+    let body = response.bytes().await.map_err(|e| format!("read cover: {e}"))?;
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|e| format!("create covers directory: {e}"))?;
+    tokio::fs::write(&image_path, body)
+        .await
+        .map_err(|e| format!("write cover: {e}"))?;
+    tokio::fs::write(root.join(format!("{file_hash}.type")), content_type)
+        .await
+        .map_err(|e| format!("write cover content type: {e}"))?;
+    Ok(CachedCoverImage { file_hash })
 }
 
 #[tauri::command]
@@ -402,6 +484,8 @@ fn serve_streams(server: tiny_http::Server, downloads_root: PathBuf) {
         let _ = std::thread::spawn(move || {
             let result = if request.url().starts_with("/offline/") {
                 serve_offline(&downloads_root, request)
+            } else if request.url().starts_with("/covers/") {
+                serve_cover(&downloads_root, request)
             } else {
                 proxy_one(&client, request)
             };
@@ -410,6 +494,52 @@ fn serve_streams(server: tiny_http::Server, downloads_root: PathBuf) {
             }
         });
     }
+}
+
+fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
+    if !matches!(request.method(), tiny_http::Method::Get | tiny_http::Method::Head) {
+        return request
+            .respond(tiny_http::Response::empty(405))
+            .map_err(|e| format!("respond: {e}"));
+    }
+    let parsed = match url::Url::parse(&format!("http://127.0.0.1{}", request.url())) {
+        Ok(parsed) => parsed,
+        Err(_) => return respond_empty(request, 404),
+    };
+    let mut segments = match parsed.path_segments() {
+        Some(segments) => segments,
+        None => return respond_empty(request, 404),
+    };
+    if segments.next() != Some("covers") {
+        return respond_empty(request, 404);
+    }
+    let Some(hash) = segments.next() else {
+        return respond_empty(request, 404);
+    };
+    if segments.next().is_some() || validate_cover_hash(hash).is_err() {
+        return respond_empty(request, 404);
+    }
+
+    let covers_root = downloads_root.parent().ok_or("resolve covers root")?.join("covers");
+    let image_path = covers_root.join(hash);
+    let file = match std::fs::File::open(image_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return respond_empty(request, 404),
+        Err(error) => return Err(format!("open cached cover: {error}")),
+    };
+    let content_type = std::fs::read_to_string(covers_root.join(format!("{hash}.type")))
+        .ok()
+        .filter(|value| value.starts_with("image/") && value.is_ascii() && !value.bytes().any(|byte| byte.is_ascii_control()))
+        .unwrap_or_else(|| "image/jpeg".to_string());
+    let length = file.metadata().map_err(|e| format!("stat cached cover: {e}"))?.len();
+    let response = tiny_http::Response::new(
+        tiny_http::StatusCode(200),
+        vec![response_header("Content-Type", &content_type)?],
+        file,
+        Some(usize::try_from(length).map_err(|_| "cached cover too large")?),
+        None,
+    );
+    request.respond(response).map_err(|e| format!("respond: {e}"))
 }
 
 fn proxy_one(
@@ -658,7 +788,8 @@ pub fn run() {
             download_asset_status,
             cancel_download_asset,
             remove_download_files,
-            stream_proxy_base
+            stream_proxy_base,
+            cache_cover_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -666,7 +797,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_range, validate_file_id};
+    use super::{parse_range, validate_cover_hash, validate_file_id};
 
     #[test]
     fn validates_opaque_file_ids() {
@@ -675,6 +806,14 @@ mod tests {
         }
         for invalid in ["", "a_b", "../a", "a/b", "é", "a.b"] {
             assert!(validate_file_id(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn validates_cover_hashes() {
+        assert!(validate_cover_hash(&"a".repeat(64)).is_ok());
+        for invalid in ["", "a", &"g".repeat(64), &"a".repeat(63)] {
+            assert!(validate_cover_hash(invalid).is_err(), "{invalid}");
         }
     }
 

@@ -109,6 +109,7 @@ const en = {
     'media.chapterCount.one': '{count} chapter',
     'media.markAllSeen': 'Mark all seen',
     'media.markAllUnseen': 'Mark all unseen',
+    'media.offlineSnapshot': 'Showing saved copy',
 
     // history
     'history.emptyTitle': 'Nothing watched or read yet',

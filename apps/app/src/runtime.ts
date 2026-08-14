@@ -10,6 +10,7 @@ import {
   type FetchInit,
   type FetchResult,
   type LibraryStore,
+  type MediaPageCache,
   type PluginRegistration,
   type PluginSandbox,
   type PluginStore,
@@ -126,6 +127,8 @@ export interface AppRuntime {
   store: LibraryStore
   plugins: PluginStore
   downloads?: DownloadManager
+  /** Local snapshot cache for offline media pages; deliberately excluded from sync. */
+  mediaCache: MediaPageCache
   installed: Map<string, string> // pluginId -> version
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
@@ -168,17 +171,20 @@ async function initRuntime(): Promise<AppRuntime> {
   let plugins: PluginStore
   let prefs: PreferencesApi
   let sqlite: SqliteStore | undefined
+  let mediaCache: MediaPageCache
 
   if (native) {
     sqlite = new SqliteStore()
     store = sqlite
     plugins = sqlite.pluginStore()
     prefs = sqlite.preferencesApi()
+    mediaCache = sqlite.mediaPageCache()
   } else {
     const idb = new IndexedDbStore()
     store = idb
     plugins = idb.pluginStore()
     prefs = idb.preferencesApi()
+    mediaCache = idb.mediaPageCache()
   }
 
   // Web-mode proxy config: empty url = direct fetch. Read before the engine
@@ -328,6 +334,7 @@ async function initRuntime(): Promise<AppRuntime> {
     store,
     plugins,
     downloads,
+    mediaCache,
     installed,
     setInstalled(id, version) {
       installed.set(id, version)

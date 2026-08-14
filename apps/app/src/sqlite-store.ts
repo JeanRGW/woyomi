@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
+import type { CachedMediaPage, MediaPageCache, PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
 import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry, SyncEdits, SyncPayload } from '@woyomi/core'
 import type { LibraryStore } from '@woyomi/core'
 import type { DownloadRecord, DownloadStore } from './downloads'
@@ -38,6 +38,10 @@ export class SqliteStore implements LibraryStore {
           bundle TEXT NOT NULL
         )`)
         await db.execute(`CREATE TABLE IF NOT EXISTS downloads (
+          id TEXT PRIMARY KEY,
+          row TEXT NOT NULL
+        )`)
+        await db.execute(`CREATE TABLE IF NOT EXISTS media_pages (
           id TEXT PRIMARY KEY,
           row TEXT NOT NULL
         )`)
@@ -205,6 +209,27 @@ export class SqliteStore implements LibraryStore {
   /** Reuses this store's database connection; shares the SQLite file. */
   downloadStore(): SqliteDownloadStore {
     return new SqliteDownloadStore(this.db.bind(this))
+  }
+
+  /** Reuses this store's database connection; shares the SQLite file. */
+  mediaPageCache(): SqliteMediaPageCache {
+    return new SqliteMediaPageCache(this.db.bind(this))
+  }
+}
+
+/** Local, non-syncing cache of media details and episode lists. */
+export class SqliteMediaPageCache implements MediaPageCache {
+  constructor(private db: () => Promise<Database>) {}
+
+  async get(mediaId: string): Promise<CachedMediaPage | undefined> {
+    const db = await this.db()
+    const rows = await db.select<Array<{ row: string }>>('SELECT row FROM media_pages WHERE id = $1', [mediaId])
+    return rows[0] ? (JSON.parse(rows[0].row) as CachedMediaPage) : undefined
+  }
+
+  async save(mediaId: string, page: CachedMediaPage): Promise<void> {
+    const db = await this.db()
+    await db.execute('INSERT OR REPLACE INTO media_pages (id, row) VALUES ($1, $2)', [mediaId, JSON.stringify(page)])
   }
 }
 

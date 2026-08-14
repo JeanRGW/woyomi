@@ -22,5 +22,13 @@ export {
   type LoadSandboxOptions
 } from './sandbox.js'
 export { runPluginWorkerHost, type PluginWorkerHostDeps } from './sandbox-worker-host.js'
-export { MemoryStore, MemoryPluginStore, MemoryPreferencesApi, IndexedDbStore, IndexedDbPluginStore, IndexedDbPreferencesApi } from './store.js'
+export {
+  MemoryStore,
+  MemoryPluginStore,
+  MemoryPreferencesApi,
+  IndexedDbStore,
+  IndexedDbPluginStore,
+  IndexedDbPreferencesApi,
+  IndexedDbMediaPageCache
+} from './store.js'
 export { sha256Hex } from './sha.js'

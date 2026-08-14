@@ -170,6 +170,19 @@ export interface LibraryEntry {
   updatedAt?: number
 }
 
+/** Locally cached title metadata for offline media-page access. Never synced. */
+export interface CachedMediaPage {
+  media: Media
+  episodes: Episode[]
+  /** sha256 hex of the remote cover URL; never a process-local loopback URL. */
+  coverHash?: string
+}
+
+export interface MediaPageCache {
+  get(mediaId: string): Promise<CachedMediaPage | undefined>
+  save(mediaId: string, page: CachedMediaPage): Promise<void>
+}
+
 /** A deleted id + when it was deleted, carried so other devices don't resurrect it. */
 export interface SyncTombstone {
   id: string
