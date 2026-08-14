@@ -1,10 +1,13 @@
 {
   "name": "@woyomi/plugin-builder",
   "version": "0.1.0",
-  "private": true,
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
-    "media-plugin-build": "./bin/media-plugin-build.js"
+    "media-plugin-build": "bin/media-plugin-build.js"
   },
   "exports": {
     ".": "./dist/cli.js",
