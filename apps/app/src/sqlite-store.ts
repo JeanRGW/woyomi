@@ -221,6 +221,12 @@ export class SqliteStore implements LibraryStore {
 export class SqliteMediaPageCache implements MediaPageCache {
   constructor(private db: () => Promise<Database>) {}
 
+  async list(): Promise<CachedMediaPage[]> {
+    const db = await this.db()
+    const rows = await db.select<Array<{ row: string }>>('SELECT row FROM media_pages')
+    return rows.map((row) => JSON.parse(row.row) as CachedMediaPage)
+  }
+
   async get(mediaId: string): Promise<CachedMediaPage | undefined> {
     const db = await this.db()
     const rows = await db.select<Array<{ row: string }>>('SELECT row FROM media_pages WHERE id = $1', [mediaId])
@@ -230,6 +236,11 @@ export class SqliteMediaPageCache implements MediaPageCache {
   async save(mediaId: string, page: CachedMediaPage): Promise<void> {
     const db = await this.db()
     await db.execute('INSERT OR REPLACE INTO media_pages (id, row) VALUES ($1, $2)', [mediaId, JSON.stringify(page)])
+  }
+
+  async remove(mediaId: string): Promise<void> {
+    const db = await this.db()
+    await db.execute('DELETE FROM media_pages WHERE id = $1', [mediaId])
   }
 }
 

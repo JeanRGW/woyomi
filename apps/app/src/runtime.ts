@@ -9,8 +9,10 @@ import {
   type FetchFn,
   type FetchInit,
   type FetchResult,
+  type Episode,
   type LibraryStore,
   type MediaPageCache,
+  type Media,
   type PluginRegistration,
   type PluginSandbox,
   type PluginStore,
@@ -129,6 +131,10 @@ export interface AppRuntime {
   downloads?: DownloadManager
   /** Local snapshot cache for offline media pages; deliberately excluded from sync. */
   mediaCache: MediaPageCache
+  /** Save an offline page only for a library or download-backed title. */
+  cacheMediaPage(media: Media, episodes: Episode[]): Promise<void>
+  /** Remove an unreferenced page snapshot and its native cover. */
+  cleanupMediaPage(mediaId: string): Promise<void>
   installed: Map<string, string> // pluginId -> version
   setInstalled(pluginId: string, version: string): void
   uninstall(pluginId: string): void
@@ -328,6 +334,46 @@ async function initRuntime(): Promise<AppRuntime> {
     : undefined
   await downloads?.initialize()
 
+  async function cacheMediaPage(media: Media, episodes: Episode[]): Promise<void> {
+    const hasLibraryEntry = !!(await store.get(media.id))
+    const hasDownloads = !!downloads && (await downloads.list()).some((record) => record.media.id === media.id)
+    if (!hasLibraryEntry && !hasDownloads) return
+
+    const coverHash = media.coverUrl ? await sha256Hex(media.coverUrl) : undefined
+    const previous = await mediaCache.get(media.id)
+    await mediaCache.save(media.id, { media, episodes, coverHash })
+    if (previous?.coverHash && previous.coverHash !== coverHash && native) {
+      void removeCachedCoverIfUnreferenced(previous.coverHash)
+    }
+    if (media.coverUrl && native) {
+      void window.__TAURI_INTERNALS__!.invoke('cache_cover_image', { args: { url: media.coverUrl } }).catch(() => {})
+    }
+  }
+
+  async function cleanupMediaPage(mediaId: string): Promise<void> {
+    const hasLibraryEntry = !!(await store.get(mediaId))
+    const hasDownloads = !!downloads && (await downloads.list()).some((record) => record.media.id === mediaId)
+    if (hasLibraryEntry || hasDownloads) return
+
+    const page = await mediaCache.get(mediaId)
+    await mediaCache.remove(mediaId)
+    if (page?.coverHash && native) {
+      void removeCachedCoverIfUnreferenced(page.coverHash)
+    }
+  }
+
+  async function removeCachedCoverIfUnreferenced(fileHash: string): Promise<void> {
+    const stillReferenced = (await mediaCache.list()).some((page) => page.coverHash === fileHash)
+    if (stillReferenced) return
+    await removeCachedCover(fileHash).catch(() => {})
+  }
+
+  async function removeCachedCover(fileHash: string): Promise<void> {
+    await window.__TAURI_INTERNALS__!.invoke('remove_cached_cover', { args: { fileHash } })
+  }
+
+  for (const page of await mediaCache.list()) await cleanupMediaPage(page.media.id)
+
   return {
     engine,
     registry,
@@ -335,6 +381,8 @@ async function initRuntime(): Promise<AppRuntime> {
     plugins,
     downloads,
     mediaCache,
+    cacheMediaPage,
+    cleanupMediaPage,
     installed,
     setInstalled(id, version) {
       installed.set(id, version)

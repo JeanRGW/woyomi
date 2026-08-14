@@ -114,6 +114,12 @@ struct CacheCoverImageArgs {
     url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveCachedCoverArgs {
+    file_hash: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedCoverImage {
@@ -241,6 +247,20 @@ async fn cache_cover_image(
         .await
         .map_err(|e| format!("write cover content type: {e}"))?;
     Ok(CachedCoverImage { file_hash })
+}
+
+#[tauri::command]
+async fn remove_cached_cover(app: tauri::AppHandle, args: RemoveCachedCoverArgs) -> Result<(), String> {
+    validate_cover_hash(&args.file_hash)?;
+    let root = covers_root(&app)?;
+    for path in [root.join(&args.file_hash), root.join(format!("{}.type", args.file_hash))] {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove cached cover: {error}")),
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -789,7 +809,8 @@ pub fn run() {
             cancel_download_asset,
             remove_download_files,
             stream_proxy_base,
-            cache_cover_image
+            cache_cover_image,
+            remove_cached_cover
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

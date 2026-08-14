@@ -179,8 +179,10 @@ export interface CachedMediaPage {
 }
 
 export interface MediaPageCache {
+  list(): Promise<CachedMediaPage[]>
   get(mediaId: string): Promise<CachedMediaPage | undefined>
   save(mediaId: string, page: CachedMediaPage): Promise<void>
+  remove(mediaId: string): Promise<void>
 }
 
 /** A deleted id + when it was deleted, carried so other devices don't resurrect it. */

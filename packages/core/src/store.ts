@@ -393,6 +393,12 @@ export class IndexedDbStore implements LibraryStore {
 export class IndexedDbMediaPageCache implements MediaPageCache {
   constructor(private db: () => Promise<IDBDatabase>) {}
 
+  async list(): Promise<CachedMediaPage[]> {
+    const db = await this.db()
+    const rows = await request<Array<{ page: CachedMediaPage }>>(db.transaction('mediaPages', 'readonly').objectStore('mediaPages').getAll())
+    return rows.map((row) => row.page)
+  }
+
   async get(mediaId: string): Promise<CachedMediaPage | undefined> {
     const db = await this.db()
     const row = await request<{ page: CachedMediaPage } | undefined>(db.transaction('mediaPages', 'readonly').objectStore('mediaPages').get(mediaId))
@@ -402,6 +408,11 @@ export class IndexedDbMediaPageCache implements MediaPageCache {
   async save(mediaId: string, page: CachedMediaPage): Promise<void> {
     const db = await this.db()
     await request(db.transaction('mediaPages', 'readwrite').objectStore('mediaPages').put({ id: mediaId, page })).then(() => undefined)
+  }
+
+  async remove(mediaId: string): Promise<void> {
+    const db = await this.db()
+    await request(db.transaction('mediaPages', 'readwrite').objectStore('mediaPages').delete(mediaId)).then(() => undefined)
   }
 }
 

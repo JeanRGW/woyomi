@@ -142,7 +142,9 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
                   <Btn
                     variant="danger"
                     className="size-10 px-0"
-                    onClick={() => void manager?.remove(record.id)}
+                      onClick={() =>
+                        void manager?.remove(record.id).then(() => runtime.cleanupMediaPage(record.media.id))
+                      }
                     disabled={!manager}
                     aria-label={t('downloads.remove')}
                     title={t('downloads.remove')}

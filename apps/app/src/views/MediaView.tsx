@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
-import { isVideoType, sha256Hex, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
+import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
 import { isTauri, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
@@ -36,7 +36,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       setEntry(await runtime.store.get(m.id))
       const prog = await runtime.store.getProgress(m.id)
       setSeen(new Set(prog?.seenEpisodeIds ?? []))
-      void cacheMediaPage(runtime, m, eps)
+      void runtime.cacheMediaPage(m, eps)
     } catch (e) {
       const cached = await runtime.mediaCache.get(`${sourceId}/${mediaId}`)
       if (cached) {
@@ -81,6 +81,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     if (!media) return
     await runtime.store.add(media, status)
     setEntry(await runtime.store.get(media.id))
+    await runtime.cacheMediaPage(media, episodes)
   }
 
   async function toggleSeen(ep: Episode) {
@@ -97,6 +98,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     try {
       if (!isVideoType(media.type)) {
         await manager.enqueueReader(media, episode)
+        await runtime.cacheMediaPage(media, episodes)
         return
       }
       const available = await manager.getVideoQualities(media, episode)
@@ -117,6 +119,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     try {
       await runtime.downloads.enqueueVideo(media, qualityEpisode, quality)
       await runtime.engine.prefs.set('__app', 'downloads.videoQuality', quality)
+      await runtime.cacheMediaPage(media, episodes)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -153,6 +156,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               variant="danger"
               onClick={async () => {
                 await runtime.store.remove(entry.media.id)
+                await runtime.cleanupMediaPage(entry.media.id)
                 navigate({ name: 'library' })
               }}
             >
@@ -219,6 +223,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
                   variant="danger"
                   onClick={async () => {
                     await runtime.store.remove(entry.media.id)
+                    await runtime.cleanupMediaPage(entry.media.id)
                     setEntry(undefined)
                   }}
                 >
@@ -289,12 +294,4 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       )}
     </div>
   )
-}
-
-async function cacheMediaPage(runtime: AppRuntime, media: NonNullable<Awaited<ReturnType<AppRuntime['engine']['getMedia']>>>, episodes: Episode[]): Promise<void> {
-  const coverHash = media.coverUrl ? await sha256Hex(media.coverUrl) : undefined
-  await runtime.mediaCache.save(media.id, { media, episodes, coverHash })
-  if (media.coverUrl && isTauri()) {
-    void window.__TAURI_INTERNALS__!.invoke('cache_cover_image', { args: { url: media.coverUrl } }).catch(() => {})
-  }
 }
