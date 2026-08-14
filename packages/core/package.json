@@ -1,13 +1,34 @@
 {
   "name": "@woyomi/core",
   "version": "0.1.0",
+  "description": "Plugin API, engine, registry, loader, stores, and Web Worker sandbox for the woyomi multi-source media aggregator",
   "license": "Apache-2.0",
+  "author": "JeanRGW",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JeanRGW/woyomi.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://woyomi.rgw.app",
+  "bugs": "https://github.com/JeanRGW/woyomi/issues",
+  "keywords": [
+    "woyomi",
+    "plugin",
+    "manga",
+    "anime",
+    "novel",
+    "extension",
+    "source",
+    "aggregator"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "exports": {
@@ -18,11 +39,15 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "clean": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist', { recursive: true, force: true })\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build && pnpm run test"
   },
   "dependencies": {
     "zod": "^3.24.1"

@@ -1,18 +1,40 @@
 {
   "name": "@woyomi/plugin-builder",
-  "version": "0.1.1",
-  "license": "Apache-2.0",
+  "version": "0.1.0",
   "publishConfig": {
     "access": "public"
   },
+  "license": "Apache-2.0",
+  "author": "JeanRGW",
+  "description": "CLI and library that bundles woyomi media plugins into self-contained IIFE bundles with manifests and sha256, plus a Mihon-style repo index generator",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JeanRGW/woyomi.git",
+    "directory": "packages/plugin-builder"
+  },
+  "homepage": "https://woyomi.rgw.app",
+  "bugs": "https://github.com/JeanRGW/woyomi/issues",
+  "keywords": [
+    "woyomi",
+    "plugin",
+    "esbuild",
+    "bundle",
+    "cli",
+    "manga",
+    "anime",
+    "extension"
+  ],
   "files": [
     "bin",
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "bin": {
-    "media-plugin-build": "bin/media-plugin-build.js"
+    "woyomi-plugin-build": "bin/woyomi-plugin-build.js",
+    "media-plugin-build": "bin/woyomi-plugin-build.js"
   },
   "exports": {
     ".": {
@@ -25,14 +47,20 @@
     },
     "./gen-repo": {
       "types": "./dist/gen-repo.d.ts",
-      "default": "./dist/gen-repo.js"
+    "default": "./dist/gen-repo.js"
     }
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
     "clean": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist', { recursive: true, force: true })\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build && pnpm run test"
   },
   "dependencies": {
     "@woyomi/core": "workspace:*",

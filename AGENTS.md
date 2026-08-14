@@ -54,7 +54,8 @@ pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
   / `sandbox-worker-host.ts`), stores (Memory/IndexedDb), sha256.
   Exports via `dist/index.js`; source uses `.js` extension on relative imports.
 - `packages/plugin-builder` — esbuild bundler (IIFE, browser platform) + repo
-  index generator. Bin is `media-plugin-build` (plugins' `build` script).
+  index generator. Bin is `woyomi-plugin-build` (alias `media-plugin-build`)
+  — plugins' `build` script.
 - `plugins/*` — first-party sources (`mangadex`, `tsundoku`,
   `examplevideo`). They are **workspace packages that depend on
   `@woyomi/core`** and ship as bundled plugins via `?raw` imports.

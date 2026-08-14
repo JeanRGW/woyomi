@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "media-plugin-build . dist",
-    "build:plugin": "media-plugin-build . dist",
+    "build": "woyomi-plugin-build . dist",
+    "build:plugin": "woyomi-plugin-build . dist",
     "test": "vitest run"
   },
   "dependencies": {
