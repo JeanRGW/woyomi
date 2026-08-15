@@ -31,7 +31,7 @@ have a `build` script producing the IIFE bundles).
 
 ```sh
 cd apps/server
-SYNC_TOKEN=changeme DATA_DIR=./data PORT=8787 pnpm dev
+SYNC_TOKEN=replace-with-a-long-random-token DATA_DIR=./data PORT=8787 pnpm dev
 ```
 
 Hono app: `/api/scrape` CORS proxy (off by default; `SCRAPE_ENABLED=true`

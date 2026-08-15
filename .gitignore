@@ -5,6 +5,10 @@ dist/
 *.log
 target/
 .env
+**/keystore.properties
+**/*.jks
+**/*.keystore
+**/*.p12
 .DS_Store
 apps/app/src-tauri/target/
 apps/app/src-tauri/gen/schemas/

@@ -111,7 +111,7 @@ Web-mode scrape proxy + library sync + plugin repo:
 
 ```sh
 cd apps/server
-SYNC_TOKEN=changeme DATA_DIR=./data PORT=8787 pnpm dev
+SYNC_TOKEN=replace-with-a-long-random-token DATA_DIR=./data PORT=8787 pnpm dev
 curl http://localhost:8787/health
 # plugin repo lives at http://localhost:8787/repo (used by the app's Plugins screen)
 ```

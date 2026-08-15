@@ -1,22 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { accessSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { server, isPrivateTarget, mergeLibraries } from './index'
 import type { LibraryEntry, SyncPayload } from '@woyomi/core'
 
-const TOKEN = 'changeme'
+const TOKEN = 'test-sync-token'
 
 const originalDataDir = process.env.DATA_DIR
+const originalSyncToken = process.env.SYNC_TOKEN
 
 beforeEach(() => {
   process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'woyomi-server-test-'))
+  process.env.SYNC_TOKEN = TOKEN
 })
 afterEach(() => {
   if (process.env.DATA_DIR) rmSync(process.env.DATA_DIR, { recursive: true, force: true })
   if (originalDataDir === undefined) delete process.env.DATA_DIR
   else process.env.DATA_DIR = originalDataDir
+  if (originalSyncToken === undefined) delete process.env.SYNC_TOKEN
+  else process.env.SYNC_TOKEN = originalSyncToken
 })
 
 function entry(id: string, status = 'reading', updatedAt = 10): LibraryEntry {
@@ -67,6 +71,24 @@ describe('sync api', () => {
     const data = (await res.json()) as SyncPayload
     expect(data.entries.map((e) => e.media.id)).toEqual(['s/1'])
     expect(data.tombstones.entries).toEqual([])
+  })
+
+  it('rejects sync when no token is configured', async () => {
+    delete process.env.SYNC_TOKEN
+    const res = await server.request('/api/sync/bob', { headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(res.status).toBe(401)
+  })
+
+  it('does not allow the user route to escape the data directory', async () => {
+    const outsideName = `woyomi-sync-${Date.now()}`
+    const user = `../${outsideName}`
+    const res = await server.request(`/api/sync/${encodeURIComponent(user)}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload())
+    })
+    expect(res.status).toBe(200)
+    expect(() => accessSync(join(process.env.DATA_DIR!, '..', `${outsideName}.json`))).toThrow()
   })
 })
 
@@ -183,6 +205,17 @@ describe('scrape proxy guardrails', () => {
       body: JSON.stringify({ url: 'https://example.com/' })
     })
     expect(res.status).toBe(413)
+  })
+
+  it('rejects redirects to private targets', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/' } }))
+    const res = await server.request('/api/scrape', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/' })
+    })
+    expect(res.status).toBe(502)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
   })
 
   it('rejects loopback and private targets before fetching', () => {
@@ -339,6 +372,7 @@ describe('stream proxy (/api/stream)', () => {
     expect(sent.get('range')).toBe('bytes=0-0')
     expect(sent.get('authorization')).toBeNull()
     expect(sent.get('content-length')).toBeNull()
+    expect(init.signal).toBeUndefined()
   })
 
   it('passes the token via query', async () => {

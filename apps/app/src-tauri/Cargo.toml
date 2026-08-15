@@ -2,7 +2,7 @@
 name = "woyomi"
 version = "0.1.0"
 description = "Multi-source content aggregator (Aniyomi/Mihon-style)"
-authors = ["you"]
+authors = ["jeanrgw"]
 edition = "2021"
 rust-version = "1.77"
 

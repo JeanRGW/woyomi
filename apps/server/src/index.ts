@@ -21,7 +21,6 @@ import type { HistoryEntry, LibraryEntry, ProgressEntry, SyncPayload } from '@wo
  * multi-user or higher-volume sync is ever wanted.
  */
 
-const OWNER_TOKEN = process.env.SYNC_TOKEN ?? 'changeme'
 const REPO_DIR = process.env.PLUGIN_REPO_DIR ?? resolve(import.meta.dirname ?? '.', '..', '..', '..')
 
 // Read lazily so tests (+ tools) can point sync state at a throwaway dir.
@@ -32,6 +31,7 @@ const scrapeEnabled = () => process.env.SCRAPE_ENABLED === 'true'
 const scrapeToken = () => process.env.SCRAPE_TOKEN
 const SCRAPE_MAX_BYTES = 5 * 1024 * 1024
 const SCRAPE_TIMEOUT_MS = 15_000
+const MAX_REDIRECTS = 5
 
 const app = new Hono()
 
@@ -97,6 +97,54 @@ const ScrapeBody = z.object({
  */
 const PRIVATE_IP = /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/
 
+class ResponseTooLargeError extends Error {}
+
+function syncFile(user: string): string {
+  // Encode the route parameter before using it as a filename. This preserves
+  // existing simple usernames while making separators and traversal segments inert.
+  return join(dataDir(), `${encodeURIComponent(user)}.json`)
+}
+
+async function fetchPublic(url: string, init: RequestInit): Promise<Response> {
+  let currentUrl = url
+  for (let redirectCount = 0; ; redirectCount += 1) {
+    const target = new URL(currentUrl)
+    if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+      throw new Error('only http(s) targets are allowed')
+    }
+    if (isPrivateTarget(target)) throw new Error('private targets are not allowed')
+
+    const response = await fetch(currentUrl, { ...init, redirect: 'manual' })
+    if (response.status < 300 || response.status >= 400) return response
+
+    const location = response.headers.get('location')
+    if (!location) return response
+    if (redirectCount >= MAX_REDIRECTS) throw new Error('too many upstream redirects')
+    await response.body?.cancel()
+    currentUrl = new URL(location, target).toString()
+  }
+}
+
+async function readCappedBody(response: Response): Promise<string> {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return text + decoder.decode()
+      size += value.byteLength
+      if (size > SCRAPE_MAX_BYTES) throw new ResponseTooLargeError('upstream response too large')
+      text += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+}
+
 export function isPrivateTarget(url: URL): boolean {
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host === '::1') return true
@@ -155,20 +203,24 @@ app.post('/api/scrape', async (c) => {
 
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await fetchPublic(url, {
       method,
       headers: upHeaders,
       body,
       signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof ResponseTooLargeError) return c.json({ error: error.message }, 413)
     return c.json({ error: 'upstream request failed or timed out' }, 502)
   }
   const outHeaders: Record<string, string> = {}
   res.headers.forEach((v, k) => (outHeaders[k] = v))
-  const text = await res.text()
-  if (text.length > SCRAPE_MAX_BYTES) {
-    return c.json({ error: 'upstream response too large' }, 413)
+  let text: string
+  try {
+    text = await readCappedBody(res)
+  } catch (error) {
+    if (error instanceof ResponseTooLargeError) return c.json({ error: error.message }, 413)
+    return c.json({ error: 'failed to read upstream response' }, 502)
   }
   return c.json({ status: res.status, headers: outHeaders, body: text })
 })
@@ -218,10 +270,11 @@ app.get('/api/stream', async (c) => {
 
   let res: Response
   try {
-    res = await fetch(target, {
+    res = await fetchPublic(target, {
       method: 'GET',
       headers: range ? { ...upHeaders, range } : upHeaders,
-      signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
+      // Do not apply the scrape timeout to the response body: media streams
+      // can legitimately remain open for longer than fifteen seconds.
     })
   } catch {
     return c.json({ error: 'upstream request failed or timed out' }, 502)
@@ -237,7 +290,8 @@ app.get('/api/stream', async (c) => {
 })
 
 function authed(c: { req: { header: (k: string) => string | undefined } }): boolean {
-  return c.req.header('authorization') === `Bearer ${OWNER_TOKEN}`
+  const token = process.env.SYNC_TOKEN?.trim()
+  return token !== undefined && token.length > 0 && c.req.header('authorization') === `Bearer ${token}`
 }
 
 const SyncBody = z.object({
@@ -351,7 +405,7 @@ app.get('/api/sync/:user', async (c) => {
   if (!authed(c)) return c.json({ error: 'unauthorized' }, 401)
   const user = c.req.param('user')
   try {
-    return c.json(JSON.parse(await readFile(join(dataDir(), `${user}.json`), 'utf8')))
+    return c.json(JSON.parse(await readFile(syncFile(user), 'utf8')))
   } catch {
     return c.json(EMPTY_PAYLOAD)
   }
@@ -364,13 +418,13 @@ app.put('/api/sync/:user', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.message }, 400)
   let stored: SyncPayload
   try {
-    stored = JSON.parse(await readFile(join(dataDir(), `${user}.json`), 'utf8')) as SyncPayload
+    stored = JSON.parse(await readFile(syncFile(user), 'utf8')) as SyncPayload
   } catch {
     stored = EMPTY_PAYLOAD
   }
   const merged = mergeLibraries(stored, parsed.data as unknown as SyncPayload)
   await mkdir(dataDir(), { recursive: true })
-  await writeFile(join(dataDir(), `${user}.json`), JSON.stringify(merged))
+  await writeFile(syncFile(user), JSON.stringify(merged))
   return c.json(merged)
 })
 
