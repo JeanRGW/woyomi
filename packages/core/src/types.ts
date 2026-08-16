@@ -45,7 +45,9 @@ export interface Episode {
 }
 
 export type ChapterContent =
-  | { type: 'pages'; images: string[] }
+  /** `headers` (pages only) are applied by the host when fetching the page
+   *  images, e.g. a Referer for CDNs that 403 direct requests. */
+  | { type: 'pages'; images: string[]; headers?: Record<string, string> }
   | { type: 'text'; html: string }
 
 export interface StreamSource {

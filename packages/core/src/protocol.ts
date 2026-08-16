@@ -29,7 +29,7 @@ export const EpisodeSchema = z.object({
 })
 
 export const ChapterContentSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('pages'), images: z.array(z.string()) }),
+  z.object({ type: z.literal('pages'), images: z.array(z.string()), headers: z.record(z.string()).optional() }),
   z.object({ type: z.literal('text'), html: z.string() })
 ])
 

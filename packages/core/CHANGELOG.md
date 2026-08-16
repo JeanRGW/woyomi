@@ -14,4 +14,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sandbox (`loadPluginSandbox` / `runPluginWorkerHost`), memory and IndexedDB
   stores, `fetchJson`/`fetchHtml` helpers, `TTLCache`, and `sha256Hex`.
 
+## [0.2.0] - 2026-08-16
+
+### Added
+
+- Optional `headers` on the `pages` variant of `ChapterContent` (type +
+  protocol schema). Hosts apply them when fetching page images so sources
+  behind Referer-gated CDNs can be read. Additive: existing plugins are
+  unaffected.
+
+[0.2.0]: https://github.com/JeanRGW/woyomi/compare/packages-v0.1.0...packages-v0.2.0
+
 [0.1.0]: https://github.com/JeanRGW/woyomi/releases/tag/packages-v0.1.0

@@ -46,6 +46,7 @@ function engineMock(chapterContent?: ChapterContent, streams: StreamSource[] = [
 
 function nativeInvoke() {
   const calls: string[] = []
+  const startHeaders: Array<Record<string, string>> = []
   const invoke = vi.fn(
     async (command: string, input?: { args: Record<string, unknown> }): Promise<unknown> => {
       if (command === 'stream_proxy_base') return 'http://native'
@@ -53,6 +54,7 @@ function nativeInvoke() {
       if (typeof index !== 'number') throw new Error(`missing index for ${command}`)
       if (command === 'start_download_asset') {
         calls.push(`start:${index}:${String(input?.args.url)}`)
+        startHeaders.push((input?.args.headers as Record<string, string>) ?? {})
         return undefined
       }
       if (command === 'download_asset_status') {
@@ -67,7 +69,7 @@ function nativeInvoke() {
       throw new Error(`unexpected invoke: ${command}`)
     }
   )
-  return { invoke, calls }
+  return { invoke, calls, startHeaders }
 }
 
 function unexpectedInvoke() {
@@ -195,5 +197,24 @@ describe('DownloadManager', () => {
     await waitForState(store, episode.id, 'complete')
     expect(getChapterContent).toHaveBeenCalledWith(media.sourceId, episode.mediaId, episode.id)
     expect(native.calls).toEqual(['start:0:https://remote.test/fresh.jpg', 'status:0'])
+  })
+
+  it('passes chapter content headers to the native asset fetch', async () => {
+    const { store } = memoryStore()
+    const { engine } = engineMock({
+      type: 'pages',
+      images: ['https://cdn.test/1.jpg', 'https://cdn.test/2.jpg'],
+      headers: { Referer: 'https://source.test/' }
+    })
+    const native = nativeInvoke()
+    const manager = new DownloadManager(engine, store, native.invoke)
+
+    await manager.enqueueReader(media, episode)
+    await waitForState(store, episode.id, 'complete')
+
+    expect(native.startHeaders).toEqual([
+      { Referer: 'https://source.test/' },
+      { Referer: 'https://source.test/' }
+    ])
   })
 })
