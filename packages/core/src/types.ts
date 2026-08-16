@@ -73,9 +73,12 @@ export interface FetchInit {
   body?: string
   /** 'dom' loads the page with JS in a browser-like env and returns serialized HTML */
   mode?: 'text' | 'dom'
+  /** CSS selector to wait for when rendering a DOM page. */
+  waitFor?: string
 }
 
 export interface FetchResult {
+  /** HTTP status for text fetches. Native DOM rendering reports 200 only when rendering completed; the upstream status is unavailable. */
   status: number
   headers: Record<string, string>
   body: string

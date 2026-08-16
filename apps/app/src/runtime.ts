@@ -68,8 +68,8 @@ const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
  * The FetchProvider. Native Tauri: routes to Rust `fetch_url` (reqwest, no
  * CORS). Plain browser (dev / web build): routes through the scrape proxy when
  * one is configured (self-hosted, no CORS limits), else direct fetch — which
- * works only for CORS-enabled APIs like MangaDex. mode:'dom' is not supported
- * in the browser.
+ * works only for CORS-enabled APIs like MangaDex. mode:'dom' is rendered by a
+ * hidden native WebView and is unavailable in the browser build.
  */
 
 /** Proxy config for the web build; empty url = proxy disabled (direct fetch). */
@@ -93,7 +93,8 @@ export function createFetchProvider(): FetchFn {
           method: init?.method ?? 'GET',
           headers: init?.headers ?? {},
           body: init?.body,
-          dom: init?.mode === 'dom'
+          dom: init?.mode === 'dom',
+          waitFor: init?.waitFor
         }
       })) as FetchResult
       return res
@@ -102,6 +103,9 @@ export function createFetchProvider(): FetchFn {
 
   return async (url: string, init?: FetchInit): Promise<FetchResult> => {
     try {
+      if (init?.mode === 'dom') {
+        throw new Error("mode:'dom' requires the native app")
+      }
       if (shouldProxy(scrapeConfig, url)) return await scrapeRequest(scrapeConfig, url, init)
       const res = await fetch(url, {
         method: init?.method ?? 'GET',

@@ -28,7 +28,8 @@ A plugin never calls `fetch` itself. It receives a `SourceContext` whose
 `fetch` is injected by the app:
 
 - **native (Tauri):** routes to a Rust `fetch_url` command (reqwest). No CORS
-  — source sites are reachable directly.
+  — source sites are reachable directly. `mode: 'dom'` uses a hidden native
+  WebView to execute a page's JavaScript before returning its serialized HTML.
 - **browser/web mode:** routes through the optional self-hosted `/api/scrape`
    proxy (configured under **Settings → Web proxy**). Header-gated media (e.g.
    animefire's Referer MP4s) additionally route through `/api/stream` on the same
@@ -148,6 +149,12 @@ Plugins execute inside a per-plugin **Web Worker** — a sandbox without `window
 
 - **`ctx.fetch` / `fetchHtml` / `fetchJson`** for network (never global `fetch`);
   requests route through the native `fetch_url` bridge (or browser/proxy).
+- **`ctx.fetch(url, { mode: 'dom', waitFor: '.results' })`** when a source must
+  execute page JavaScript before parsing. DOM rendering is native-app-only;
+  use a `waitFor` selector for asynchronously populated content. A native DOM
+  result's `status: 200` means rendering completed, not that the upstream HTTP
+  request succeeded: Tauri does not expose navigation response metadata. Use
+  `waitFor` to reject server error pages that lack the expected content.
 - **An HTML `DOMParser` is injected** (linkedom) so scraping sources can do
   `new DOMParser().parseFromString(html, 'text/html')` and query with selectors.
 - **`ctx.cache` / `ctx.preferences`** via the injected context, not globals.

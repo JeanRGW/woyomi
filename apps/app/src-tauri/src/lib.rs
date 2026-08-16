@@ -3,10 +3,20 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
+
+const MAIN_WEBVIEW_LABEL: &str = "main";
+
+fn require_main_webview<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    if webview.label() == MAIN_WEBVIEW_LABEL {
+        Ok(())
+    } else {
+        Err("command is unavailable from this webview".to_string())
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,9 +28,10 @@ pub struct FetchArgs {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: Option<String>,
-    /// not yet implemented: load the page with JS and return serialized DOM
     #[serde(default)]
     pub dom: bool,
+    #[serde(default)]
+    pub wait_for: Option<String>,
 }
 
 fn default_method() -> String {
@@ -36,16 +47,18 @@ pub struct FetchResult {
 }
 
 /// CORS-free fetch for plugins. Runs server-side in the native shell, so source
-/// sites can be reached without a proxy. `mode:'dom'` is a stub for future
-/// headless rendering (returns a 501-style payload).
+/// sites can be reached without a proxy. DOM requests are rendered by the
+/// app's hidden WebView so site JavaScript can populate the page first.
 #[tauri::command]
 async fn fetch_url(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     args: FetchArgs,
 ) -> Result<FetchResult, String> {
+    require_main_webview(&webview)?;
     if args.dom {
-        return Err("fetch_url mode=dom is not implemented yet".to_string());
+        return render_dom(&app, &state.dom_renderer, args).await;
     }
 
     let client = &state.client;
@@ -83,6 +96,256 @@ async fn fetch_url(
         headers,
         body,
     })
+}
+
+const DOM_RENDERER_LABEL: &str = "dom-renderer";
+const DOM_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const DOM_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(350);
+const DOM_WAIT_POLL_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+const DOM_MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
+
+struct DomPending {
+    id: u64,
+    wait_for: Option<String>,
+    snapshot_started: bool,
+    response: oneshot::Sender<Result<String, String>>,
+}
+
+/// A single WebView is deliberately shared: navigation is stateful, so DOM
+/// requests must not overlap or one source could receive another page's HTML.
+struct DomRenderer {
+    gate: Mutex<()>,
+    pending: StdMutex<Option<DomPending>>,
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+impl DomRenderer {
+    fn new() -> Self {
+        Self {
+            gate: Mutex::new(()),
+            pending: StdMutex::new(None),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+
+    fn begin(
+        &self,
+        wait_for: Option<String>,
+    ) -> (u64, oneshot::Receiver<Result<String, String>>) {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (response, receiver) = oneshot::channel();
+        *self
+            .pending
+            .lock()
+            .expect("dom renderer pending lock poisoned") = Some(DomPending {
+            id,
+            wait_for,
+            snapshot_started: false,
+            response,
+        });
+        (id, receiver)
+    }
+
+    fn navigation_finished(&self) -> Option<(u64, Option<String>)> {
+        let mut pending = self
+            .pending
+            .lock()
+            .expect("dom renderer pending lock poisoned");
+        let pending = pending.as_mut()?;
+        if pending.snapshot_started {
+            return None;
+        }
+        pending.snapshot_started = true;
+        Some((pending.id, pending.wait_for.clone()))
+    }
+
+    fn is_active(&self, id: u64) -> bool {
+        self.pending
+            .lock()
+            .expect("dom renderer pending lock poisoned")
+            .as_ref()
+            .is_some_and(|pending| pending.id == id)
+    }
+
+    fn complete(&self, id: u64, result: Result<String, String>) {
+        let mut current = self
+            .pending
+            .lock()
+            .expect("dom renderer pending lock poisoned");
+        let pending = if current.as_ref().is_some_and(|pending| pending.id == id) {
+            current.take()
+        } else {
+            None
+        };
+        if let Some(pending) = pending {
+            let _ = pending.response.send(result);
+        }
+    }
+
+    fn cancel(&self, id: u64) {
+        let mut pending = self
+            .pending
+            .lock()
+            .expect("dom renderer pending lock poisoned");
+        if pending.as_ref().is_some_and(|job| job.id == id) {
+            pending.take();
+        }
+    }
+}
+
+async fn render_dom(
+    app: &tauri::AppHandle,
+    renderer: &Arc<DomRenderer>,
+    args: FetchArgs,
+) -> Result<FetchResult, String> {
+    if !args.method.eq_ignore_ascii_case("GET") || args.body.is_some() {
+        return Err("fetch_url mode=dom supports GET requests only".to_string());
+    }
+    if !args.headers.is_empty() {
+        return Err("fetch_url mode=dom does not support custom request headers".to_string());
+    }
+    let url = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid DOM url: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("DOM url must use http or https".to_string());
+    }
+
+    let _gate = renderer.gate.lock().await;
+    let window = app
+        .get_webview_window(DOM_RENDERER_LABEL)
+        .ok_or_else(|| "DOM renderer is unavailable on this platform".to_string())?;
+    let (id, receiver) = renderer.begin(args.wait_for);
+    if let Err(error) = window.navigate(url) {
+        renderer.cancel(id);
+        return Err(format!("start DOM navigation: {error}"));
+    }
+
+    let body = match tokio::time::timeout(DOM_RENDER_TIMEOUT, receiver).await {
+        Ok(Ok(Ok(body))) => body,
+        Ok(Ok(Err(error))) => return Err(error),
+        Ok(Err(_)) => return Err("DOM renderer stopped before the page was ready".to_string()),
+        Err(_) => {
+            renderer.cancel(id);
+            return Err("DOM page rendering timed out".to_string());
+        }
+    };
+
+    Ok(FetchResult {
+        // Tauri exposes navigation completion but not upstream response metadata.
+        // This is 200 only when rendering itself completed successfully.
+        status: 200,
+        headers: HashMap::new(),
+        body,
+    })
+}
+
+fn dom_snapshot_script() -> &'static str {
+    "document.documentElement ? document.documentElement.outerHTML : ''"
+}
+
+fn dom_selector_script(selector: &str) -> String {
+    let selector = serde_json::to_string(selector).expect("selector serialization cannot fail");
+    format!("(() => {{ try {{ return !!document.querySelector({selector}); }} catch {{ return false; }} }})()")
+}
+
+fn complete_dom_snapshot<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+    renderer: Arc<DomRenderer>,
+    id: u64,
+) {
+    if !renderer.is_active(id) {
+        return;
+    }
+    let callback_renderer = renderer.clone();
+    if let Err(error) = window.eval_with_callback(dom_snapshot_script(), move |value| {
+        let result = serde_json::from_str::<String>(&value)
+            .map_err(|error| format!("serialize DOM: {error}"))
+            .and_then(|body| {
+                if body.len() > DOM_MAX_BODY_BYTES {
+                    Err("rendered DOM exceeds 5 MB".to_string())
+                } else {
+                    Ok(body)
+                }
+            });
+        callback_renderer.complete(id, result);
+    }) {
+        renderer.complete(id, Err(format!("evaluate DOM: {error}")));
+    }
+}
+
+fn poll_dom_selector<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+    renderer: Arc<DomRenderer>,
+    id: u64,
+    selector: String,
+) {
+    if !renderer.is_active(id) {
+        return;
+    }
+    let callback_window = window.clone();
+    let callback_renderer = renderer.clone();
+    let callback_selector = selector.clone();
+    if let Err(error) = window.eval_with_callback(dom_selector_script(&selector), move |value| {
+        let found = serde_json::from_str::<bool>(&value).unwrap_or(false);
+        if found {
+            complete_dom_snapshot(callback_window.clone(), callback_renderer.clone(), id);
+            return;
+        }
+        let next_window = callback_window.clone();
+        let next_renderer = callback_renderer.clone();
+        let next_selector = callback_selector.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(DOM_WAIT_POLL_DELAY);
+            poll_dom_selector(
+                next_window,
+                next_renderer,
+                id,
+                next_selector,
+            );
+        });
+    }) {
+        renderer.complete(id, Err(format!("evaluate DOM selector: {error}")));
+    }
+}
+
+fn setup_dom_renderer(app: &tauri::App, renderer: Arc<DomRenderer>) -> tauri::Result<()> {
+    let on_load_renderer = renderer.clone();
+    tauri::WebviewWindowBuilder::new(
+        app,
+        DOM_RENDERER_LABEL,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .visible(false)
+    .skip_taskbar(true)
+    .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "tauri"))
+    .on_page_load(move |window, payload| {
+        if payload.event() != tauri::webview::PageLoadEvent::Finished {
+            return;
+        }
+        // The renderer serializes jobs, but Tauri does not expose a navigation
+        // id. Some backends emit only a redirected final URL or omit repeated
+        // Started events, so the active job owns the next Finished event.
+        let Some((id, wait_for)) = on_load_renderer.navigation_finished() else {
+            return;
+        };
+        let renderer = on_load_renderer.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(DOM_SETTLE_DELAY);
+            if let Some(selector) = wait_for {
+                poll_dom_selector(window, renderer, id, selector);
+            } else {
+                complete_dom_snapshot(window, renderer, id);
+            }
+        });
+    })
+    .build()
+    .map_err(|error| {
+        eprintln!("DOM renderer unavailable: {error}");
+        error
+    })
+    .ok();
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -159,6 +422,7 @@ pub struct AppState {
     pub client: reqwest::Client,
     download_client: reqwest::Client,
     jobs: Arc<Mutex<HashMap<DownloadKey, DownloadJob>>>,
+    dom_renderer: Arc<DomRenderer>,
 }
 
 fn validate_file_id(file_id: &str) -> Result<(), String> {
@@ -201,10 +465,12 @@ fn validate_cover_hash(hash: &str) -> Result<(), String> {
 
 #[tauri::command]
 async fn cache_cover_image(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     args: CacheCoverImageArgs,
 ) -> Result<CachedCoverImage, String> {
+    require_main_webview(&webview)?;
     let url = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid cover url: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err("cover url must use http or https".to_string());
@@ -250,7 +516,12 @@ async fn cache_cover_image(
 }
 
 #[tauri::command]
-async fn remove_cached_cover(app: tauri::AppHandle, args: RemoveCachedCoverArgs) -> Result<(), String> {
+async fn remove_cached_cover(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    args: RemoveCachedCoverArgs,
+) -> Result<(), String> {
+    require_main_webview(&webview)?;
     validate_cover_hash(&args.file_hash)?;
     let root = covers_root(&app)?;
     for path in [root.join(&args.file_hash), root.join(format!("{}.type", args.file_hash))] {
@@ -265,10 +536,12 @@ async fn remove_cached_cover(app: tauri::AppHandle, args: RemoveCachedCoverArgs)
 
 #[tauri::command]
 async fn start_download_asset(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     args: StartDownloadAssetArgs,
 ) -> Result<(), String> {
+    require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
     let url = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid url: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -421,9 +694,11 @@ async fn download_asset(
 
 #[tauri::command]
 async fn download_asset_status(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     args: DownloadAssetArgs,
 ) -> Result<DownloadAssetStatus, String> {
+    require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
     state
         .jobs
@@ -436,9 +711,11 @@ async fn download_asset_status(
 
 #[tauri::command]
 async fn cancel_download_asset(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     args: DownloadAssetArgs,
 ) -> Result<(), String> {
+    require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
     let jobs = state.jobs.lock().await;
     let job = jobs
@@ -452,9 +729,11 @@ async fn cancel_download_asset(
 
 #[tauri::command]
 async fn remove_download_files(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     args: RemoveDownloadFilesArgs,
 ) -> Result<(), String> {
+    require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
     let directory = downloads_root(&app)?.join(args.file_id);
     match tokio::fs::remove_dir_all(directory).await {
@@ -468,7 +747,8 @@ async fn remove_download_files(
 /// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. animefire's
 /// Referer) play; the proxy forwards Range for seeking.
 #[tauri::command]
-fn stream_proxy_base(app: tauri::AppHandle) -> Result<String, String> {
+fn stream_proxy_base(webview: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
+    require_main_webview(&webview)?;
     Ok(format!(
         "http://127.0.0.1:{}",
         stream_proxy_port(downloads_root(&app)?)
@@ -784,6 +1064,7 @@ fn parse_range(value: &str, file_len: u64) -> Option<(u64, u64)> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let dom_renderer = Arc::new(DomRenderer::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -801,7 +1082,9 @@ pub fn run() {
                 .build()
                 .expect("failed to build download client"),
             jobs: Arc::new(Mutex::new(HashMap::new())),
+            dom_renderer: dom_renderer.clone(),
         })
+        .setup(move |app| Ok(setup_dom_renderer(app, dom_renderer.clone())?))
         .invoke_handler(tauri::generate_handler![
             fetch_url,
             start_download_asset,
@@ -818,7 +1101,25 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_range, validate_cover_hash, validate_file_id};
+    use super::{
+        dom_selector_script, dom_snapshot_script, parse_range, validate_cover_hash,
+        validate_file_id, DomRenderer,
+    };
+
+    #[test]
+    fn serializes_dom_wait_selector_safely() {
+        assert!(dom_selector_script(".entry[data-id='42']").contains("querySelector(\".entry[data-id='42']\")"));
+        assert!(!dom_snapshot_script().contains("Promise"));
+    }
+
+    #[test]
+    fn completes_the_active_job_without_a_started_event() {
+        let renderer = DomRenderer::new();
+        let (id, _receiver) = renderer.begin(None);
+
+        assert_eq!(renderer.navigation_finished(), Some((id, None)));
+        assert!(renderer.navigation_finished().is_none());
+    }
 
     #[test]
     fn validates_opaque_file_ids() {
