@@ -1,48 +1,58 @@
 #!/usr/bin/env node
 /**
- * Live smoke test against the real MangaDex API:
- * search -> media -> episodes -> chapter pages.
- * Requires the plugin to be built first: pnpm --filter @woyomi/plugin-mangadex build:plugin
+ * Offline smoke test of the full plugin pipeline:
+ * fixture source -> plugin-builder IIFE bundle -> loadBundle -> Engine
+ * (search -> home -> episodes -> streams) -> repo index generation.
+ * No network. Requires `pnpm build` first (core + plugin-builder dists).
  */
-import { readFile } from 'node:fs/promises'
-import { Engine } from '../packages/core/dist/index.js'
-import { loadBundle } from '../packages/core/dist/index.js'
+import { readFile, rm } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { Engine, loadBundle } from '../packages/core/dist/index.js'
+import { buildPlugin, generateRepoIndex } from '../packages/plugin-builder/dist/index.js'
 
-const code = await readFile(new URL('../plugins/mangadex/dist/mangadex.plugin.js', import.meta.url), 'utf8')
+const pluginRoot = fileURLToPath(new URL('./fixture-plugin/', import.meta.url))
+const outDir = fileURLToPath(new URL('./fixture-plugin/dist/', import.meta.url))
+await rm(outDir, { recursive: true, force: true })
+await buildPlugin({ root: pluginRoot, outDir })
+console.log(`built fixture plugin -> ${outDir}`)
+
+const code = await readFile(new URL('./fixture-plugin/dist/smokefixture.plugin.js', import.meta.url), 'utf8')
 
 const reg = loadBundle(code)
-const source = reg.sources.find((s) => s.id === 'mangadex-en') ?? reg.sources[0]
-if (!source) throw new Error('no mangadex source in bundle')
+const source = reg.sources[0]
+if (!source) throw new Error('no source in fixture bundle')
 const engine = new Engine({
-  fetch: async (url, init) => {
-    const res = await fetch(url, { method: init?.method, headers: init?.headers, body: init?.body })
-    const headers = {}
-    res.headers.forEach((v, k) => (headers[k] = v))
-    return { status: res.status, headers, body: await res.text() }
+  fetch: async () => {
+    throw new Error('fixture source must not fetch')
   },
-  sourceThrottleMs: 200
+  sourceThrottleMs: 0
 })
 engine.registerSource(source)
 
 const sourceId = source.id
-const query = process.argv[2] ?? 'berserk'
+const query = 'fixture'
 const results = await engine.search(sourceId, query, 1)
 console.log(`search "${query}": ${results.items.length} hits, first = ${results.items[0]?.title}`)
-
 const media = results.items[0]
 if (!media) throw new Error('no results')
 
 const sections = await engine.getHomeSections(sourceId)
 if (sections.length === 0) throw new Error('no home sections')
 const home = await engine.getHomeSection(sourceId, sections[0].id, 1)
-console.log(`home "${sections[0].title}": ${home.items.length} items, first = ${home.items[0]?.title}`)
+console.log(`home "${sections[0].title}": ${home.items.length} items`)
 
 const episodes = await engine.getEpisodes(sourceId, media.mediaId)
 console.log(`episodes: ${episodes.length}`)
-const chapter = episodes.find((e) => Number.isInteger(e.number) && e.number >= 1)
-if (!chapter) throw new Error('no normal chapter')
+const episode = episodes.find((e) => Number.isInteger(e.number) && e.number >= 1)
+if (!episode) throw new Error('no episode')
 
-const content = await engine.getChapterContent(sourceId, media.mediaId, chapter.id)
-if (content.type !== 'pages') throw new Error('expected pages content')
-console.log(`chapter ${chapter.number}: ${content.images.length} pages, first = ${content.images[0]?.slice(0, 60)}`)
+const streams = await engine.getStreams(sourceId, media, episode)
+if (streams.length === 0) throw new Error('no streams')
+console.log(`episode ${episode.number}: ${streams.length} streams, first = ${streams[0]?.url}`)
+
+const index = (await generateRepoIndex(outDir))?.plugins ?? []
+if (!index.some((p) => p.id === 'smokefixture')) throw new Error('fixture missing from repo index')
+console.log(`repo index lists ${index.length} plugin(s)`)
+
+await rm(outDir, { recursive: true, force: true })
 console.log('OK')

@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { HistoryEntry, LibraryEntry, ProgressEntry, SyncPayload } from '@woyomi/core'
@@ -21,7 +21,8 @@ import type { HistoryEntry, LibraryEntry, ProgressEntry, SyncPayload } from '@wo
  * multi-user or higher-volume sync is ever wanted.
  */
 
-const REPO_DIR = process.env.PLUGIN_REPO_DIR ?? resolve(import.meta.dirname ?? '.', '..', '..', '..')
+// Read lazily so tests (+ tools) can point the repo at a fixture dir.
+const repoDir = () => process.env.PLUGIN_REPO_DIR ?? resolve(import.meta.dirname ?? '.', '..', '..', '..')
 
 // Read lazily so tests (+ tools) can point sync state at a throwaway dir.
 const dataDir = () => process.env.DATA_DIR ?? './data'
@@ -42,17 +43,23 @@ app.use('*', cors({ origin: '*', allowHeaders: ['content-type', 'authorization']
 app.get('/health', (c) => c.json({ ok: true }))
 
 // Serve the aggregate plugin repo: index.json merges each plugin package's
-// dist/index.json; bundles served from their real paths.
-const repoDirs = [
-  join(REPO_DIR, 'plugins', 'mangadex', 'dist'),
-  join(REPO_DIR, 'plugins', 'examplevideo', 'dist'),
-  join(REPO_DIR, 'plugins', 'tsundoku', 'dist'),
-  join(REPO_DIR, 'plugins', 'animefire', 'dist')
-]
+// dist/index.json; bundles served from their real paths. Plugin dirs are
+// discovered per request so no plugin has to be hardcoded and newly added
+// dirs show up without a restart; an empty/missing plugins dir serves an
+// empty index.
+const repoDirs = async (): Promise<string[]> => {
+  const pluginsDir = join(repoDir(), 'plugins')
+  try {
+    const entries = await readdir(pluginsDir, { withFileTypes: true })
+    return entries.filter((e) => e.isDirectory()).map((e) => join(pluginsDir, e.name, 'dist'))
+  } catch {
+    return []
+  }
+}
 
 app.get('/repo', async (c) => {
   const merged: { plugins: unknown[] } = { plugins: [] }
-  for (const dir of repoDirs) {
+  for (const dir of await repoDirs()) {
     try {
       const idx = JSON.parse(await readFile(join(dir, 'index.json'), 'utf8')) as { plugins: Array<{ file: string }> }
       merged.plugins.push(...idx.plugins.map((p) => ({ ...p, file: `/repo/${p.file}` })))
@@ -65,7 +72,7 @@ app.get('/repo', async (c) => {
 
 app.get('/repo/:file', async (c) => {
   const file = c.req.param('file')
-  for (const dir of repoDirs) {
+  for (const dir of await repoDirs()) {
     const p = join(dir, file)
     if (p.startsWith(resolve(dir))) {
       try {
@@ -226,8 +233,8 @@ app.post('/api/scrape', async (c) => {
 })
 
 /**
- * Stream media for the web build: applies caller-supplied headers (e.g. the
- * Referer animefire requires) and forwards Range for <video> seeking. Gated
+ * Stream media for the web build: applies caller-supplied headers (e.g. a
+ * Referer) and forwards Range for <video> seeking. Gated
  * like /api/scrape (SCRAPE_ENABLED + optional SCRAPE_TOKEN via ?token=).
  * <video> can't send headers, so the token travels in the query string.
  * ponytail: token-in-query is a log smell; fine for a personal self-hosted box.

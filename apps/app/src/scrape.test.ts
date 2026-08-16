@@ -65,7 +65,7 @@ describe('shouldProxy', () => {
   it('bypasses the proxy for its own origin (repo served by the same server)', () => {
     const cfg: ScrapeConfig = { url: 'http://localhost:8787', token: '' }
     expect(shouldProxy(cfg, 'http://localhost:8787/repo/index.json')).toBe(false)
-    expect(shouldProxy(cfg, 'http://localhost:8787/repo/mangadex.plugin.js')).toBe(false)
+    expect(shouldProxy(cfg, 'http://localhost:8787/repo/demo.plugin.js')).toBe(false)
   })
   it('returns false when no proxy is configured', () => {
     expect(shouldProxy({ url: '', token: '' }, 'https://example.com/')).toBe(false)

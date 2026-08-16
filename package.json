@@ -11,7 +11,6 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "build:plugins": "turbo run build:plugin --filter @woyomi/plugin-builder --filter \"./plugins/*\"",
     "dev": "pnpm --filter @woyomi/app dev",
     "typecheck": "turbo run typecheck",
     "smoke": "node scripts/smoke.mjs"

@@ -43,13 +43,13 @@ export function isTauri(): boolean {
 
 /**
  * Resolve the URL the <video> should load. Streams with custom headers (e.g.
- * animefire's Referer) can't be played directly, so in the native shell we
+ * a Referer) can't be played directly, so in the native shell we
  * route them through the localhost stream proxy, which applies the headers
  * and forwards Range for seeking. Header-free streams play directly.
  * Web mode: routes through the self-hosted /api/scrape proxy when one is
  * configured (no CORS limits), else direct fetch — which works only for
- * CORS-enabled APIs like MangaDex. Header-gated streams (e.g. animefire's
- * Referer MP4s) are routed through the same server's /api/stream endpoint.
+ * CORS-enabled APIs. Header-gated streams (e.g. Referer MP4s) are routed
+ * through the same server's /api/stream endpoint.
  */
 export async function playableStreamUrl(stream: { url: string; headers?: Record<string, string> }): Promise<string> {
   if (!stream.headers || Object.keys(stream.headers).length === 0) return stream.url
@@ -68,7 +68,7 @@ const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
  * The FetchProvider. Native Tauri: routes to Rust `fetch_url` (reqwest, no
  * CORS). Plain browser (dev / web build): routes through the scrape proxy when
  * one is configured (self-hosted, no CORS limits), else direct fetch — which
- * works only for CORS-enabled APIs like MangaDex. mode:'dom' is rendered by a
+ * works only for CORS-enabled APIs. mode:'dom' is rendered by a
  * hidden native WebView and is unavailable in the browser build.
  */
 
@@ -267,10 +267,6 @@ async function initRuntime(): Promise<AppRuntime> {
     sandboxes.set(sandbox.manifest.id, sandbox)
   }
 
-  async function loadFromBundle(code: string, origin: 'bundled' | 'external'): Promise<void> {
-    registerPlugin(await createSandbox(code), origin)
-  }
-
   async function loadInstalled(plugin: PluginStoredBundle): Promise<void> {
     let sandbox: PluginSandbox | undefined
     try {
@@ -289,16 +285,6 @@ async function initRuntime(): Promise<AppRuntime> {
       console.warn(`dropping stored plugin ${plugin.id}:`, e)
     }
   }
-
-  // First-party plugins are compiled into the app (bundle format, same loader).
-  const mangadexBuilt = await import('@woyomi/plugin-mangadex/dist/mangadex.plugin.js?raw')
-  await loadFromBundle(mangadexBuilt.default, 'bundled')
-  const videoBuilt = await import('@woyomi/plugin-examplevideo/dist/examplevideo.plugin.js?raw')
-  await loadFromBundle(videoBuilt.default, 'bundled')
-  const tsundokuBuilt = await import('@woyomi/plugin-tsundoku/dist/tsundoku.plugin.js?raw')
-  await loadFromBundle(tsundokuBuilt.default, 'bundled')
-  const animefireBuilt = await import('@woyomi/plugin-animefire/dist/animefire.plugin.js?raw')
-  await loadFromBundle(animefireBuilt.default, 'bundled')
 
   // Rehydrate externally-installed plugins across restarts.
   for (const plugin of await plugins.list()) {

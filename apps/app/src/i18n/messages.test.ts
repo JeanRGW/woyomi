@@ -9,7 +9,7 @@ describe('translate', () => {
   })
 
   it('interpolates named params', () => {
-    expect(translate('en', 'browse.loadMoreFrom', { name: 'MangaDex' })).toBe('Load more from MangaDex')
+    expect(translate('en', 'browse.loadMoreFrom', { name: 'Demo Source' })).toBe('Load more from Demo Source')
     expect(translate('en', 'store.update', { version: '2.0.0' })).toBe('Update (2.0.0)')
   })
 

@@ -9,23 +9,21 @@ Requires Node >= 22, pnpm 11.8.0 (pinned in `package.json` + CI).
 
 ```sh
 pnpm install                # esbuild build script is pre-approved (pnpm-workspace.yaml)
-pnpm build                  # turbo: build all packages AND first-party plugin IIFEs to dist
+pnpm build                  # turbo: build all packages to dist
 pnpm test                   # Vitest across all packages (fixtures inline, no network)
 pnpm typecheck              # strict TS, all packages
 pnpm --filter @woyomi/app lint    # only lint target in the repo (eslint)
 pnpm dev                    # app Vite dev server, http://localhost:1420
-pnpm smoke                  # live MangaDex pipeline test (needs pnpm build first)
+pnpm smoke                  # offline fixture-plugin pipeline test (needs pnpm build first)
 ```
 
 Turbo orders `test` and `typecheck` after `build` automatically.
 
 ### Ordering gotcha (easy to miss)
 
-`dist/`, `*.plugin.js`, `*.plugin.json` are gitignored. `apps/app/src/runtime.ts`
-loads bundled plugins via `?raw` imports of their built dist files (mangadex,
-tsundoku, examplevideo) — so **`pnpm build` must run before `pnpm dev` /
-app `vite build` / `pnpm smoke`**. `pnpm build` alone is sufficient (plugins
-have a `build` script producing the IIFE bundles).
+`dist/`, `*.plugin.js`, `*.plugin.json` are gitignored. Packages import each
+other via built `dist/` outputs — so **`pnpm build` must run before `pnpm dev` /
+app `vite build` / `pnpm smoke`**.
 
 ### Server (optional self-hosted backend)
 
@@ -36,7 +34,8 @@ SYNC_TOKEN=replace-with-a-long-random-token DATA_DIR=./data PORT=8787 pnpm dev
 
 Hono app: `/api/scrape` CORS proxy (off by default; `SCRAPE_ENABLED=true`
 + optional `SCRAPE_TOKEN`), `/api/sync/:user` JSON sync, `/repo`
-aggregates the built plugin dist dirs.
+aggregates plugin dist dirs found under `PLUGIN_REPO_DIR` (default: repo
+root `plugins/*/dist`; an empty dir serves an empty index).
 
 ### Plugin tooling
 
@@ -56,9 +55,11 @@ pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
 - `packages/plugin-builder` — esbuild bundler (IIFE, browser platform) + repo
   index generator. Bin is `woyomi-plugin-build` (alias `media-plugin-build`)
   — plugins' `build` script.
-- `plugins/*` — first-party sources (`mangadex`, `tsundoku`,
-  `examplevideo`). They are **workspace packages that depend on
-  `@woyomi/core`** and ship as bundled plugins via `?raw` imports.
+- No bundled sources: the app ships with zero plugins; users install them
+  from external plugin repos (see `installExternal` in runtime.ts,
+  `StoreView.tsx`, `provider.ts`, and the server `/repo` endpoint, which
+  aggregates `<repoRoot>/plugins/*/dist`). `scripts/fixture-plugin` is a
+  minimal reference plugin used by `pnpm smoke`.
 - `apps/app` — React 18 + Vite frontend and the Tauri 2 Rust shell
   (`src-tauri/`). `src/runtime.ts` wires fetch/stores per runtime. Native
   offline downloads live in `src/downloads.ts` (`DownloadManager`, foreground

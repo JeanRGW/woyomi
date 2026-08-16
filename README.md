@@ -17,10 +17,12 @@ apps/app            React 18 + Vite frontend AND Tauri 2 (Rust) shell
 apps/server         optional self-hosted backend (web-mode scrape proxy + sync + plugin repo)
 packages/core       plugin API, engine (runner), registry, loader, stores, zod protocol, Web Worker sandbox
 packages/plugin-builder   CLI: plugin folder -> IIFE bundle + manifest + sha256; repo index generator
-plugins/mangadex    first-party MangaDex source (manga)
-plugins/tsundoku    first-party HTML-scraping source — Tsundoku Traduções (manga + novel)
-plugins/examplevideo      demo video source exercising the stream-extractor API
+scripts/smoke.mjs   offline end-to-end smoke test (builds a fixture plugin and runs it through the engine)
 ```
+
+**No sources are bundled with this app.** All sources are plugins that users
+install from third-party plugin repositories via the Plugins screen — woyomi
+ships only the runtime, the plugin SDK, and the plugin tooling.
 
 ### The core idea: plugins are transport-agnostic TS modules
 
@@ -32,22 +34,22 @@ A plugin never calls `fetch` itself. It receives a `SourceContext` whose
   WebView to execute a page's JavaScript before returning its serialized HTML.
 - **browser/web mode:** routes through the optional self-hosted `/api/scrape`
    proxy (configured under **Settings → Web proxy**). Header-gated media (e.g.
-   animefire's Referer MP4s) additionally route through `/api/stream` on the same
+   a source's Referer MP4s) additionally route through `/api/stream` on the same
    server (`?token=` when a `SCRAPE_TOKEN` is set). Empty URL = direct
-   `fetch`, which works only for CORS-enabled APIs like MangaDex. To self-host
+   `fetch`, which works only for CORS-enabled APIs. To self-host
    the proxy securely, run `apps/server` with `SCRAPE_ENABLED=true` (optionally
    `SCRAPE_TOKEN=...` for a shared key the app sends as `Bearer`). The endpoint
    is off by default so the bundled server is not an open proxy, and when
    enabled it is hardened (timeout, SSRF blocklist).
 
-Plugins are bundled into self-contained IIFEs by `plugin-builder` and either
-ship with the app (bundled) or are installed from remote repositories
-(external), verified by sha256 and gated by `apiVersion`.
+Plugins are bundled into self-contained IIFEs by `plugin-builder` and
+installed from remote repositories (external), verified by sha256 and gated
+by `apiVersion`.
 
 ```
-plugins/mangadex/src/index.ts
+<my-plugin>/src/index.ts
   └─ globalThis.__media_plugin_register({ manifest, sources })
-       └─ esbuild bundle -> dist/mangadex.plugin.js (+ .plugin.json + sha256)
+       └─ esbuild bundle -> dist/<id>.plugin.js (+ .plugin.json + sha256)
             └─ loaded at runtime by packages/core (loadPluginSandbox) into a Web
                Worker, exposed to the engine as proxy Sources over postMessage RPC
 ```
@@ -69,8 +71,8 @@ installs/updates/uninstalls them (sha256-verified, `apiVersion`-gated).
 
 ## Getting started
 
-Requires **Node >= 22, pnpm 9/10/11**, and for the desktop app: **Rust
-toolchain** (1.77+).
+Requires **Node >= 22, pnpm 11.8.0** (pinned in `package.json` and CI), and
+for the desktop app: **Rust toolchain** (1.77+).
 
 ```sh
 pnpm install            # install all workspace deps (approve esbuild build script)
@@ -82,7 +84,7 @@ pnpm typecheck          # strict TS across all packages
 ### Desktop app (Tauri) — Windows / Linux / Android
 
 ```sh
-pnpm --filter @woyomi/app build:plugin-mangadex   # build first-party plugins (see note)
+pnpm build                                        # required first (see note)
 pnpm --filter @woyomi/app tauri dev                # run in dev shell (requires Rust)
 pnpm --filter @woyomi/app tauri build              # release bundle
 ```
@@ -99,8 +101,8 @@ device development.
 ### Web build (no native shell)
 
 The same React codebase runs in a plain browser (dev server) for quick UI
-iteration — scraping falls back to direct `fetch` (works for CORS-enabled APIs
-like MangaDex) or the self-hosted proxy.
+iteration — scraping falls back to direct `fetch` (works for CORS-enabled APIs)
+or the self-hosted proxy.
 
 ```sh
 pnpm --filter @woyomi/app dev     # http://localhost:1420
@@ -122,12 +124,13 @@ Environment: `SYNC_TOKEN` (Bearer token for `/api/sync/*`), `DATA_DIR`
 
 ## Writing a plugin
 
-1. `mkdir plugins/mysource` with a `package.json` depending on
-   `@woyomi/core`.
+1. Create a plugin package anywhere with a `package.json` (name + version)
+   and `src/index.ts` importing `@woyomi/core`.
 2. Implement a `Source` (see `packages/core/src/types.ts`) and register it in
    `src/index.ts` via `__media_plugin_register`.
-3. Build: `pnpm --filter @woyomi/plugin-builder exec node dist/cli.js plugins/mysource plugins/mysource/dist`
-4. Distribute via a repo `index.json` (see `gen-repo.js`) or bundle into the app.
+3. Build: `pnpm --filter @woyomi/plugin-builder exec node dist/cli.js <my-plugin> <my-plugin>/dist`
+4. Distribute via a repo `index.json` (see `gen-repo.js`); users install it
+   from the app's Plugins screen.
 
 The `Source` interface (one unified model across all five media types):
 
@@ -161,16 +164,16 @@ Plugins execute inside a per-plugin **Web Worker** — a sandbox without `window
 
 Keep the plugin self-contained: no `window`, `document`, `localStorage`, or
 `importScripts` of external code — the bundle is a single self-contained IIFE.
-See `plugins/tsundoku` for a reference HTML-scraping plugin.
+See `scripts/fixture-plugin` for a minimal reference plugin.
 
 ## Testing
 
 - **Unit tests (Vitest):** core engine/registry/loader/store, plugin parsers
   against JSON/HTML fixtures, builder round-trip + repo generation, server
   API. Run with `pnpm test` — no network required.
-- **Live smoke test:** `node --input-type=module scripts/smoke.mjs` exercises
-  the full MangaDex pipeline (search → media → episodes → chapter pages)
-  against the real API.
+- **Smoke test:** `pnpm smoke` builds the offline fixture plugin
+  (`scripts/fixture-plugin`) and exercises the full pipeline (build →
+  bundle → load → engine search/home/episodes/streams → repo index).
 
 ## Status / known limits
 
@@ -180,8 +183,8 @@ See `plugins/tsundoku` for a reference HTML-scraping plugin.
   `DOMParser` (linkedom) is injected so scraping plugins work. The sync
   `loadBundle` in `loader.ts` is used only by `plugin-builder` for build-time
   manifest capture.
-- The video source is a demo (`examplevideo`) returning a public HLS test
-  stream; wiring real extractors is plugin work, isolated behind
+- The app ships with **no sources**; everything is user-installed from
+  plugin repos. Video extraction is plugin work, isolated behind
   `getStreams()`.
 - Linux WebKitGTK's MSE support is incomplete for some HLS streams; the
   fallback path (native mpv/ExoPlayer) is a future phase.

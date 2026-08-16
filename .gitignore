@@ -15,4 +15,5 @@ apps/app/src-tauri/gen/schemas/
 apps/app/dist/
 .turbo/
 .commandcode/
+.zcode/
 apps/server/data/

@@ -8,7 +8,9 @@ import { MEDIA_TYPE_KEY } from '../i18n/messages'
 import { Banner, Btn, EmptyState, Page, PageHeader, SectionHeading, TextInput } from '../components'
 import { Icon } from '../icons'
 
-const DEFAULT_REPOS = ['http://localhost:8787/repo']
+// No bundled sources and no default repo: users add a plugin repo URL
+// themselves (kept in component state for now).
+const DEFAULT_REPOS: string[] = []
 
 export function StoreView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()

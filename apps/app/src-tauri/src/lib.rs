@@ -744,7 +744,7 @@ async fn remove_download_files(
 }
 
 /// Base URL of the localhost media-stream proxy. The player points the <video>
-/// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. animefire's
+/// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. a
 /// Referer) play; the proxy forwards Range for seeking.
 #[tauri::command]
 fn stream_proxy_base(webview: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
@@ -756,7 +756,7 @@ fn stream_proxy_base(webview: tauri::WebviewWindow, app: tauri::AppHandle) -> Re
 }
 
 /// Ephemeral localhost HTTP proxy that streams media with custom headers (e.g.
-/// the Referer animefire requires) and forwards Range so the <video> can seek.
+/// a required Referer) and forwards Range so the <video> can seek.
 /// Bound to 127.0.0.1 on an ephemeral port; started on first use.
 fn stream_proxy_port(downloads_root: PathBuf) -> &'static u16 {
     static PORT: OnceLock<u16> = OnceLock::new();

@@ -20,18 +20,6 @@ importers:
       '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@woyomi/plugin-animefire':
-        specifier: workspace:*
-        version: link:../../plugins/animefire
-      '@woyomi/plugin-examplevideo':
-        specifier: workspace:*
-        version: link:../../plugins/examplevideo
-      '@woyomi/plugin-mangadex':
-        specifier: workspace:*
-        version: link:../../plugins/mangadex
-      '@woyomi/plugin-tsundoku':
-        specifier: workspace:*
-        version: link:../../plugins/tsundoku
       hls.js:
         specifier: ^1.5.20
         version: 1.6.16
@@ -153,76 +141,6 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.5
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.5)
-
-  plugins/animefire:
-    dependencies:
-      '@woyomi/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@woyomi/plugin-builder':
-        specifier: workspace:*
-        version: link:../../packages/plugin-builder
-      linkedom:
-        specifier: ^0.18.13
-        version: 0.18.13
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.5
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.5)
-
-  plugins/examplevideo:
-    dependencies:
-      '@woyomi/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@woyomi/plugin-builder':
-        specifier: workspace:*
-        version: link:../../packages/plugin-builder
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.5
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.5)
-
-  plugins/mangadex:
-    dependencies:
-      '@woyomi/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@woyomi/plugin-builder':
-        specifier: workspace:*
-        version: link:../../packages/plugin-builder
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.5
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.5)
-
-  plugins/tsundoku:
-    dependencies:
-      '@woyomi/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@woyomi/plugin-builder':
-        specifier: workspace:*
-        version: link:../../packages/plugin-builder
-      linkedom:
-        specifier: ^0.18.13
-        version: 0.18.13
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
