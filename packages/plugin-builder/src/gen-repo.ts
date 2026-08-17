@@ -19,7 +19,7 @@ export async function generateRepoIndex(pluginDir: string, outfile = 'index.json
       name: string
       version: string
       apiVersion: number
-      lang?: string
+      lang?: string | string[]
       nsfw?: boolean
       description?: string
       mediaTypes: string[]

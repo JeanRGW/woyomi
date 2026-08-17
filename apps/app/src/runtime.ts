@@ -149,6 +149,9 @@ export interface AppRuntime {
   /** Source ids pinned to the Home landing; empty = nothing pinned (hint shown). */
   getLandingSources(): Promise<string[]>
   setLandingSources(ids: string[]): Promise<void>
+  /** Custom plugin repo URLs the user added in the store, persisted across restarts. */
+  getPluginRepos(): Promise<string[]>
+  setPluginRepos(repos: string[]): Promise<void>
   /** Web-mode scrape proxy config. */
   getScrapeConfig(): Promise<ScrapeConfig>
   setScrapeConfig(config: ScrapeConfig): Promise<void>
@@ -389,6 +392,8 @@ async function initRuntime(): Promise<AppRuntime> {
     setPluginEnabled,
     getLandingSources: async () => (await prefs.get<string[]>('__app', 'landing.sources')) ?? [],
     setLandingSources: (ids: string[]) => prefs.set('__app', 'landing.sources', ids),
+    getPluginRepos: async () => (await prefs.get<string[]>('__app', 'pluginRepos')) ?? [],
+    setPluginRepos: (repos: string[]) => prefs.set('__app', 'pluginRepos', repos),
     getScrapeConfig: async () => getScrapeConfig(),
     setScrapeConfig: async (config) => {
       setScrapeConfig(config)

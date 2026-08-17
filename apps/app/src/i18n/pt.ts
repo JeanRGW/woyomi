@@ -117,6 +117,8 @@ export const pt: Messages = {
   'store.addRepoPlaceholder': 'Adicionar URL de repositório (ex.: https://host/plugins)',
   'store.removeRepo': 'Remover repositório {url}',
   'store.available': 'Disponíveis',
+  'store.language': 'Idioma',
+  'store.allLanguages': 'Todos',
   'store.emptyTitle': 'Nenhum plugin encontrado',
   'store.emptyHint': 'Adicione uma URL de repositório acima para descobrir fontes instaláveis.',
   'store.nsfw': 'NSFW',

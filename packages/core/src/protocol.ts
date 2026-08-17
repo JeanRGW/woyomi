@@ -77,7 +77,7 @@ export const PluginManifestSchema = z.object({
   name: z.string(),
   version: z.string(),
   apiVersion: z.number(),
-  lang: z.string().optional(),
+  lang: z.union([z.string(), z.array(z.string())]).optional(),
   nsfw: z.boolean().optional(),
   description: z.string().optional(),
   mediaTypes: z.array(MediaTypeSchema),

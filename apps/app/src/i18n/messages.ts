@@ -122,6 +122,8 @@ const en = {
     'store.addRepoPlaceholder': 'Add repo URL (e.g. https://host/plugins)',
     'store.removeRepo': 'Remove repo {url}',
     'store.available': 'Available',
+    'store.language': 'Language',
+    'store.allLanguages': 'All',
     'store.emptyTitle': 'No plugins found',
     'store.emptyHint': 'Add a plugin repository URL above to discover installable sources.',
     'store.nsfw': 'NSFW',

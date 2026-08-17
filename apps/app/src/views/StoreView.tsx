@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchRepoIndex, type RepoPlugin } from '../provider'
+import { fetchRepoIndex, isNewerVersion, type RepoPlugin } from '../provider'
 import type { AppRuntime } from '../runtime'
 import { createFetchProvider } from '../runtime'
 import type { MediaType } from '@woyomi/core'
@@ -9,13 +9,14 @@ import { Banner, Btn, EmptyState, Page, PageHeader, SectionHeading, TextInput } 
 import { Icon } from '../icons'
 
 // No bundled sources and no default repo: users add a plugin repo URL
-// themselves (kept in component state for now).
+// themselves. Added repos are persisted via the runtime so they survive restarts.
 const DEFAULT_REPOS: string[] = []
 
 export function StoreView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
   const [repos, setRepos] = useState<string[]>(DEFAULT_REPOS)
   const [repoInput, setRepoInput] = useState('')
+  const [langFilter, setLangFilter] = useState('all')
   const [plugins, setPlugins] = useState<RepoPlugin[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -27,6 +28,18 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repos])
+
+  // Hydrate persisted repository URLs once on mount.
+  useEffect(() => {
+    let mounted = true
+    void runtime.getPluginRepos().then((r) => {
+      if (mounted) setRepos(r)
+    })
+    return () => {
+      mounted = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function refresh() {
     setBusy(true)
@@ -61,7 +74,38 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
     }
   }
 
+  function persistRepos(next: string[]) {
+    setRepos(next)
+    void runtime.setPluginRepos(next)
+  }
+
+  function addRepo() {
+    const v = repoInput.trim().replace(/\/+$/, '')
+    setRepoInput('')
+    if (!v) return
+    persistRepos(repos.includes(v) ? repos : [...repos, v])
+  }
+
+  function removeRepo(url: string) {
+    persistRepos(repos.filter((x) => x !== url))
+  }
+
   const mediaTypeLabel = (mt: string) => (mt in MEDIA_TYPE_KEY ? t(MEDIA_TYPE_KEY[mt as MediaType]) : mt)
+
+  // Distinct languages available across all fetched plugins, for the filter.
+  const availableLangs = Array.from(new Set(plugins.flatMap((p) => p.lang))).sort()
+  const visible = langFilter === 'all' ? plugins : plugins.filter((p) => p.lang.includes(langFilter))
+
+  const langChip = (code: string, active: boolean, label: string) => (
+    <button
+      onClick={() => setLangFilter(active ? 'all' : code)}
+      className={`inline-flex cursor-pointer rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+        active ? 'border-transparent bg-accent text-white' : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-fg'
+      }`}
+    >
+      {label}
+    </button>
+  )
 
   return (
     <Page>
@@ -76,11 +120,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
         <TextInput placeholder={t('store.addRepoPlaceholder')} value={repoInput} onChange={(e) => setRepoInput(e.target.value)} />
         <Btn
           variant="primary"
-          onClick={() => {
-            const v = repoInput.trim().replace(/\/+$/, '')
-            if (v && !repos.includes(v)) setRepos((r) => [...r, v])
-            setRepoInput('')
-          }}
+          onClick={addRepo}
         >
           <Icon name="plus" size={16} />
           {t('store.addRepo')}
@@ -91,7 +131,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
           <span key={r} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1.5 pl-3.5 pr-1.5 text-xs font-medium text-muted">
             {r}
             <button
-              onClick={() => setRepos((list) => list.filter((x) => x !== r))}
+              onClick={() => removeRepo(r)}
               aria-label={t('store.removeRepo', { url: r })}
               className="grid size-6 cursor-pointer place-items-center rounded-full text-faint transition-colors hover:bg-danger-soft hover:text-danger"
             >
@@ -104,6 +144,13 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
       {message && <Banner tone="ok">{message}</Banner>}
 
       <SectionHeading title={t('store.available')} />
+      {availableLangs.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted">{t('store.language')}</span>
+          {langChip('all', langFilter === 'all', t('store.allLanguages'))}
+          {availableLangs.map((l) => langChip(l, langFilter === l, l.toUpperCase()))}
+        </div>
+      )}
       {plugins.length === 0 ? (
         busy ? (
           <p className="text-sm text-muted">{t('common.loading')}</p>
@@ -111,9 +158,10 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
           <EmptyState icon="plugins" title={t('store.emptyTitle')} hint={t('store.emptyHint')} />
         )
       ) : (
-        <div className="flex flex-col gap-2">
-          {plugins.map((p) => {
+        <div className="mt-2 flex flex-col gap-2">
+          {visible.map((p) => {
             const installedVer = runtime.installed.get(p.id)
+            const updateAvailable = !!installedVer && isNewerVersion(p.version, installedVer)
             return (
               <div key={p.id} className="flex items-center gap-3 rounded-2xl border border-line-soft bg-surface p-3 transition-colors hover:border-line">
                 {p.iconUrl ? (
@@ -128,7 +176,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                     <strong className="text-sm font-bold">{p.name}</strong>
                     <span className="text-xs text-faint">
                       v{p.version}
-                      {p.lang ? ` · ${p.lang}` : ''}
+                      {p.lang.length ? ` · ${p.lang.join(', ')}` : ''}
                     </span>
                   </div>
                   <div className="text-xs font-medium capitalize text-muted">
@@ -138,8 +186,8 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                   {p.description && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{p.description}</div>}
                 </div>
                 {installedVer ? (
-                  <Btn variant="outline" disabled={installedVer === p.version} className="shrink-0" onClick={() => install(p)}>
-                    {installedVer === p.version ? (
+                  <Btn variant="outline" disabled={!updateAvailable} className="shrink-0" onClick={() => install(p)}>
+                    {!updateAvailable ? (
                       <>
                         <Icon name="check" size={15} />
                         {t('store.installed')}

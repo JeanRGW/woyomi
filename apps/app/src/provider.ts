@@ -12,7 +12,8 @@ export interface RepoPlugin {
   name: string
   version: string
   apiVersion: number
-  lang?: string
+  /** Languages the plugin supports; a repo may declare a single code or an array. */
+  lang: string[]
   nsfw?: boolean
   description?: string
   mediaTypes: string[]
@@ -25,6 +26,37 @@ export interface RepoPlugin {
   iconUrl?: string
 }
 
+const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
+
+/** True only when candidate is a valid SemVer newer than current. */
+export function isNewerVersion(candidate: string, current: string): boolean {
+  const next = SEMVER_RE.exec(candidate)
+  const installed = SEMVER_RE.exec(current)
+  if (!next || !installed) return false
+
+  for (let i = 1; i <= 3; i++) {
+    const difference = Number(next[i]) - Number(installed[i])
+    if (difference !== 0) return difference > 0
+  }
+
+  const nextPrerelease = next[4]?.split('.')
+  const installedPrerelease = installed[4]?.split('.')
+  if (!nextPrerelease || !installedPrerelease) return !nextPrerelease && !!installedPrerelease
+
+  for (let i = 0; i < Math.max(nextPrerelease.length, installedPrerelease.length); i++) {
+    const a = nextPrerelease[i]
+    const b = installedPrerelease[i]
+    if (a === undefined || b === undefined) return b === undefined
+    if (a === b) continue
+    const aNumeric = /^\d+$/.test(a)
+    const bNumeric = /^\d+$/.test(b)
+    if (aNumeric && bNumeric) return Number(a) > Number(b)
+    if (aNumeric !== bNumeric) return !aNumeric
+    return a > b
+  }
+  return false
+}
+
 const RepoIndexSchema = z.object({
   plugins: z.array(
     z.object({
@@ -32,7 +64,7 @@ const RepoIndexSchema = z.object({
       name: z.string(),
       version: z.string(),
       apiVersion: z.number(),
-      lang: z.string().optional(),
+      lang: z.union([z.string(), z.array(z.string())]).optional(),
       nsfw: z.boolean().optional(),
       description: z.string().optional(),
       mediaTypes: z.array(z.string()),
@@ -54,6 +86,12 @@ export function repoBase(indexUrl: string): string {
   return url.origin + path
 }
 
+/** Normalize a repo's `lang` (single code or array) into a stable array. */
+function normalizeLang(lang: string | string[] | undefined): string[] {
+  if (Array.isArray(lang)) return lang
+  return lang ? [lang] : []
+}
+
 export async function fetchRepoIndex(fetch: FetchFn, repoUrl: string): Promise<RepoPlugin[]> {
   const indexUrl = repoUrl.endsWith('/index.json') ? repoUrl : repoUrl.endsWith('/') ? repoUrl + 'index.json' : repoUrl + '/index.json'
   const res = await fetch(indexUrl)
@@ -66,7 +104,7 @@ export async function fetchRepoIndex(fetch: FetchFn, repoUrl: string): Promise<R
     name: p.name,
     version: p.version,
     apiVersion: p.apiVersion,
-    lang: p.lang,
+    lang: normalizeLang(p.lang),
     nsfw: p.nsfw,
     description: p.description,
     mediaTypes: p.mediaTypes,

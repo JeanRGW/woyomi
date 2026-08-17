@@ -151,7 +151,8 @@ export interface PluginManifest {
   version: string
   /** must equal API_VERSION at runtime or the plugin is rejected */
   apiVersion: number
-  lang?: string
+  /** Supported languages: a single code or an array (kept loose for repo back-compat). */
+  lang?: string | string[]
   nsfw?: boolean
   description?: string
   mediaTypes: MediaType[]
