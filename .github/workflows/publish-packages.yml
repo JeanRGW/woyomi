@@ -31,7 +31,19 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
-      # pnpm publish (not npm publish) rewrites workspace:* deps to real versions
-      - run: pnpm --filter @woyomi/core --filter @woyomi/plugin-builder publish --access public --no-git-checks
+      # Publish each package only when its exact version is not already on npm.
+      # pnpm publish rewrites workspace:* dependencies to real versions.
+      - name: Publish unpublished package versions
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for package_dir in packages/core packages/plugin-builder; do
+            package_name=$(node -p "JSON.parse(require('fs').readFileSync('$package_dir/package.json', 'utf8')).name")
+            package_version=$(node -p "JSON.parse(require('fs').readFileSync('$package_dir/package.json', 'utf8')).version")
+            if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
+              echo "Skipping already published $package_name@$package_version"
+            else
+              pnpm --filter "$package_name" publish --access public --no-git-checks
+            fi
+          done
