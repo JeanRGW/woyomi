@@ -311,14 +311,16 @@ fn poll_dom_selector<R: tauri::Runtime>(
 
 fn setup_dom_renderer(app: &tauri::App, renderer: Arc<DomRenderer>) -> tauri::Result<()> {
     let on_load_renderer = renderer.clone();
-    tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         DOM_RENDERER_LABEL,
         tauri::WebviewUrl::App("index.html".into()),
     )
-    .visible(false)
-    .skip_taskbar(true)
-    .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "tauri"))
+    .visible(false);
+    // Taskbar is a desktop-only concept; the builder method does not exist on mobile.
+    #[cfg(desktop)]
+    let builder = builder.skip_taskbar(true);
+    builder.on_navigation(|url| matches!(url.scheme(), "http" | "https" | "tauri"))
     .on_page_load(move |window, payload| {
         if payload.event() != tauri::webview::PageLoadEvent::Finished {
             return;
