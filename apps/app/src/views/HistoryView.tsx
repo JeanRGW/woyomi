@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isVideoType, type HistoryEntry } from '@woyomi/core'
-import type { AppRuntime } from '../runtime'
+import { imageSrc, type AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { useLocale, useT } from '../i18n'
 import { EmptyState, Page, PageHeader } from '../components'
@@ -42,7 +42,7 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
             >
               <button onClick={() => open(h)} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
                 {h.media.coverUrl ? (
-                  <img className="h-16 w-11 shrink-0 rounded-lg object-cover ring-1 ring-white/5" src={h.media.coverUrl} alt="" loading="lazy" />
+                  <img className="h-16 w-11 shrink-0 rounded-lg object-cover ring-1 ring-white/5" src={imageSrc(h.media.coverUrl, h.media.coverHeaders) ?? h.media.coverUrl} alt="" loading="lazy" />
                 ) : (
                   <div className="grid h-16 w-11 shrink-0 place-items-center rounded-lg bg-surface-2 text-sm font-extrabold uppercase text-muted">
                     {h.media.type.slice(0, 1)}

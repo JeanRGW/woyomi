@@ -42,6 +42,38 @@ export function isTauri(): boolean {
 }
 
 /**
+ * Base URL of the localhost media-stream proxy (native shell). Populated once
+ * during initRuntime(); the Rust side caches the ephemeral port for the
+ * process lifetime, so resolving it at startup keeps proxiedHref synchronous.
+ */
+let nativeStreamBase = ''
+
+/**
+ * Resolve a media URL that needs custom headers (e.g. a hotlink-protection
+ * Referer) through the native localhost stream proxy or the web /api/stream
+ * proxy. Header-free URLs pass through untouched. Web mode without a proxy
+ * configured falls back to the raw URL — a browser <img> can't send headers,
+ * so header-gated images simply degrade to today's behavior.
+ */
+export function proxiedHref(url: string | undefined, headers?: Record<string, string>): string | undefined {
+  if (!url) return undefined
+  if (!headers || Object.keys(headers).length === 0) return url
+  if (!isTauri()) {
+    const cfg = getScrapeConfig()
+    return cfg.url ? streamProxyUrl(cfg, { url, headers }) : url
+  }
+  // nativeStreamBase is populated once by initRuntime(); if it's still unset,
+  // fall back to the raw URL rather than emitting a broken relative URL.
+  if (!nativeStreamBase) return url
+  return `${nativeStreamBase}/stream?url=${encodeURIComponent(url)}&headers=${encodeURIComponent(JSON.stringify(headers))}`
+}
+
+/** Resolve an image (cover/page) URL, applying source-declared headers. */
+export function imageSrc(url: string | undefined, headers?: Record<string, string>): string | undefined {
+  return proxiedHref(url, headers)
+}
+
+/**
  * Resolve the URL the <video> should load. Streams with custom headers (e.g.
  * a Referer) can't be played directly, so in the native shell we
  * route them through the localhost stream proxy, which applies the headers
@@ -51,14 +83,8 @@ export function isTauri(): boolean {
  * CORS-enabled APIs. Header-gated streams (e.g. Referer MP4s) are routed
  * through the same server's /api/stream endpoint.
  */
-export async function playableStreamUrl(stream: { url: string; headers?: Record<string, string> }): Promise<string> {
-  if (!stream.headers || Object.keys(stream.headers).length === 0) return stream.url
-  if (!isTauri()) {
-    const cfg = getScrapeConfig()
-    return cfg.url ? streamProxyUrl(cfg, stream) : stream.url
-  }
-  const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
-  return `${base}/stream?url=${encodeURIComponent(stream.url)}&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`
+export function playableStreamUrl(stream: { url: string; headers?: Record<string, string> }): Promise<string> {
+  return Promise.resolve(proxiedHref(stream.url, stream.headers) ?? stream.url)
 }
 
 /** Upper bound on an installable plugin bundle, to keep installs sane. */
@@ -180,6 +206,16 @@ export function getRuntime(): Promise<AppRuntime> {
 
 async function initRuntime(): Promise<AppRuntime> {
   const native = isTauri()
+  if (native) {
+    // The Rust stream proxy port is constant per process (OnceLock), so
+    // resolve it once here to keep proxiedHref()/imageSrc() synchronous.
+    try {
+      nativeStreamBase = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
+    } catch (error) {
+      nativeStreamBase = ''
+      console.warn('stream proxy unavailable; header-gated media will use raw URLs:', error)
+    }
+  }
   let store: LibraryStore
   let plugins: PluginStore
   let prefs: PreferencesApi
@@ -339,7 +375,9 @@ async function initRuntime(): Promise<AppRuntime> {
       void removeCachedCoverIfUnreferenced(previous.coverHash)
     }
     if (media.coverUrl && native) {
-      void window.__TAURI_INTERNALS__!.invoke('cache_cover_image', { args: { url: media.coverUrl } }).catch(() => {})
+      void window.__TAURI_INTERNALS__!.invoke('cache_cover_image', {
+        args: { url: media.coverUrl, headers: media.coverHeaders ?? {} }
+      }).catch(() => {})
     }
   }
 

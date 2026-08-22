@@ -110,9 +110,9 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
   return (
     <Page>
       <PageHeader title={t('nav.plugins')}>
-        <Btn variant="ghost" onClick={refresh} disabled={busy}>
+        <Btn variant="ghost" onClick={refresh} disabled={busy} aria-label={t('common.refresh')} title={t('common.refresh')}>
           <Icon name="refresh" size={16} className={busy ? 'animate-spin' : ''} />
-          {busy ? t('common.refreshing') : t('common.refresh')}
+          <span className="hidden sm:inline">{busy ? t('common.refreshing') : t('common.refresh')}</span>
         </Btn>
       </PageHeader>
 
@@ -121,9 +121,12 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
         <Btn
           variant="primary"
           onClick={addRepo}
+          aria-label={t('store.addRepo')}
+          title={t('store.addRepo')}
+          className="shrink-0"
         >
           <Icon name="plus" size={16} />
-          {t('store.addRepo')}
+          <span className="hidden sm:inline">{t('store.addRepo')}</span>
         </Btn>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">

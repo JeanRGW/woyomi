@@ -10,7 +10,9 @@ use tokio::sync::{oneshot, watch, Mutex};
 
 const MAIN_WEBVIEW_LABEL: &str = "main";
 
-fn require_main_webview<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) -> Result<(), String> {
+fn require_main_webview<R: tauri::Runtime>(
+    webview: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
     if webview.label() == MAIN_WEBVIEW_LABEL {
         Ok(())
     } else {
@@ -98,15 +100,20 @@ async fn fetch_url(
     })
 }
 
+#[cfg(desktop)]
 const DOM_RENDERER_LABEL: &str = "dom-renderer";
 const DOM_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+#[cfg(desktop)]
 const DOM_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(350);
+#[cfg(desktop)]
 const DOM_WAIT_POLL_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 const DOM_MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 
 struct DomPending {
     id: u64,
+    #[allow(dead_code)]
     wait_for: Option<String>,
+    #[allow(dead_code)]
     snapshot_started: bool,
     response: oneshot::Sender<Result<String, String>>,
 }
@@ -128,10 +135,7 @@ impl DomRenderer {
         }
     }
 
-    fn begin(
-        &self,
-        wait_for: Option<String>,
-    ) -> (u64, oneshot::Receiver<Result<String, String>>) {
+    fn begin(&self, wait_for: Option<String>) -> (u64, oneshot::Receiver<Result<String, String>>) {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -148,6 +152,7 @@ impl DomRenderer {
         (id, receiver)
     }
 
+    #[cfg(any(desktop, test))]
     fn navigation_finished(&self) -> Option<(u64, Option<String>)> {
         let mut pending = self
             .pending
@@ -161,6 +166,7 @@ impl DomRenderer {
         Some((pending.id, pending.wait_for.clone()))
     }
 
+    #[cfg(desktop)]
     fn is_active(&self, id: u64) -> bool {
         self.pending
             .lock()
@@ -195,6 +201,58 @@ impl DomRenderer {
     }
 }
 
+#[cfg(target_os = "android")]
+static GLOBAL_DOM_RENDERER: OnceLock<Arc<DomRenderer>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_app_rgw_woyomi_AndroidDomRenderer_onDomResult(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    id: jni::sys::jlong,
+    html: jni::objects::JString,
+    error: jni::objects::JString,
+) {
+    let html_opt: Option<String> = if !html.is_null() {
+        match env.get_string(&html) {
+            Ok(s) => Some(s.into()),
+            Err(e) => {
+                eprintln!("get_string html failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let error_opt: Option<String> = if !error.is_null() {
+        match env.get_string(&error) {
+            Ok(s) => Some(s.into()),
+            Err(e) => {
+                eprintln!("get_string error failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let result = match (html_opt, error_opt) {
+        (Some(body), None) => {
+            if body.len() > DOM_MAX_BODY_BYTES {
+                Err("rendered DOM exceeds 5 MB".to_string())
+            } else {
+                Ok(body)
+            }
+        }
+        (_, Some(err)) => Err(err),
+        _ => Err("DOM render returned empty response".to_string()),
+    };
+
+    if let Some(renderer) = GLOBAL_DOM_RENDERER.get() {
+        renderer.complete(id as u64, result);
+    }
+}
+
+#[cfg(desktop)]
 async fn render_dom(
     app: &tauri::AppHandle,
     renderer: &Arc<DomRenderer>,
@@ -240,15 +298,131 @@ async fn render_dom(
     })
 }
 
+#[cfg(target_os = "android")]
+async fn render_dom(
+    _app: &tauri::AppHandle,
+    renderer: &Arc<DomRenderer>,
+    args: FetchArgs,
+) -> Result<FetchResult, String> {
+    if !args.method.eq_ignore_ascii_case("GET") || args.body.is_some() {
+        return Err("fetch_url mode=dom supports GET requests only".to_string());
+    }
+    if !args.headers.is_empty() {
+        return Err("fetch_url mode=dom does not support custom request headers".to_string());
+    }
+    let url = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid DOM url: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("DOM url must use http or https".to_string());
+    }
+
+    let _gate = renderer.gate.lock().await;
+    let (id, receiver) = renderer.begin(args.wait_for.clone());
+
+    let target_url = args.url.clone();
+    let wait_for = args.wait_for.clone();
+    let cancel_renderer = renderer.clone();
+
+    let (tx, rx) = oneshot::channel();
+    wry::prelude::dispatch(move |env, activity, _webview| {
+        let res = (|| -> Result<(), String> {
+            let url_jstring = env
+                .new_string(&target_url)
+                .map_err(|e| format!("JNI new_string url: {e}"))?;
+            let wait_for_jstring = match &wait_for {
+                Some(w) => env
+                    .new_string(w)
+                    .map_err(|e| format!("JNI new_string wait_for: {e}"))?,
+                None => jni::objects::JString::from(jni::objects::JObject::null()),
+            };
+
+            let class_loader = env
+                .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+                .map_err(|e| format!("get class loader: {e}"))?
+                .l()
+                .map_err(|e| format!("class loader object: {e}"))?;
+
+            let class_name = env
+                .new_string("app.rgw.woyomi.AndroidDomRenderer")
+                .map_err(|e| format!("new_string class name: {e}"))?;
+
+            let renderer_class_obj = env
+                .call_method(
+                    &class_loader,
+                    "loadClass",
+                    "(Ljava/lang/String;)Ljava/lang/Class;",
+                    &[jni::objects::JValue::Object(&class_name)],
+                )
+                .map_err(|e| format!("load AndroidDomRenderer class: {e}"))?
+                .l()
+                .map_err(|e| format!("renderer class obj: {e}"))?;
+
+            let renderer_class = jni::objects::JClass::from(renderer_class_obj);
+
+            env.call_static_method(
+                renderer_class,
+                "renderDom",
+                "(Landroid/app/Activity;JLjava/lang/String;Ljava/lang/String;)V",
+                &[
+                    jni::objects::JValue::Object(activity),
+                    jni::objects::JValue::Long(id as i64),
+                    jni::objects::JValue::Object(&url_jstring),
+                    jni::objects::JValue::Object(&wait_for_jstring),
+                ],
+            )
+            .map_err(|e| format!("call renderDom: {e}"))?;
+            Ok(())
+        })();
+        let _ = tx.send(res);
+    });
+
+    let dispatch_result = match rx.await {
+        Ok(res) => res,
+        Err(_) => Err("failed to dispatch to Android context".to_string()),
+    };
+
+    if let Err(err) = dispatch_result {
+        cancel_renderer.cancel(id);
+        return Err(err);
+    }
+
+    let body = match tokio::time::timeout(DOM_RENDER_TIMEOUT, receiver).await {
+        Ok(Ok(Ok(body))) => body,
+        Ok(Ok(Err(error))) => return Err(error),
+        Ok(Err(_)) => return Err("DOM renderer stopped before the page was ready".to_string()),
+        Err(_) => {
+            renderer.cancel(id);
+            return Err("DOM page rendering timed out".to_string());
+        }
+    };
+
+    Ok(FetchResult {
+        status: 200,
+        headers: HashMap::new(),
+        body,
+    })
+}
+
+#[cfg(not(any(desktop, target_os = "android")))]
+async fn render_dom(
+    _app: &tauri::AppHandle,
+    _renderer: &Arc<DomRenderer>,
+    _args: FetchArgs,
+) -> Result<FetchResult, String> {
+    Err("DOM renderer is unavailable on this platform".to_string())
+}
+
+#[cfg(any(desktop, test))]
 fn dom_snapshot_script() -> &'static str {
     "document.documentElement ? document.documentElement.outerHTML : ''"
 }
 
+#[cfg(any(desktop, test))]
 fn dom_selector_script(selector: &str) -> String {
     let selector = serde_json::to_string(selector).expect("selector serialization cannot fail");
     format!("(() => {{ try {{ return !!document.querySelector({selector}); }} catch {{ return false; }} }})()")
 }
 
+#[cfg(desktop)]
 fn complete_dom_snapshot<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     renderer: Arc<DomRenderer>,
@@ -274,6 +448,7 @@ fn complete_dom_snapshot<R: tauri::Runtime>(
     }
 }
 
+#[cfg(desktop)]
 fn poll_dom_selector<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     renderer: Arc<DomRenderer>,
@@ -297,56 +472,57 @@ fn poll_dom_selector<R: tauri::Runtime>(
         let next_selector = callback_selector.clone();
         std::thread::spawn(move || {
             std::thread::sleep(DOM_WAIT_POLL_DELAY);
-            poll_dom_selector(
-                next_window,
-                next_renderer,
-                id,
-                next_selector,
-            );
+            poll_dom_selector(next_window, next_renderer, id, next_selector);
         });
     }) {
         renderer.complete(id, Err(format!("evaluate DOM selector: {error}")));
     }
 }
 
+#[cfg(desktop)]
 fn setup_dom_renderer(app: &tauri::App, renderer: Arc<DomRenderer>) -> tauri::Result<()> {
     let on_load_renderer = renderer.clone();
     let builder = tauri::WebviewWindowBuilder::new(
         app,
         DOM_RENDERER_LABEL,
-        tauri::WebviewUrl::App("index.html".into()),
+        tauri::WebviewUrl::External(url::Url::parse("about:blank").expect("valid blank url")),
     )
-    .visible(false);
-    // Taskbar is a desktop-only concept; the builder method does not exist on mobile.
-    #[cfg(desktop)]
-    let builder = builder.skip_taskbar(true);
-    builder.on_navigation(|url| matches!(url.scheme(), "http" | "https" | "tauri"))
-    .on_page_load(move |window, payload| {
-        if payload.event() != tauri::webview::PageLoadEvent::Finished {
-            return;
-        }
-        // The renderer serializes jobs, but Tauri does not expose a navigation
-        // id. Some backends emit only a redirected final URL or omit repeated
-        // Started events, so the active job owns the next Finished event.
-        let Some((id, wait_for)) = on_load_renderer.navigation_finished() else {
-            return;
-        };
-        let renderer = on_load_renderer.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(DOM_SETTLE_DELAY);
-            if let Some(selector) = wait_for {
-                poll_dom_selector(window, renderer, id, selector);
-            } else {
-                complete_dom_snapshot(window, renderer, id);
+    .visible(false)
+    .skip_taskbar(true);
+
+    builder
+        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "tauri" | "about"))
+        .on_page_load(move |window, payload| {
+            if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                return;
             }
-        });
-    })
-    .build()
-    .map_err(|error| {
-        eprintln!("DOM renderer unavailable: {error}");
-        error
-    })
-    .ok();
+            // The renderer serializes jobs, but Tauri does not expose a navigation
+            // id. Some backends emit only a redirected final URL or omit repeated
+            // Started events, so the active job owns the next Finished event.
+            let Some((id, wait_for)) = on_load_renderer.navigation_finished() else {
+                return;
+            };
+            let renderer = on_load_renderer.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(DOM_SETTLE_DELAY);
+                if let Some(selector) = wait_for {
+                    poll_dom_selector(window, renderer, id, selector);
+                } else {
+                    complete_dom_snapshot(window, renderer, id);
+                }
+            });
+        })
+        .build()
+        .map_err(|error| {
+            eprintln!("DOM renderer unavailable: {error}");
+            error
+        })
+        .ok();
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+fn setup_dom_renderer(_app: &tauri::App, _renderer: Arc<DomRenderer>) -> tauri::Result<()> {
     Ok(())
 }
 
@@ -377,6 +553,8 @@ struct RemoveDownloadFilesArgs {
 #[serde(rename_all = "camelCase")]
 struct CacheCoverImageArgs {
     url: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -487,9 +665,11 @@ async fn cache_cover_image(
         return Ok(CachedCoverImage { file_hash });
     }
 
-    let response = state
-        .client
-        .get(url)
+    let mut request = state.client.get(url);
+    for (name, value) in args.headers {
+        request = request.header(name, value);
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| format!("download cover: {e}"))?;
@@ -501,10 +681,17 @@ async fn cache_cover_image(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
-        .filter(|value| value.starts_with("image/") && value.is_ascii() && !value.bytes().any(|byte| byte.is_ascii_control()))
+        .filter(|value| {
+            value.starts_with("image/")
+                && value.is_ascii()
+                && !value.bytes().any(|byte| byte.is_ascii_control())
+        })
         .unwrap_or("image/jpeg")
         .to_string();
-    let body = response.bytes().await.map_err(|e| format!("read cover: {e}"))?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| format!("read cover: {e}"))?;
     tokio::fs::create_dir_all(&root)
         .await
         .map_err(|e| format!("create covers directory: {e}"))?;
@@ -526,7 +713,10 @@ async fn remove_cached_cover(
     require_main_webview(&webview)?;
     validate_cover_hash(&args.file_hash)?;
     let root = covers_root(&app)?;
-    for path in [root.join(&args.file_hash), root.join(format!("{}.type", args.file_hash))] {
+    for path in [
+        root.join(&args.file_hash),
+        root.join(format!("{}.type", args.file_hash)),
+    ] {
         match tokio::fs::remove_file(path).await {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -749,37 +939,54 @@ async fn remove_download_files(
 /// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. a
 /// Referer) play; the proxy forwards Range for seeking.
 #[tauri::command]
-fn stream_proxy_base(webview: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
+fn stream_proxy_base(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     require_main_webview(&webview)?;
-    Ok(format!(
-        "http://127.0.0.1:{}",
-        stream_proxy_port(downloads_root(&app)?)
-    ))
+    let port = stream_proxy_port(downloads_root(&app)?)?;
+    Ok(format!("http://127.0.0.1:{}", port))
 }
 
 /// Ephemeral localhost HTTP proxy that streams media with custom headers (e.g.
 /// a required Referer) and forwards Range so the <video> can seek.
-/// Bound to 127.0.0.1 on an ephemeral port; started on first use.
-fn stream_proxy_port(downloads_root: PathBuf) -> &'static u16 {
-    static PORT: OnceLock<u16> = OnceLock::new();
-    PORT.get_or_init(|| {
-        let server = tiny_http::Server::http("127.0.0.1:0").expect("failed to bind stream proxy");
-        let port = server
-            .server_addr()
-            .to_ip()
-            .expect("stream proxy not IP")
-            .port();
-        std::thread::spawn(move || serve_streams(server, downloads_root));
-        port
-    })
-}
+/// Bound to 127.0.0.1 on an ephemeral port; started on first use. Startup
+/// errors stay recoverable so the app can still use raw media URLs.
+fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
+    static PORT: OnceLock<StdMutex<Option<u16>>> = OnceLock::new();
+    let port = PORT.get_or_init(|| StdMutex::new(None));
+    let mut current = port
+        .lock()
+        .map_err(|_| "stream proxy port lock poisoned".to_string())?;
+    if let Some(port) = *current {
+        return Ok(port);
+    }
 
-fn serve_streams(server: tiny_http::Server, downloads_root: PathBuf) {
-    // No total timeout on the proxy client — a 122MB stream must not be aborted
-    // mid-download like the 15s fetch_url client would.
+    let server =
+        tiny_http::Server::http("127.0.0.1:0").map_err(|e| format!("bind stream proxy: {e}"))?;
+    let port = server
+        .server_addr()
+        .to_ip()
+        .ok_or_else(|| "stream proxy address is not an IP address".to_string())?
+        .port();
+    // No total timeout on the proxy client — a 122MB stream must not be
+    // aborted mid-download like the 15s fetch_url client would.
     let client = reqwest::blocking::Client::builder()
         .build()
-        .expect("failed to build stream proxy client");
+        .map_err(|e| format!("build stream proxy client: {e}"))?;
+    let _stream_proxy = std::thread::Builder::new()
+        .name("woyomi-stream-proxy".to_string())
+        .spawn(move || serve_streams(server, downloads_root, client))
+        .map_err(|e| format!("start stream proxy: {e}"))?;
+    *current = Some(port);
+    Ok(port)
+}
+
+fn serve_streams(
+    server: tiny_http::Server,
+    downloads_root: PathBuf,
+    client: reqwest::blocking::Client,
+) {
     for request in server.incoming_requests() {
         let client = client.clone();
         let downloads_root = downloads_root.clone();
@@ -799,7 +1006,10 @@ fn serve_streams(server: tiny_http::Server, downloads_root: PathBuf) {
 }
 
 fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
-    if !matches!(request.method(), tiny_http::Method::Get | tiny_http::Method::Head) {
+    if !matches!(
+        request.method(),
+        tiny_http::Method::Get | tiny_http::Method::Head
+    ) {
         return request
             .respond(tiny_http::Response::empty(405))
             .map_err(|e| format!("respond: {e}"));
@@ -822,18 +1032,30 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         return respond_empty(request, 404);
     }
 
-    let covers_root = downloads_root.parent().ok_or("resolve covers root")?.join("covers");
+    let covers_root = downloads_root
+        .parent()
+        .ok_or("resolve covers root")?
+        .join("covers");
     let image_path = covers_root.join(hash);
     let file = match std::fs::File::open(image_path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return respond_empty(request, 404),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return respond_empty(request, 404)
+        }
         Err(error) => return Err(format!("open cached cover: {error}")),
     };
     let content_type = std::fs::read_to_string(covers_root.join(format!("{hash}.type")))
         .ok()
-        .filter(|value| value.starts_with("image/") && value.is_ascii() && !value.bytes().any(|byte| byte.is_ascii_control()))
+        .filter(|value| {
+            value.starts_with("image/")
+                && value.is_ascii()
+                && !value.bytes().any(|byte| byte.is_ascii_control())
+        })
         .unwrap_or_else(|| "image/jpeg".to_string());
-    let length = file.metadata().map_err(|e| format!("stat cached cover: {e}"))?.len();
+    let length = file
+        .metadata()
+        .map_err(|e| format!("stat cached cover: {e}"))?
+        .len();
     let response = tiny_http::Response::new(
         tiny_http::StatusCode(200),
         vec![response_header("Content-Type", &content_type)?],
@@ -841,7 +1063,9 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         Some(usize::try_from(length).map_err(|_| "cached cover too large")?),
         None,
     );
-    request.respond(response).map_err(|e| format!("respond: {e}"))
+    request
+        .respond(response)
+        .map_err(|e| format!("respond: {e}"))
 }
 
 fn proxy_one(
@@ -1067,6 +1291,8 @@ fn parse_range(value: &str, file_len: u64) -> Option<(u64, u64)> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let dom_renderer = Arc::new(DomRenderer::new());
+    #[cfg(target_os = "android")]
+    GLOBAL_DOM_RENDERER.set(dom_renderer.clone()).ok();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -1110,7 +1336,8 @@ mod tests {
 
     #[test]
     fn serializes_dom_wait_selector_safely() {
-        assert!(dom_selector_script(".entry[data-id='42']").contains("querySelector(\".entry[data-id='42']\")"));
+        assert!(dom_selector_script(".entry[data-id='42']")
+            .contains("querySelector(\".entry[data-id='42']\")"));
         assert!(!dom_snapshot_script().contains("Promise"));
     }
 

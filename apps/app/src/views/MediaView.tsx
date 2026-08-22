@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
-import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus } from '@woyomi/core'
-import { isTauri, type AppRuntime } from '../runtime'
+import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus, type Media } from '@woyomi/core'
+import { isTauri, proxiedHref, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
 import { Icon } from '../icons'
@@ -10,6 +10,15 @@ import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '.
 import { BackButton, Banner, Btn, CoverArt, EpisodeRow, Page, SelectInput } from '../components'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
+
+function coverRequestChanged(previous: Media, current: Media): boolean {
+  if (previous.coverUrl !== current.coverUrl) return true
+  const previousHeaders = previous.coverHeaders ?? {}
+  const currentHeaders = current.coverHeaders ?? {}
+  const currentKeys = Object.keys(currentHeaders)
+  if (Object.keys(previousHeaders).length !== currentKeys.length) return true
+  return currentKeys.some((key) => previousHeaders[key] !== currentHeaders[key])
+}
 
 export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime; sourceId: string; mediaId: string }) {
   const t = useT()
@@ -33,7 +42,14 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       const [m, eps] = await Promise.all([runtime.engine.getMedia(sourceId, mediaId), runtime.engine.getEpisodes(sourceId, mediaId)])
       setMedia(m)
       setEpisodes(eps)
-      setEntry(await runtime.store.get(m.id))
+      let existingEntry = await runtime.store.get(m.id)
+      if (existingEntry && coverRequestChanged(existingEntry.media, m)) {
+        // Library rows are media snapshots. Refresh routing metadata added by a
+        // newer source without changing the user's library status.
+        await runtime.store.add(m, existingEntry.status)
+        existingEntry = await runtime.store.get(m.id)
+      }
+      setEntry(existingEntry)
       const prog = await runtime.store.getProgress(m.id)
       setSeen(new Set(prog?.seenEpisodeIds ?? []))
       void runtime.cacheMediaPage(m, eps)
@@ -47,8 +63,12 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         const prog = await runtime.store.getProgress(cached.media.id)
         setSeen(new Set(prog?.seenEpisodeIds ?? []))
         if (cached.coverHash && isTauri()) {
-          const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
-          setCoverOverride(`${base}/covers/${cached.coverHash}`)
+          try {
+            const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
+            setCoverOverride(`${base}/covers/${cached.coverHash}`)
+          } catch (error) {
+            console.warn('cached cover unavailable; falling back to its remote URL:', error)
+          }
         }
         return
       }
@@ -176,12 +196,15 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const video = isVideoType(media.type)
   const allSeen = episodes.length > 0 && episodes.every((ep) => seen.has(ep.id))
   const displayCoverUrl = coverOverride ?? media.coverUrl
+  // Hero blur: route the remote cover through the header proxy; the offline
+  // override already points at the local /covers/ URL and needs no headers.
+  const heroCoverUrl = coverOverride ? displayCoverUrl : (proxiedHref(media.coverUrl, media.coverHeaders) ?? media.coverUrl)
 
   return (
     <div className="relative min-h-full">
       {displayCoverUrl && (
         <div className="pointer-events-none absolute inset-x-0 top-0 h-80 overflow-hidden">
-          <img src={displayCoverUrl} alt="" className="h-full w-full scale-125 object-cover opacity-30 blur-3xl" onError={(e) => (e.currentTarget.hidden = true)} />
+          <img src={heroCoverUrl} alt="" className="h-full w-full scale-125 object-cover opacity-30 blur-3xl" onError={(e) => (e.currentTarget.hidden = true)} />
           <div className="absolute inset-0 bg-gradient-to-b from-ink/20 via-ink/60 to-ink" />
         </div>
       )}

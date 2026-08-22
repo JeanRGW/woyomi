@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChapterContent, Episode, Media } from '@woyomi/core'
-import type { AppRuntime } from '../runtime'
-import { playableStreamUrl } from '../runtime'
+import { imageSrc, type AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { recordOpen } from '../hooks'
 import { useT } from '../i18n'
@@ -15,18 +14,6 @@ import { ChapterDrawer, ReaderSettingsSheet } from './reader/ReaderSettings'
 
 export function ReaderView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   return <ReaderSession key={episodeId} runtime={runtime} sourceId={sourceId} mediaId={mediaId} episodeId={episodeId} />
-}
-
-/**
- * Some sources host page images on CDNs that 403 plain <img> requests; their
- * content carries the required headers (e.g. Referer). Route those through the
- * header-aware stream proxy (native loopback, or the web proxy when one is
- * configured) and hand the reader plain, playable URLs.
- */
-async function resolvePageImages(content: ChapterContent): Promise<ChapterContent> {
-  if (content.type !== 'pages' || !content.headers || Object.keys(content.headers).length === 0) return content
-  const images = await Promise.all(content.images.map((url) => playableStreamUrl({ url, headers: content.headers })))
-  return { type: 'pages', images }
 }
 
 function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
@@ -61,7 +48,13 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
           return
         }
         const chapterContent = await runtime.engine.getChapterContent(sourceId, mediaId, episodeId)
-        if (!cancelled) setContent(await resolvePageImages(chapterContent))
+        if (!cancelled) {
+          setContent(
+            chapterContent.type === 'pages' && chapterContent.headers
+              ? { ...chapterContent, images: chapterContent.images.map((url) => imageSrc(url, chapterContent.headers) ?? url) }
+            : chapterContent
+          )
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       }

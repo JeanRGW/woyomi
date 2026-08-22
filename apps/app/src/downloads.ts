@@ -50,9 +50,7 @@ const pollDelayMs = 300
 
 export class DownloadManager {
   private listeners = new Set<() => void>()
-  private pendingPages = new Map<string, string[]>()
-  /** headers (e.g. Referer) to send when fetching the stashed page URLs */
-  private pendingPageHeaders = new Map<string, Record<string, string>>()
+  private pendingPages = new Map<string, { images: string[]; headers?: Record<string, string> }>()
   private removedFileIds = new Set<string>()
   private processing = false
   private active: ActiveAsset | undefined
@@ -117,10 +115,7 @@ export class DownloadManager {
       createdAt: now,
       updatedAt: now
     }
-    if (content.type === 'pages') {
-      this.pendingPages.set(record.fileId, [...content.images])
-      if (content.headers) this.pendingPageHeaders.set(record.fileId, content.headers)
-    }
+    if (content.type === 'pages') this.pendingPages.set(record.fileId, { images: [...content.images], headers: content.headers })
     const saved = await this.save(record)
     if (saved.state === 'queued') this.kick()
     return saved
@@ -157,7 +152,6 @@ export class DownloadManager {
     if (!record || record.state !== 'failed') return record
 
     this.pendingPages.delete(record.fileId)
-    this.pendingPageHeaders.delete(record.fileId)
     const resetVideo = record.kind === 'mp4' ? { downloadedBytes: 0 } : {}
     const saved = await this.save({ ...record, ...resetVideo, state: 'queued', totalBytes: undefined, error: undefined })
     this.kick()
@@ -170,7 +164,6 @@ export class DownloadManager {
 
     this.removedFileIds.add(record.fileId)
     this.pendingPages.delete(record.fileId)
-    this.pendingPageHeaders.delete(record.fileId)
     const active = this.active
     if (active?.fileId === record.fileId) {
       try {
@@ -267,15 +260,16 @@ export class DownloadManager {
     let record = initial
     const pending = this.pendingPages.get(record.fileId)
     this.pendingPages.delete(record.fileId)
-    const stashedHeaders = this.pendingPageHeaders.get(record.fileId)
-    this.pendingPageHeaders.delete(record.fileId)
-    let images = pending
-    let headers = stashedHeaders ?? {}
-    if (!images) {
+    let images: string[]
+    let headers: Record<string, string> | undefined
+    if (pending) {
+      images = pending.images
+      headers = pending.headers
+    } else {
       const content = await this.engine.getChapterContent(record.media.sourceId, record.episode.mediaId, record.episode.id)
       if (content.type !== 'pages') throw new Error('chapter content is no longer pages')
       images = content.images
-      headers = content.headers ?? {}
+      headers = content.headers
     }
 
     if (record.completedAssets === 0 && record.assetCount !== images.length) {
@@ -291,7 +285,7 @@ export class DownloadManager {
     for (let index = record.completedAssets; index < images.length; index += 1) {
       const url = images[index]
       if (url === undefined) throw new Error('chapter page is missing')
-      record = await this.downloadAsset(record, index, url, headers, index === images.length - 1)
+      record = await this.downloadAsset(record, index, url, headers ?? {}, index === images.length - 1)
     }
   }
 

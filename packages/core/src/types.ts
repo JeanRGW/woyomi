@@ -21,6 +21,8 @@ export interface Media {
   type: MediaType
   status?: MediaStatus
   coverUrl?: string
+  /** headers to send when loading the cover (e.g. a hotlink-protection Referer) */
+  coverHeaders?: Record<string, string>
   synopsis?: string
   tags?: string[]
   /** plain media id as known by the source */

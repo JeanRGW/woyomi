@@ -29,14 +29,14 @@ export function LibraryView({ runtime }: { runtime: AppRuntime }) {
     <Page wide>
       <PageHeader title={t('nav.library')}>
         {runtime.downloads && (
-          <Btn variant="ghost" onClick={() => navigate({ name: 'downloads' })}>
+          <Btn variant="ghost" onClick={() => navigate({ name: 'downloads' })} aria-label={t('downloads.title')} title={t('downloads.title')}>
             <Icon name="download" size={16} />
-            {t('downloads.title')}
+            <span className="hidden sm:inline">{t('downloads.title')}</span>
           </Btn>
         )}
-        <Btn variant="ghost" onClick={refresh} aria-label={t('common.refresh')}>
+        <Btn variant="ghost" onClick={refresh} aria-label={t('common.refresh')} title={t('common.refresh')}>
           <Icon name="refresh" size={16} />
-          {t('common.refresh')}
+          <span className="hidden sm:inline">{t('common.refresh')}</span>
         </Btn>
       </PageHeader>
       <div className="no-scrollbar -mx-4 mb-5 flex gap-2 overflow-x-auto px-4 md:-mx-8 md:px-8">

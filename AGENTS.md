@@ -75,6 +75,12 @@ pnpm --filter @woyomi/plugin-builder exec node dist/gen-repo.js <distDir>
   the self-hosted `/api/scrape` proxy.
 - A bundle is a self-contained IIFE calling
   `globalThis.__media_plugin_register({ manifest, sources })` exactly once.
+- Sources that serve covers/page images behind hotlink protection (e.g. a
+  Cloudflare `Referer`) declare the required headers via `Media.coverHeaders`
+  and the pages variant's `ChapterContent.headers`. The app routes those
+  images through the localhost stream proxy (native) or the web `/api/stream`
+  endpoint when a web proxy is configured, falling back to the raw URL
+  otherwise (a browser `<img>` can't send headers).
 - `manifest.apiVersion` must equal `API_VERSION` from core (checked by the
   builder and by `installExternal` in runtime.ts, which also verifies sha256).
 - Plugins execute inside a per-plugin Web Worker sandbox (packages/core

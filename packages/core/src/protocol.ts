@@ -11,6 +11,7 @@ export const MediaSchema = z.object({
   type: MediaTypeSchema,
   status: MediaStatusSchema.optional(),
   coverUrl: z.string().optional(),
+  coverHeaders: z.record(z.string()).optional(),
   synopsis: z.string().optional(),
   tags: z.array(z.string()).optional(),
   mediaId: z.string(),

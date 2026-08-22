@@ -6131,6 +6131,7 @@ name = "woyomi"
 version = "0.1.0"
 dependencies = [
  "http",
+ "jni",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -6143,6 +6144,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "url",
+ "wry 0.55.1",
 ]
 
 [[package]]

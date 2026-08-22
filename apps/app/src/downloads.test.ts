@@ -46,7 +46,7 @@ function engineMock(chapterContent?: ChapterContent, streams: StreamSource[] = [
 
 function nativeInvoke() {
   const calls: string[] = []
-  const startHeaders: Array<Record<string, string>> = []
+  const headerCalls: Array<Record<string, string>> = []
   const invoke = vi.fn(
     async (command: string, input?: { args: Record<string, unknown> }): Promise<unknown> => {
       if (command === 'stream_proxy_base') return 'http://native'
@@ -54,7 +54,7 @@ function nativeInvoke() {
       if (typeof index !== 'number') throw new Error(`missing index for ${command}`)
       if (command === 'start_download_asset') {
         calls.push(`start:${index}:${String(input?.args.url)}`)
-        startHeaders.push((input?.args.headers as Record<string, string>) ?? {})
+        headerCalls.push((input?.args.headers as Record<string, string> | undefined) ?? {})
         return undefined
       }
       if (command === 'download_asset_status') {
@@ -69,7 +69,7 @@ function nativeInvoke() {
       throw new Error(`unexpected invoke: ${command}`)
     }
   )
-  return { invoke, calls, startHeaders }
+  return { invoke, calls, headerCalls }
 }
 
 function unexpectedInvoke() {
@@ -155,6 +155,26 @@ describe('DownloadManager', () => {
     })
   })
 
+  it('sends chapter-declared headers when downloading pages', async () => {
+    const remotePages = ['https://remote.test/1.jpg', 'https://remote.test/2.png']
+    const refs = { Referer: 'https://comick.art/' }
+    const { store } = memoryStore()
+    const { engine } = engineMock({ type: 'pages', images: remotePages, headers: refs })
+    const native = nativeInvoke()
+    const manager = new DownloadManager(engine, store, native.invoke)
+
+    await manager.enqueueReader(media, episode)
+    await waitForState(store, episode.id, 'complete')
+
+    expect(native.calls).toEqual([
+      'start:0:https://remote.test/1.jpg',
+      'status:0',
+      'start:1:https://remote.test/2.png',
+      'status:1'
+    ])
+    expect(native.headerCalls).toEqual([refs, refs])
+  })
+
   it('rejects an exact MP4 quality when only HLS is available', async () => {
     const video = { ...media, type: 'anime' as const }
     const { store } = memoryStore()
@@ -197,24 +217,5 @@ describe('DownloadManager', () => {
     await waitForState(store, episode.id, 'complete')
     expect(getChapterContent).toHaveBeenCalledWith(media.sourceId, episode.mediaId, episode.id)
     expect(native.calls).toEqual(['start:0:https://remote.test/fresh.jpg', 'status:0'])
-  })
-
-  it('passes chapter content headers to the native asset fetch', async () => {
-    const { store } = memoryStore()
-    const { engine } = engineMock({
-      type: 'pages',
-      images: ['https://cdn.test/1.jpg', 'https://cdn.test/2.jpg'],
-      headers: { Referer: 'https://source.test/' }
-    })
-    const native = nativeInvoke()
-    const manager = new DownloadManager(engine, store, native.invoke)
-
-    await manager.enqueueReader(media, episode)
-    await waitForState(store, episode.id, 'complete')
-
-    expect(native.startHeaders).toEqual([
-      { Referer: 'https://source.test/' },
-      { Referer: 'https://source.test/' }
-    ])
   })
 })

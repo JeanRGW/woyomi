@@ -27,6 +27,10 @@ http = "1"
 url = "2"
 tiny_http = "0.12"
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+wry = "0.55"
+
 # HACK(patch): Use wry 0.56.1 on Windows (fixes a Windows WebView2 crash on
 # resize/maximize, wry#1794) while retaining wry 0.55.x on Android and other
 # targets until a released tauri-runtime-wry supports the newer Android JNI API.

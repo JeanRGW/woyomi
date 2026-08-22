@@ -5,6 +5,7 @@ import { navigate } from './App'
 import { Icon, type IconName } from './icons'
 import { useT } from './i18n'
 import { mediaStatusLabelKey, mediaTypeLabelKey } from './i18n/messages'
+import { imageSrc } from './runtime'
 
 /* ---------- Layout primitives ---------- */
 
@@ -14,9 +15,9 @@ export function Page({ children, wide }: { children: ReactNode; wide?: boolean }
 
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="mb-5 flex flex-wrap items-center gap-3 md:mb-7">
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">{title}</h1>
-      {children && <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>}
+    <div className="mb-5 flex items-center justify-between gap-3 md:mb-7">
+      <h1 className="min-w-0 truncate text-2xl font-extrabold tracking-tight md:text-3xl">{title}</h1>
+      {children && <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">{children}</div>}
     </div>
   )
 }
@@ -144,12 +145,15 @@ const TYPE_TINTS: Record<string, string> = {
   series: 'from-emerald-500/25'
 }
 
-export function CoverArt({ media, coverUrl = media.coverUrl, className = '' }: { media: Media; coverUrl?: string; className?: string }) {
+export function CoverArt({ media, coverUrl, className = '' }: { media: Media; coverUrl?: string; className?: string }) {
   const tint = TYPE_TINTS[media.type] ?? 'from-accent/25'
   const [failed, setFailed] = useState(false)
-  useEffect(() => setFailed(false), [coverUrl])
-  if (coverUrl && !failed) {
-    return <img className={`aspect-[2/3] w-full object-cover ${className}`} src={coverUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+  // An explicit override (e.g. the local /covers/ offline URL) is already a
+  // display URL — don't re-route it through the header proxy.
+  const src = coverUrl !== undefined && coverUrl !== media.coverUrl ? coverUrl : imageSrc(media.coverUrl, media.coverHeaders)
+  useEffect(() => setFailed(false), [src])
+  if (src && !failed) {
+    return <img className={`aspect-[2/3] w-full object-cover ${className}`} src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
   }
   return (
     <div
