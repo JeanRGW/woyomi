@@ -1,0 +1,334 @@
+import { describe, expect, it } from 'vitest'
+import type { StreamSource } from '@woyomi/core'
+import {
+  calculateSwipeUnlock,
+  clampSeekTarget,
+  findFallbackStreamIndex,
+  formatStreamLabel,
+  formatTime,
+  getBufferedEnd,
+  getBufferedFraction,
+  getStreamIdentity,
+  getStreamLabels,
+  isLiveStream,
+  isResumeEligible,
+  normalizeTimeRanges,
+  SWIPE_UNLOCK_THRESHOLD
+} from './player-state'
+
+describe('formatTime', () => {
+  it('formats sub-minute and minute-based timestamps', () => {
+    expect(formatTime(0)).toBe('0:00')
+    expect(formatTime(5)).toBe('0:05')
+    expect(formatTime(45)).toBe('0:45')
+    expect(formatTime(65)).toBe('1:05')
+    expect(formatTime(599)).toBe('9:59')
+    expect(formatTime(600)).toBe('10:00')
+    expect(formatTime(3599)).toBe('59:59')
+  })
+
+  it('formats hour-based timestamps', () => {
+    expect(formatTime(3600)).toBe('1:00:00')
+    expect(formatTime(3665)).toBe('1:01:05')
+    expect(formatTime(7322)).toBe('2:02:02')
+    expect(formatTime(36000)).toBe('10:00:00')
+  })
+
+  it('forces hours display when forceHours is true', () => {
+    expect(formatTime(0, true)).toBe('0:00:00')
+    expect(formatTime(65, true)).toBe('0:01:05')
+    expect(formatTime(3599, true)).toBe('0:59:59')
+  })
+
+  it('forces hours display when guide duration is >= 3600 seconds', () => {
+    expect(formatTime(65, 3600)).toBe('0:01:05')
+    expect(formatTime(65, 5400)).toBe('0:01:05')
+    expect(formatTime(65, 1200)).toBe('1:05')
+  })
+
+  it('handles live, infinite, negative, and NaN values', () => {
+    expect(formatTime(Infinity)).toBe('Live')
+    expect(formatTime(NaN)).toBe('0:00')
+    expect(formatTime(-10)).toBe('0:00')
+    expect(formatTime(-Infinity)).toBe('0:00')
+    expect(formatTime(NaN, true)).toBe('0:00:00')
+    expect(formatTime(-5, true)).toBe('0:00:00')
+  })
+})
+
+describe('isLiveStream', () => {
+  it('identifies live streams from duration', () => {
+    expect(isLiveStream(Infinity)).toBe(true)
+    expect(isLiveStream(-Infinity)).toBe(true)
+    expect(isLiveStream(NaN)).toBe(true)
+    expect(isLiveStream(120)).toBe(false)
+    expect(isLiveStream(0)).toBe(false)
+  })
+})
+
+describe('normalizeTimeRanges', () => {
+  it('handles empty and nullish inputs', () => {
+    expect(normalizeTimeRanges([])).toEqual([])
+  })
+
+  it('normalizes tuple and object range representations', () => {
+    const tuples = normalizeTimeRanges([[0, 10], [15, 25]])
+    expect(tuples).toEqual([[0, 10], [15, 25]])
+
+    const objects = normalizeTimeRanges([{ start: 0, end: 10 }, { start: 15, end: 25 }])
+    expect(objects).toEqual([[0, 10], [15, 25]])
+  })
+
+  it('sorts and merges overlapping or contiguous ranges', () => {
+    const unsorted = normalizeTimeRanges([[20, 30], [0, 10]])
+    expect(unsorted).toEqual([[0, 10], [20, 30]])
+
+    const overlapping = normalizeTimeRanges([[0, 15], [10, 25], [30, 40]])
+    expect(overlapping).toEqual([[0, 25], [30, 40]])
+
+    const contiguous = normalizeTimeRanges([[0, 10], [10, 20]])
+    expect(contiguous).toEqual([[0, 20]])
+  })
+
+  it('discards invalid and non-finite ranges and clamps negative starts', () => {
+    const ranges = normalizeTimeRanges([
+      [-5, 10],
+      [20, 10], // invalid (start > end)
+      [NaN, 30],
+      [40, Infinity]
+    ])
+    expect(ranges).toEqual([[0, 10]])
+  })
+})
+
+describe('clampSeekTarget', () => {
+  it('clamps within finite duration when seekable is absent', () => {
+    expect(clampSeekTarget(50, 100)).toBe(50)
+    expect(clampSeekTarget(-10, 100)).toBe(0)
+    expect(clampSeekTarget(150, 100)).toBe(100)
+  })
+
+  it('handles non-finite, zero, and live duration', () => {
+    expect(clampSeekTarget(50, 0)).toBe(0)
+    expect(clampSeekTarget(50, -10)).toBe(0)
+    expect(clampSeekTarget(50, NaN)).toBe(0)
+    expect(clampSeekTarget(50, Infinity)).toBe(50)
+    expect(clampSeekTarget(-10, Infinity)).toBe(0)
+    expect(clampSeekTarget(NaN, 100)).toBe(0)
+  })
+
+  it('clamps against a single seekable range', () => {
+    const seekable = [{ start: 10, end: 50 }]
+    expect(clampSeekTarget(5, 100, seekable)).toBe(10)
+    expect(clampSeekTarget(30, 100, seekable)).toBe(30)
+    expect(clampSeekTarget(60, 100, seekable)).toBe(50)
+  })
+
+  it('clamps against disjoint seekable ranges and snaps in gaps', () => {
+    const seekable = [[10, 30], [40, 60]] as const
+    expect(clampSeekTarget(5, 100, seekable)).toBe(10)
+    expect(clampSeekTarget(20, 100, seekable)).toBe(20)
+    expect(clampSeekTarget(32, 100, seekable)).toBe(30)
+    expect(clampSeekTarget(38, 100, seekable)).toBe(40)
+    expect(clampSeekTarget(35, 100, seekable)).toBe(30)
+    expect(clampSeekTarget(50, 100, seekable)).toBe(50)
+    expect(clampSeekTarget(70, 100, seekable)).toBe(60)
+  })
+
+  it('caps at finite duration if duration is shorter than seekable end', () => {
+    expect(clampSeekTarget(50, 40, [[0, 60]])).toBe(40)
+  })
+})
+
+describe('getBufferedEnd & getBufferedFraction', () => {
+  it('returns 0 for empty or invalid ranges', () => {
+    expect(getBufferedEnd([])).toBe(0)
+    expect(getBufferedFraction([], 100)).toBe(0)
+  })
+
+  it('selects buffered end enclosing or ahead of currentTime', () => {
+    const buffered = [[0, 30], [40, 60]] as const
+    expect(getBufferedEnd(buffered, 15)).toBe(30)
+    expect(getBufferedEnd(buffered, 45)).toBe(60)
+    expect(getBufferedEnd(buffered, 35)).toBe(60)
+    expect(getBufferedEnd([[5, 25]], 0)).toBe(25)
+    expect(getBufferedEnd(buffered, 70)).toBe(0)
+  })
+
+  it('calculates fraction and handles edge cases', () => {
+    const buffered = [[0, 30]] as const
+    expect(getBufferedFraction(buffered, 100, 10)).toBe(0.3)
+    expect(getBufferedFraction(buffered, 100)).toBe(0.3)
+    expect(getBufferedFraction(buffered, 0)).toBe(0)
+    expect(getBufferedFraction(buffered, -50)).toBe(0)
+    expect(getBufferedFraction(buffered, NaN)).toBe(0)
+    expect(getBufferedFraction(buffered, Infinity)).toBe(0)
+
+    const overBuffered = [[0, 150]] as const
+    expect(getBufferedFraction(overBuffered, 100)).toBe(1)
+  })
+})
+
+describe('isResumeEligible', () => {
+  it('is eligible for mid-video positions >= 10s', () => {
+    expect(isResumeEligible(10, 100)).toBe(true)
+    expect(isResumeEligible(50, 100)).toBe(true)
+    expect(isResumeEligible(69, 100)).toBe(true)
+  })
+
+  it('rejects positions before 10s', () => {
+    expect(isResumeEligible(0, 100)).toBe(false)
+    expect(isResumeEligible(5, 100)).toBe(false)
+    expect(isResumeEligible(9.9, 100)).toBe(false)
+  })
+
+  it('rejects positions within final 30s', () => {
+    expect(isResumeEligible(70, 100)).toBe(false)
+    expect(isResumeEligible(85, 100)).toBe(false)
+    expect(isResumeEligible(99, 100)).toBe(false)
+  })
+
+  it('rejects positions within final 5% on long videos', () => {
+    expect(isResumeEligible(949, 1000)).toBe(true) // 51s remaining = 5.1%
+    expect(isResumeEligible(950, 1000)).toBe(false) // 50s remaining = 5.0%
+    expect(isResumeEligible(960, 1000)).toBe(false) // 40s remaining = 4.0%
+  })
+
+  it('rejects invalid or live durations and positions', () => {
+    expect(isResumeEligible(15, 20)).toBe(false) // duration < 30s
+    expect(isResumeEligible(50, 0)).toBe(false)
+    expect(isResumeEligible(50, -10)).toBe(false)
+    expect(isResumeEligible(50, Infinity)).toBe(false)
+    expect(isResumeEligible(NaN, 100)).toBe(false)
+    expect(isResumeEligible(50, NaN)).toBe(false)
+    expect(isResumeEligible(110, 100)).toBe(false)
+    expect(isResumeEligible(-5, 100)).toBe(false)
+  })
+})
+
+describe('stream display labels', () => {
+  it('formats single stream labels from quality or kind', () => {
+    expect(formatStreamLabel({ quality: '1080p', kind: 'hls', url: 'test' })).toBe('1080p')
+    expect(formatStreamLabel({ quality: '  720p  ', kind: 'mp4', url: 'test' })).toBe('720p')
+    expect(formatStreamLabel({ kind: 'hls', url: 'test' })).toBe('HLS')
+    expect(formatStreamLabel({ kind: 'mp4', url: 'test' })).toBe('MP4')
+  })
+
+  it('generates distinct stream labels and preserves order', () => {
+    const streams: StreamSource[] = [
+      { quality: '1080p', kind: 'hls', url: '1' },
+      { quality: '720p', kind: 'hls', url: '2' },
+      { quality: '480p', kind: 'mp4', url: '3' }
+    ]
+    expect(getStreamLabels(streams)).toEqual(['1080p', '720p', '480p'])
+  })
+
+  it('disambiguates duplicate qualities using stream kind', () => {
+    const streams: StreamSource[] = [
+      { quality: '1080p', kind: 'hls', url: '1' },
+      { quality: '1080p', kind: 'mp4', url: '2' },
+      { quality: '720p', kind: 'hls', url: '3' }
+    ]
+    expect(getStreamLabels(streams)).toEqual(['1080p (HLS)', '1080p (MP4)', '720p'])
+  })
+
+  it('disambiguates identical quality and kind streams with an occurrence number', () => {
+    const streams: StreamSource[] = [
+      { quality: '1080p', kind: 'hls', url: '1' },
+      { quality: '1080p', kind: 'hls', url: '2' },
+      { kind: 'hls', url: '3' },
+      { kind: 'hls', url: '4' }
+    ]
+    expect(getStreamLabels(streams)).toEqual([
+      '1080p (HLS) (1)',
+      '1080p (HLS) (2)',
+      'HLS (1)',
+      'HLS (2)'
+    ])
+  })
+
+  it('handles empty stream list', () => {
+    expect(getStreamLabels([])).toEqual([])
+  })
+
+  it('falls back in provider order without retrying duplicate streams', () => {
+    const streams: StreamSource[] = [
+      { quality: '1080p', kind: 'hls', url: 'https://video.test/master.m3u8', headers: { Referer: 'https://site.test' } },
+      { quality: '1080p duplicate', kind: 'hls', url: 'https://video.test/master.m3u8', headers: { Referer: 'https://site.test' } },
+      { quality: '720p', kind: 'mp4', url: 'https://video.test/video.mp4' }
+    ]
+    const attempted = new Set([getStreamIdentity(streams[0]!)])
+
+    expect(findFallbackStreamIndex(streams, attempted)).toBe(2)
+    attempted.add(getStreamIdentity(streams[2]!))
+    expect(findFallbackStreamIndex(streams, attempted)).toBe(-1)
+  })
+
+  it('treats different custom headers as distinct streams', () => {
+    const streams: StreamSource[] = [
+      { kind: 'mp4', url: 'https://video.test/video.mp4', headers: { Authorization: 'one' } },
+      { kind: 'mp4', url: 'https://video.test/video.mp4', headers: { Authorization: 'two' } }
+    ]
+    const attempted = new Set([getStreamIdentity(streams[0]!)])
+    expect(findFallbackStreamIndex(streams, attempted)).toBe(1)
+  })
+})
+
+describe('calculateSwipeUnlock', () => {
+  it('unlocks on horizontal swipe reaching threshold upon release', () => {
+    const res = calculateSwipeUnlock(SWIPE_UNLOCK_THRESHOLD, 0, true)
+    expect(res.unlocked).toBe(true)
+    expect(res.progress).toBe(1)
+    expect(res.failed).toBe(false)
+    expect(res.cancelled).toBe(false)
+  })
+
+  it('tracks progress during drag when horizontal motion dominates', () => {
+    const res = calculateSwipeUnlock(36, 5, false)
+    expect(res.progress).toBe(0.5)
+    expect(res.unlocked).toBe(false)
+    expect(res.failed).toBe(false)
+    expect(res.cancelled).toBe(false)
+  })
+
+  it('fails when released before reaching threshold', () => {
+    const res = calculateSwipeUnlock(50, 0, true)
+    expect(res.unlocked).toBe(false)
+    expect(res.failed).toBe(true)
+    expect(res.cancelled).toBe(true)
+  })
+
+  it('fails and cancels when vertical motion dominates', () => {
+    const duringDrag = calculateSwipeUnlock(50, 60, false)
+    expect(duringDrag.progress).toBe(0)
+    expect(duringDrag.unlocked).toBe(false)
+    expect(duringDrag.failed).toBe(true)
+    expect(duringDrag.cancelled).toBe(true)
+
+    const onRelease = calculateSwipeUnlock(80, 80, true)
+    expect(onRelease.unlocked).toBe(false)
+    expect(onRelease.failed).toBe(true)
+    expect(onRelease.cancelled).toBe(true)
+  })
+
+  it('fails on backward swipe (negative X)', () => {
+    const res = calculateSwipeUnlock(-30, 0, false)
+    expect(res.progress).toBe(0)
+    expect(res.unlocked).toBe(false)
+    expect(res.failed).toBe(true)
+    expect(res.cancelled).toBe(true)
+  })
+
+  it('supports custom threshold', () => {
+    const res = calculateSwipeUnlock(50, 0, true, 50)
+    expect(res.unlocked).toBe(true)
+    expect(res.progress).toBe(1)
+  })
+
+  it('fails on non-finite inputs', () => {
+    const res = calculateSwipeUnlock(NaN, 0)
+    expect(res.unlocked).toBe(false)
+    expect(res.failed).toBe(true)
+    expect(res.cancelled).toBe(true)
+  })
+})

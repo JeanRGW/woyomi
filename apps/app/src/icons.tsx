@@ -76,6 +76,113 @@ const paths = {
     </>
   ),
   play: <path d="M6 4.5v15l13-7.5-13-7.5z" />,
+  pause: (
+    <>
+      <path d="M8 5v14" />
+      <path d="M16 5v14" />
+    </>
+  ),
+  replay: (
+    <>
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="m10 8 6 4-6 4z" />
+    </>
+  ),
+  rewind: (
+    <>
+      <path d="m11 7-5 5 5 5" />
+      <path d="M6 12h7a5 5 0 1 1 0 10" />
+    </>
+  ),
+  forward: (
+    <>
+      <path d="m13 7 5 5-5 5" />
+      <path d="M18 12h-7a5 5 0 1 0 0 10" />
+    </>
+  ),
+  skipBack: (
+    <>
+      <path d="M5 5v14" />
+      <path d="m19 6-10 6 10 6z" />
+    </>
+  ),
+  skipForward: (
+    <>
+      <path d="M19 5v14" />
+      <path d="m5 6 10 6-10 6z" />
+    </>
+  ),
+  volume: (
+    <>
+      <path d="M11 5 6 9H2v6h4l5 4z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </>
+  ),
+  volumeOff: (
+    <>
+      <path d="M11 5 6 9H2v6h4l5 4z" />
+      <path d="m16 9 6 6" />
+      <path d="m22 9-6 6" />
+    </>
+  ),
+  captions: (
+    <>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M9 10a2 2 0 1 0 0 4" />
+      <path d="M17 10a2 2 0 1 0 0 4" />
+    </>
+  ),
+  audio: (
+    <>
+      <path d="M9 18V5l10-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="16" cy="16" r="3" />
+    </>
+  ),
+  pip: (
+    <>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <rect x="12" y="11" width="7" height="6" rx="1" />
+    </>
+  ),
+  maximize: (
+    <>
+      <path d="M8 3H3v5" />
+      <path d="m3 3 6 6" />
+      <path d="M16 3h5v5" />
+      <path d="m21 3-6 6" />
+      <path d="M8 21H3v-5" />
+      <path d="m3 21 6-6" />
+      <path d="M16 21h5v-5" />
+      <path d="m21 21-6-6" />
+    </>
+  ),
+  minimize: (
+    <>
+      <path d="M9 3v6H3" />
+      <path d="m3 3 6 6" />
+      <path d="M15 3v6h6" />
+      <path d="m21 3-6 6" />
+      <path d="M9 21v-6H3" />
+      <path d="m3 21 6-6" />
+      <path d="M15 21v-6h6" />
+      <path d="m21 21-6-6" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5" y="10" width="14" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x="5" y="10" width="14" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 7.5-2" />
+    </>
+  ),
   download: (
     <>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

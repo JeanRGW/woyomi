@@ -173,6 +173,85 @@ body {
   animation: rise-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Cross-WebView media ranges. The input itself owns the played/buffered
+   gradient; browser tracks stay transparent so all platforms render it. */
+.player-timeline,
+.player-volume {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 28px;
+  border-radius: 999px;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 4px;
+  cursor: pointer;
+  touch-action: none;
+}
+.player-volume {
+  background-image: linear-gradient(rgb(255 255 255 / 32%), rgb(255 255 255 / 32%));
+}
+.player-timeline:disabled,
+.player-volume:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.player-timeline::-webkit-slider-runnable-track,
+.player-volume::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: transparent;
+}
+.player-timeline::-webkit-slider-thumb,
+.player-volume::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5.5px;
+  border: 0;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 7px rgb(0 0 0 / 55%);
+}
+.player-timeline::-moz-range-track,
+.player-volume::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+.player-timeline::-moz-range-progress,
+.player-volume::-moz-range-progress {
+  background: transparent;
+}
+.player-timeline::-moz-range-thumb,
+.player-volume::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 7px rgb(0 0 0 / 55%);
+}
+video::cue {
+  color: white;
+  background: rgb(0 0 0 / 72%);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+}
+
+@media (pointer: coarse) {
+  .player-control-button {
+    min-width: 48px;
+    min-height: 48px;
+  }
+  .player-timeline,
+  .player-volume {
+    height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rise-in {
     animation: none;

@@ -1,123 +1,215 @@
 import { useEffect, useRef, useState } from 'react'
-import Hls from 'hls.js'
 import type { Episode, Media, StreamSource } from '@woyomi/core'
-import { playableStreamUrl, type AppRuntime } from '../runtime'
+import { navigate } from '../App'
 import { recordOpen } from '../hooks'
 import { useT } from '../i18n'
-import { BackButton, Banner, Page } from '../components'
+import { type AppRuntime } from '../runtime'
+import { findAdjacent } from './reader/reader-nav'
+import { loadPlayerPrefs } from './player/player-prefs'
+import { enterAndroidPlayerMode, exitAndroidPlayerMode } from './player/player-platform'
+import { VideoPlayer } from './player/VideoPlayer'
+
+interface PlayerSessionData {
+  media: Media
+  episode: Episode
+  episodes: Episode[]
+  streams: StreamSource[]
+  localUrl?: string
+  downloadedEpisodeIds: Set<string>
+}
 
 export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
+  useEffect(() => {
+    let cancelled = false
+    void loadPlayerPrefs(runtime.engine.prefs)
+      .then((prefs) => {
+        if (!cancelled) enterAndroidPlayerMode(prefs.autoRotate)
+      })
+      .catch((prefsError: unknown) => {
+        console.warn('failed to load player preferences:', prefsError)
+        if (!cancelled) enterAndroidPlayerMode(true)
+      })
+    return () => {
+      cancelled = true
+      exitAndroidPlayerMode()
+    }
+  }, [runtime.engine.prefs])
+
+  return <PlayerSession key={episodeId} runtime={runtime} sourceId={sourceId} mediaId={mediaId} episodeId={episodeId} />
+}
+
+function PlayerSession({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const t = useT()
-  const [streams, setStreams] = useState<StreamSource[]>([])
-  const [stream, setStream] = useState<StreamSource | null>(null)
-  const [localUrl, setLocalUrl] = useState<string | null>(null)
+  const translateRef = useRef(t)
+  translateRef.current = t
+  const [session, setSession] = useState<PlayerSessionData>()
   const [error, setError] = useState('')
-  const [media, setMedia] = useState<Media | null>(null)
-  const [episode, setEpisode] = useState<Episode | null>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const [loadRevision, setLoadRevision] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+
+    void (async () => {
+      setSession(undefined)
+      setError('')
+
       try {
-        const local = await runtime.downloads?.localVideo(episodeId)
+        const fullMediaId = `${sourceId}/${mediaId}`
+        const local = await runtime.downloads?.localVideo(episodeId).catch(() => undefined)
         if (cancelled) return
+
         if (local) {
-          setMedia(local.record.media)
-          setEpisode(local.record.episode)
-          setLocalUrl(local.url)
-          await recordOpen(runtime, local.record.media, local.record.episode)
+          const cached = await runtime.mediaCache.get(fullMediaId).catch(() => undefined)
+          const completeDownloads = await runtime.downloads?.listCompleteForMedia(local.record.media.id).catch(() => [])
+          const videoDownloads = (completeDownloads ?? []).filter((record) => record.kind === 'mp4')
+          const episodes = mergeOfflineEpisodes(cached?.episodes ?? [local.record.episode], videoDownloads.map((record) => record.episode))
+          const downloadedEpisodeIds = new Set(
+            videoDownloads.map((record) => record.episode.id)
+          )
+          if (cancelled) return
+          const media = cached?.media ?? local.record.media
+          setSession({
+            media,
+            episode: local.record.episode,
+            episodes,
+            streams: [],
+            localUrl: local.url,
+            downloadedEpisodeIds
+          })
+          try {
+            await recordOpen(runtime, media, local.record.episode)
+          } catch (recordError) {
+            console.warn('failed to record video open:', recordError)
+          }
           return
         }
 
-        const m = await runtime.engine.getMedia(sourceId, mediaId)
-        const eps = await runtime.engine.getEpisodes(sourceId, mediaId)
-        const ep = eps.find((e) => e.id === episodeId)
-        if (cancelled) return
-        if (!ep) {
-          setError(t('player.episodeNotFound'))
+        const [mediaResult, episodesResult] = await Promise.allSettled([
+            runtime.engine.getMedia(sourceId, mediaId),
+            runtime.engine.getEpisodes(sourceId, mediaId)
+        ])
+        const cached = mediaResult.status === 'rejected' || episodesResult.status === 'rejected'
+          ? await runtime.mediaCache.get(fullMediaId).catch(() => undefined)
+          : undefined
+
+        const media: Media | undefined = mediaResult.status === 'fulfilled' ? mediaResult.value : cached?.media
+        let episodes: Episode[] = episodesResult.status === 'fulfilled' ? episodesResult.value : cached?.episodes ?? []
+        const episode: Episode | undefined = episodes.find((item) => item.id === episodeId)
+
+        if (mediaResult.status === 'fulfilled' && episodesResult.status === 'fulfilled') {
+          void runtime.cacheMediaPage(mediaResult.value, episodesResult.value)
+        }
+
+        if (!media || !episode) {
+          if (mediaResult.status === 'rejected') console.warn('failed to load video metadata:', mediaResult.reason)
+          if (episodesResult.status === 'rejected') console.warn('failed to load video episodes:', episodesResult.reason)
+          const metadataFailed = mediaResult.status === 'rejected' || episodesResult.status === 'rejected'
+          setError(translateRef.current(metadataFailed ? 'player.metadataLoadFailed' : 'player.episodeNotFound'))
           return
         }
-        setMedia(m)
-        setEpisode(ep)
-        await recordOpen(runtime, m, ep)
-        const ss = await runtime.engine.getStreams(sourceId, m, ep)
+
+        if (episodes.length === 0) episodes = [episode]
+
+        const completeDownloads = (await runtime.downloads?.listCompleteForMedia(media.id).catch(() => [])) ?? []
+        const downloadedEpisodeIds = new Set(
+          completeDownloads.filter((record) => record.kind === 'mp4').map((record) => record.episode.id)
+        )
+
+        let streams: StreamSource[] = []
+        try {
+          streams = await runtime.engine.getStreams(sourceId, media, episode)
+        } catch (streamError) {
+          console.warn('failed to load video streams:', streamError)
+        }
         if (cancelled) return
-        setStreams(ss)
-        setStream(ss[0] ?? null)
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+
+        setSession({
+          media,
+          episode,
+          episodes,
+          streams,
+          downloadedEpisodeIds
+        })
+
+        try {
+          await recordOpen(runtime, media, episode)
+        } catch (recordError) {
+          console.warn('failed to record video open:', recordError)
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError))
       }
     })()
+
     return () => {
       cancelled = true
     }
-  }, [runtime, sourceId, mediaId, episodeId, t])
+  }, [runtime, sourceId, mediaId, episodeId, loadRevision])
 
-  useEffect(() => {
-    const videoElement = videoRef.current
-    if (!videoElement || (!stream && !localUrl)) return
-    const video = videoElement
-    let hls: Hls | undefined
-    let cancelled = false
-    async function load(): Promise<void> {
-      if (localUrl) {
-        video.src = localUrl
-        return
-      }
-      if (!stream) return
-      const url = await playableStreamUrl(stream)
-      if (cancelled) return
-      if (stream.kind === 'hls' && Hls.isSupported()) {
-        hls = new Hls()
-        hls.loadSource(url)
-        hls.attachMedia(video)
-      } else {
-        video.src = url
-      }
-    }
-    void load().catch((e: unknown) => {
-      if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-    })
-    return () => {
-      cancelled = true
-      hls?.destroy()
-      video.src = ''
-    }
-  }, [stream, localUrl])
+  const goBack = () => (window.history.length > 1 ? window.history.back() : navigate({ name: 'library' }))
 
-  if (error)
+  if (error) {
     return (
-      <Page>
-        <BackButton />
-        <Banner tone="error">{error}</Banner>
-      </Page>
+      <div className="fixed inset-0 z-50 grid bg-black px-5 text-fg">
+        <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
+          <p className="text-sm font-semibold text-danger">{error}</p>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setLoadRevision((revision) => revision + 1)} className="min-h-11 rounded-xl bg-accent px-5 text-sm font-bold text-white">
+              {t('player.retry')}
+            </button>
+            <button type="button" onClick={goBack} className="min-h-11 rounded-xl bg-surface-2 px-5 text-sm font-bold hover:bg-surface-3">
+              {t('common.back')}
+            </button>
+          </div>
+        </div>
+      </div>
     )
+  }
+
+  if (!session) {
+    return (
+      <div className="fixed inset-0 z-50 grid bg-black text-fg" role="status">
+        <div className="m-auto flex flex-col items-center gap-3">
+          <span className="size-8 animate-spin rounded-full border-2 border-white/20 border-t-accent" />
+          <p className="text-sm font-semibold text-muted">{t('player.loading')}</p>
+        </div>
+      </div>
+    )
+  }
+
+  const previousEpisode = findAdjacent(session.episodes, episodeId, -1)
+  const nextEpisode = findAdjacent(session.episodes, episodeId, 1)
+  const openEpisode = (next: Episode) => navigate({ name: 'player', sourceId, mediaId, episodeId: next.id }, { replace: true })
+  const reloadStreams = async () => {
+    const streams = await runtime.engine.getStreams(sourceId, session.media, session.episode)
+    setSession((current) => current ? { ...current, streams } : current)
+  }
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-5 md:py-8">
-      <BackButton />
-      <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{media?.title ?? t('player.playing')}</h1>
-      {episode && <div className="mt-1 text-sm font-medium text-muted">{t('common.episode', { number: episode.number })}</div>}
-      <video ref={videoRef} controls autoPlay className="mt-4 w-full rounded-2xl bg-black shadow-2xl shadow-black/50 ring-1 ring-white/10" />
-      {!localUrl &&
-        (streams.length > 0 ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {streams.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => setStream(s)}
-                className={`min-h-9 cursor-pointer rounded-full px-4 text-[13px] font-bold transition-all active:scale-[0.96] ${
-                  stream?.url === s.url ? 'bg-accent text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
-                }`}
-              >
-                {s.quality ?? s.kind}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-4 text-sm text-muted">{t('player.noStreams')}</p>
-        ))}
-    </div>
+    <VideoPlayer
+      runtime={runtime}
+      media={session.media}
+      episode={session.episode}
+      episodes={session.episodes}
+      streams={session.streams}
+      localUrl={session.localUrl}
+      downloadedEpisodeIds={session.downloadedEpisodeIds}
+      previousEpisode={previousEpisode}
+      nextEpisode={nextEpisode}
+      onOpenEpisode={openEpisode}
+      onReloadStreams={reloadStreams}
+      onBack={goBack}
+    />
   )
+}
+
+function mergeOfflineEpisodes(cached: Episode[], downloaded: Episode[]): Episode[] {
+  const merged = [...cached]
+  for (const episode of downloaded) {
+    if (!merged.some((item) => item.id === episode.id)) merged.push(episode)
+  }
+  if (cached.length <= 1) {
+    merged.sort((left, right) => (left.season ?? 0) - (right.season ?? 0) || left.number - right.number)
+  }
+  return merged
 }

@@ -1,11 +1,16 @@
 package app.rgw.woyomi
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 
@@ -15,11 +20,105 @@ class MainActivity : TauriActivity() {
   private var safeLeft = 0f
   private var safeRight = 0f
 
+  private var isPlayerActive = false
+  private var savedOrientation: Int? = null
+  private var savedStatusBarsVisible: Boolean? = null
+  private var savedNavigationBarsVisible: Boolean? = null
+  private var savedSystemBarsBehavior: Int? = null
+  private var isPlaying = false
+
   private inner class SafeAreaBridge {
     @JavascriptInterface
     @Synchronized
     fun get(): String =
       "{\"top\":$safeTop,\"bottom\":$safeBottom,\"left\":$safeLeft,\"right\":$safeRight}"
+  }
+
+  private inner class PlayerBridge {
+    @JavascriptInterface
+    fun enter(autoRotate: Boolean) {
+      runOnUiThread {
+        if (!isPlayerActive) {
+          isPlayerActive = true
+          savedOrientation = requestedOrientation
+          val rootInsets = ViewCompat.getRootWindowInsets(window.decorView)
+          savedStatusBarsVisible = rootInsets?.isVisible(WindowInsetsCompat.Type.statusBars()) ?: true
+          savedNavigationBarsVisible =
+            rootInsets?.isVisible(WindowInsetsCompat.Type.navigationBars()) ?: true
+        }
+
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        if (savedSystemBarsBehavior == null) {
+          savedSystemBarsBehavior = insetsController.systemBarsBehavior
+        }
+        insetsController.systemBarsBehavior =
+          WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        insetsController.hide(WindowInsetsCompat.Type.systemBars())
+
+        val config = resources.configuration
+        val isTelevision =
+          (config.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+        val isPhone = config.smallestScreenWidthDp < 600 && !isTelevision
+
+        if (isPhone) {
+          if (autoRotate) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+          } else {
+            savedOrientation?.let { requestedOrientation = it }
+          }
+        }
+
+        if (isPlaying) {
+          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+      }
+    }
+
+    @JavascriptInterface
+    fun exit() {
+      runOnUiThread {
+        isPlaying = false
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (!isPlayerActive) return@runOnUiThread
+        isPlayerActive = false
+
+        savedOrientation?.let { requestedOrientation = it }
+        savedOrientation = null
+
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        savedSystemBarsBehavior?.let { insetsController.systemBarsBehavior = it }
+        if (savedStatusBarsVisible != false) {
+          insetsController.show(WindowInsetsCompat.Type.statusBars())
+        } else {
+          insetsController.hide(WindowInsetsCompat.Type.statusBars())
+        }
+        if (savedNavigationBarsVisible != false) {
+          insetsController.show(WindowInsetsCompat.Type.navigationBars())
+        } else {
+          insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+        }
+        savedStatusBarsVisible = null
+        savedNavigationBarsVisible = null
+        savedSystemBarsBehavior = null
+      }
+    }
+
+    @JavascriptInterface
+    fun setPlaying(playing: Boolean) {
+      runOnUiThread {
+        if (!isPlayerActive) {
+          isPlaying = false
+          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+          return@runOnUiThread
+        }
+        isPlaying = playing
+        if (playing) {
+          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+      }
+    }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,6 +146,7 @@ class MainActivity : TauriActivity() {
     }
 
     webView.addJavascriptInterface(SafeAreaBridge(), "woyomiInsets")
+    webView.addJavascriptInterface(PlayerBridge(), "woyomiPlayer")
 
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       WebViewCompat.addDocumentStartJavaScript(webView, safeAreaScript(), setOf("*"))
