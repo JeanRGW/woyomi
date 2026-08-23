@@ -60,7 +60,7 @@ export function Chip({ active, className = '', ...props }: ButtonHTMLAttributes<
   return (
     <button
       className={`inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold capitalize transition-all active:scale-[0.96] ${
-        active ? 'bg-accent text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
+        active ? 'bg-accent-deep text-white shadow-sm shadow-accent/25' : 'bg-surface-2 text-muted hover:bg-surface-3 hover:text-fg'
       } ${className}`}
       {...props}
     />

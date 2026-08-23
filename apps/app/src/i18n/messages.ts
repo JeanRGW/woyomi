@@ -215,7 +215,23 @@ const en = {
     'reader.autoAdvance': 'Auto-advance to next chapter',
     'reader.pageFailed': 'Page failed to load',
     'reader.tapToRetry': 'Tap to retry',
-    'reader.pageAlt': 'page {number}'
+    'reader.pageAlt': 'page {number}',
+    'reader.titleOverride': 'Custom layout for this title',
+    'reader.fontFamily': 'Font',
+    'reader.fontSerif': 'Serif',
+    'reader.fontSans': 'Sans-serif',
+    'reader.fontSize': 'Font size',
+    'reader.fontSizeValue': '{value}px',
+    'reader.lineHeight': 'Line height',
+    'reader.lineHeightValue': '{value}',
+    'reader.columnWidth': 'Column width',
+    'reader.columnWidthValue': '{value}ch',
+    'reader.paragraphSpacing': 'Paragraph spacing',
+    'reader.paragraphSpacingValue': '{value}em',
+    'reader.stripWidthValue': '{value}%',
+    'reader.keepAwake': 'Keep screen awake',
+    'reader.seek': 'Seek through chapter',
+    'reader.progressPercent': '{value}% read'
 } as const
 
 export const messages = { en, pt } as const

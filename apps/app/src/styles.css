@@ -136,14 +136,44 @@ body {
 }
 
 .novel-body {
-  max-width: 68ch;
+  font-family: var(--novel-font-family, Georgia, Cambria, 'Times New Roman', Times, serif);
+  font-size: var(--novel-font-size, 17px);
+  line-height: var(--novel-line-height, 1.8);
+  max-width: var(--novel-column-width, 68ch);
+  color: var(--novel-fg, oklch(0.88 0.01 320));
   margin: 0 auto;
-  line-height: 1.8;
-  font-size: 16.5px;
-  color: oklch(0.88 0.01 320);
+  overflow-wrap: anywhere;
 }
 .novel-body p {
-  margin: 0 0 1.1em;
+  margin: 0 0 var(--novel-paragraph-spacing, 1.1em);
+}
+.novel-body h1,
+.novel-body h2,
+.novel-body h3,
+.novel-body h4 {
+  line-height: 1.3;
+  margin: 1.6em 0 0.65em;
+}
+.novel-body a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.novel-body blockquote {
+  border-left: 3px solid color-mix(in oklch, currentColor 30%, transparent);
+  margin: 1.4em 0;
+  padding-left: 1em;
+  opacity: 0.82;
+}
+.novel-body ul,
+.novel-body ol {
+  margin: 0 0 var(--novel-paragraph-spacing, 1.1em);
+  padding-left: 1.5em;
+}
+.novel-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
 }
 .novel-body img {
   max-width: 100%;
