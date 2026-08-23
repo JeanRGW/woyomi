@@ -991,7 +991,9 @@ fn serve_streams(
         let client = client.clone();
         let downloads_root = downloads_root.clone();
         let _ = std::thread::spawn(move || {
-            let result = if request.url().starts_with("/offline/") {
+            let result = if matches!(request.method(), tiny_http::Method::Options) {
+                respond_stream_preflight(request)
+            } else if request.url().starts_with("/offline/") {
                 serve_offline(&downloads_root, request)
             } else if request.url().starts_with("/covers/") {
                 serve_cover(&downloads_root, request)
@@ -1106,7 +1108,12 @@ fn proxy_one(
         .map_err(|e| format!("upstream request failed: {e}"))?;
     let status = resp.status();
 
-    let mut response = tiny_http::Response::empty(status.as_u16());
+    let mut response = tiny_http::Response::empty(status.as_u16())
+        .with_header(response_header("Access-Control-Allow-Origin", "*")?)
+        .with_header(response_header(
+            "Access-Control-Expose-Headers",
+            "Content-Length, Content-Range, Accept-Ranges",
+        )?);
     // Forward length/range headers so the media element can seek.
     for name in [
         "content-type",
@@ -1238,6 +1245,20 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
 fn response_header(name: &str, value: &str) -> Result<tiny_http::Header, String> {
     tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes())
         .map_err(|_| format!("invalid {name} header"))
+}
+
+fn respond_stream_preflight(request: tiny_http::Request) -> Result<(), String> {
+    request
+        .respond(
+            tiny_http::Response::empty(204)
+                .with_header(response_header("Access-Control-Allow-Origin", "*")?)
+                .with_header(response_header(
+                    "Access-Control-Allow-Methods",
+                    "GET, HEAD, OPTIONS",
+                )?)
+                .with_header(response_header("Access-Control-Allow-Headers", "Range")?),
+        )
+        .map_err(|e| format!("respond: {e}"))
 }
 
 fn respond_empty(request: tiny_http::Request, status: u16) -> Result<(), String> {
