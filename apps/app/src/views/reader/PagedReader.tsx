@@ -1,21 +1,28 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMediaQuery } from '../../hooks'
 import { useT } from '../../i18n'
 import {
+  classifySwipe,
   clampZoom,
+  decayVelocity,
   focalZoomAdjust,
+  MIN_FLING_VELOCITY,
   nextZoom,
   pageImageClass,
+  panStep,
+  swipePageOffset,
   tapZoneAt,
   toggleZoom,
   viewForPage,
   viewImages,
   type PageView,
+  type PageSeekRequest,
   type ReaderFit,
   type ReadingDirection
 } from './reader-nav'
 import { useTouchGestures } from './pinch'
 import { ReaderImage } from './ImagePage'
+import { ignoreReaderKey } from './reader-keyboard'
 
 const DOUBLE_TAP_MS = 200
 
@@ -33,6 +40,8 @@ export function PagedReader({
   doublePage,
   tapNav,
   initialPage,
+  seek,
+  keyboardEnabled = true,
   onViewChange,
   onToggleChrome,
   onZoomChange
@@ -43,6 +52,8 @@ export function PagedReader({
   doublePage: boolean
   tapNav: boolean
   initialPage: number
+  seek?: PageSeekRequest
+  keyboardEnabled?: boolean
   onViewChange: (view: PageView) => void
   onToggleChrome: () => void
   onZoomChange: (z: ZoomClusterState) => void
@@ -60,18 +71,34 @@ export function PagedReader({
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const gestureStartZoom = useRef(1)
+  const flingRaf = useRef<number | null>(null)
+  const pendingZoomScroll = useRef<{ left: number; top: number } | null>(null)
 
   const view = viewForPage(page, total, double)
+  const widthFit = !double && fit === 'width' && zoom === 1
 
   useEffect(() => {
     onViewChange(view)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.start, view.count, double, total])
 
-  useEffect(() => () => window.clearTimeout(tapTimer.current), [])
+  const cancelFling = () => {
+    if (flingRaf.current !== null) {
+      cancelAnimationFrame(flingRaf.current)
+      flingRaf.current = null
+    }
+  }
 
-  // reset scroll when the view changes
   useEffect(() => {
+    return () => {
+      window.clearTimeout(tapTimer.current)
+      cancelFling()
+    }
+  }, [])
+
+  // reset scroll and cancel fling when the view changes
+  useEffect(() => {
+    cancelFling()
     const el = containerRef.current
     if (el) {
       el.scrollTop = 0
@@ -82,24 +109,35 @@ export function PagedReader({
   // RTL never reverses page order: direction only affects tap zones and the
   // double-page arrangement, so stepping is a plain file-index walk.
   const turnBy = (positions: number) => {
+    cancelFling()
     setPage((prev) => Math.min(total - 1, Math.max(0, prev + positions)))
   }
 
   const applyZoom = (next: number, focus?: { x: number; y: number }) => {
+    cancelFling()
     const el = containerRef.current
     const prev = zoomRef.current
     const clamped = clampZoom(next)
-    setZoom(clamped)
-    zoomRef.current = clamped // keep the ref in lock-step so incremental ratios are correct
     if (el && focus && prev > 0 && clamped !== prev) {
       const factor = clamped / prev
-      // apply after layout so scroll ranges reflect the new size
-      requestAnimationFrame(() => {
-        el.scrollLeft = focalZoomAdjust(el.scrollLeft, focus.x, factor)
-        el.scrollTop = focalZoomAdjust(el.scrollTop, focus.y, factor)
-      })
+      const current = pendingZoomScroll.current
+      pendingZoomScroll.current = {
+        left: focalZoomAdjust(current?.left ?? el.scrollLeft, focus.x, factor),
+        top: focalZoomAdjust(current?.top ?? el.scrollTop, focus.y, factor)
+      }
     }
+    zoomRef.current = clamped // keep the ref in lock-step so incremental ratios are correct
+    setZoom(clamped)
   }
+
+  useLayoutEffect(() => {
+    const pending = pendingZoomScroll.current
+    const el = containerRef.current
+    if (!pending || !el) return
+    pendingZoomScroll.current = null
+    el.scrollLeft = pending.left
+    el.scrollTop = pending.top
+  }, [zoom])
 
   /** button/wheel zoom anchors the viewport center */
   const applyZoomCentered = (next: number) => {
@@ -117,39 +155,112 @@ export function PagedReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom])
 
+  const startFling = (initialVx: number, initialVy: number) => {
+    cancelFling()
+    const el = containerRef.current
+    if (!el || (el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)) return
+
+    let vx = initialVx
+    let vy = initialVy
+    if (Math.hypot(vx, vy) < MIN_FLING_VELOCITY) return
+
+    let lastTime = performance.now()
+
+    const frame = (now: number) => {
+      const elapsed = Math.max(0, now - lastTime)
+      lastTime = now
+
+      if (elapsed > 0) {
+        vx = decayVelocity(vx, elapsed)
+        vy = decayVelocity(vy, elapsed)
+
+        if (Math.hypot(vx, vy) < MIN_FLING_VELOCITY) {
+          flingRaf.current = null
+          return
+        }
+
+        const maxScrollX = Math.max(0, el.scrollWidth - el.clientWidth)
+        const maxScrollY = Math.max(0, el.scrollHeight - el.clientHeight)
+        const movementTime = Math.min(elapsed, 64)
+
+        const stepX = panStep(el.scrollLeft, -vx * movementTime, maxScrollX)
+        el.scrollLeft = stepX.nextScroll
+        if (stepX.stopped) vx = 0
+
+        const stepY = panStep(el.scrollTop, -vy * movementTime, maxScrollY)
+        el.scrollTop = stepY.nextScroll
+        if (stepY.stopped) vy = 0
+
+        if (vx === 0 && vy === 0) {
+          flingRaf.current = null
+          return
+        }
+      }
+
+      flingRaf.current = requestAnimationFrame(frame)
+    }
+
+    flingRaf.current = requestAnimationFrame(frame)
+  }
+
   const { moved } = useTouchGestures<HTMLDivElement>(containerRef, {
+    onPointerDown: () => {
+      cancelFling()
+    },
+    onPinchStart: () => {
+      cancelFling()
+      gestureStartZoom.current = zoomRef.current
+    },
     onPinch: (factor, focus) => applyZoom(gestureStartZoom.current * factor, focus),
     onPan: (dx, dy) => {
       const el = containerRef.current
-      if (el && zoomRef.current > 1) {
+      if (el && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)) {
         el.scrollLeft -= dx
         el.scrollTop -= dy
       }
+    },
+    onRelease: (info) => {
+      if (!info.moved) return
+      if (zoomRef.current <= 1) {
+        const swipe = classifySwipe(info.dx, info.dy, info.vx)
+        if (swipe) {
+          const offset = swipePageOffset(swipe, direction, step)
+          turnBy(offset)
+          return
+        }
+      }
+      startFling(info.vx, info.vy)
     }
   })
 
-  // capture zoom at pinch start (on the second pointer going down)
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    let touches = 0
-    const onDown = (e: PointerEvent) => {
-      if (e.pointerType !== 'touch') return
-      touches += 1
-      if (touches === 2) gestureStartZoom.current = zoomRef.current
+    if (!seek) return
+    cancelFling()
+    setPage(Math.min(total - 1, Math.max(0, Math.floor(seek.page))))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seek?.requestId, total])
+
+  useEffect(() => {
+    if (!keyboardEnabled) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (ignoreReaderKey(event)) return
+      let nextPage: number | undefined
+      const nextOffset = step
+      const previousOffset = -step
+      if (event.key === 'ArrowLeft') nextPage = page + (direction === 'rtl' ? nextOffset : previousOffset)
+      else if (event.key === 'ArrowRight') nextPage = page + (direction === 'rtl' ? previousOffset : nextOffset)
+      else if (event.key === 'PageDown' || (event.key === ' ' && !event.shiftKey)) nextPage = page + nextOffset
+      else if (event.key === 'PageUp' || (event.key === ' ' && event.shiftKey)) nextPage = page + previousOffset
+      else if (event.key === 'Home') nextPage = 0
+      else if (event.key === 'End') nextPage = total - 1
+      if (nextPage === undefined) return
+      event.preventDefault()
+      turnBy(nextPage - page)
     }
-    const onUp = (e: PointerEvent) => {
-      if (e.pointerType === 'touch') touches = Math.max(0, touches - 1)
-    }
-    el.addEventListener('pointerdown', onDown)
-    el.addEventListener('pointerup', onUp)
-    el.addEventListener('pointercancel', onUp)
-    return () => {
-      el.removeEventListener('pointerdown', onDown)
-      el.removeEventListener('pointerup', onUp)
-      el.removeEventListener('pointercancel', onUp)
-    }
-  }, [])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyboardEnabled, page, direction, step, total])
 
   // Ctrl+wheel zoom (non-passive; paged only)
   useEffect(() => {
@@ -158,27 +269,14 @@ export function PagedReader({
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey || e.deltaY === 0) return
       e.preventDefault()
+      cancelFling()
       const rect = el.getBoundingClientRect()
       applyZoom(nextZoom(zoomRef.current, e.deltaY < 0 ? 1 : -1), { x: e.clientX - rect.left, y: e.clientY - rect.top })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  /** First tap schedules the action; a second tap (any zone) cancels it and
-   * zooms on the tap point instead of navigating/toggling. */
-  const scheduleTap = (action: () => void, focus?: { x: number; y: number }) => {
-    if (tapTimer.current !== undefined) {
-      window.clearTimeout(tapTimer.current)
-      tapTimer.current = undefined
-      applyZoom(toggleZoom(zoomRef.current), focus)
-      return
-    }
-    tapTimer.current = window.setTimeout(() => {
-      tapTimer.current = undefined
-      action()
-    }, DOUBLE_TAP_MS)
-  }
 
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (moved.current) return
@@ -187,15 +285,42 @@ export function PagedReader({
 
     if (tapNav) {
       const zone = tapZoneAt(focus.x, rect.width)
-      if (zone === 'center') {
-        scheduleTap(() => onToggleChrome(), focus)
+      if (zone === 'left' || zone === 'right') {
+        // Immediate side tap navigation without double-tap delay
+        if (tapTimer.current !== undefined) {
+          window.clearTimeout(tapTimer.current)
+          tapTimer.current = undefined
+        }
+        const goNext = direction === 'rtl' ? zone === 'left' : zone === 'right'
+        turnBy(goNext ? step : -step)
         return
       }
-      const goNext = direction === 'rtl' ? zone === 'left' : zone === 'right'
-      scheduleTap(() => turnBy(goNext ? step : -step), focus)
+
+      // Center zone retains delayed double-tap zoom
+      if (tapTimer.current !== undefined) {
+        window.clearTimeout(tapTimer.current)
+        tapTimer.current = undefined
+        applyZoom(toggleZoom(zoomRef.current), focus)
+        return
+      }
+      tapTimer.current = window.setTimeout(() => {
+        tapTimer.current = undefined
+        onToggleChrome()
+      }, DOUBLE_TAP_MS)
       return
     }
-    scheduleTap(() => onToggleChrome(), focus)
+
+    // When tapNav is false, double-tap zoom works over the full viewport
+    if (tapTimer.current !== undefined) {
+      window.clearTimeout(tapTimer.current)
+      tapTimer.current = undefined
+      applyZoom(toggleZoom(zoomRef.current), focus)
+      return
+    }
+    tapTimer.current = window.setTimeout(() => {
+      tapTimer.current = undefined
+      onToggleChrome()
+    }, DOUBLE_TAP_MS)
   }
 
   const onPointerMoveCapture = () => {
@@ -209,14 +334,15 @@ export function PagedReader({
   return (
     <div
       ref={containerRef}
+      tabIndex={0}
       className="flex h-full min-h-0 flex-col overflow-auto"
       style={{ touchAction: 'none' }}
       onClick={onClick}
       onPointerMove={onPointerMoveCapture}
     >
       <div
-        className={`m-auto flex items-center justify-center ${double ? 'w-full flex-row' : ''}`}
-        style={{ width: `${zoom * 100}vw`, height: `${zoom * 100}vh` }}
+        className={`flex shrink-0 justify-center ${widthFit ? 'items-start' : 'items-center'} ${zoom > 1 ? '' : widthFit ? 'mx-auto' : 'm-auto'} ${double ? 'w-full flex-row' : ''}`}
+        style={{ width: `${zoom * 100}%`, height: widthFit ? 'auto' : `${zoom * 100}%`, minHeight: widthFit ? '100%' : undefined }}
       >
         {viewImages(view, direction).map((filePage, slotIndex) => {
           const image = (

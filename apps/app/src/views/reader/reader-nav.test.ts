@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { Episode } from '@woyomi/core'
 import {
+  classifySwipe,
   clampZoom,
+  decayVelocity,
   findAdjacent,
   focalZoomAdjust,
   nextZoom,
   pageImageClass,
+  panStep,
   prefixReady,
   restorePage,
+  swipePageOffset,
   tapZoneAt,
   toggleZoom,
   viewForPage,
@@ -129,7 +133,7 @@ describe('pageImageClass', () => {
     expect(pageImageClass('width')).toContain('max-w-[min(100%,52rem)]')
     expect(pageImageClass('width')).toContain('w-full')
     expect(pageImageClass('page')).toContain('max-w-[min(100%,52rem)]')
-    expect(pageImageClass('page')).toContain('max-h-[100vh]')
+    expect(pageImageClass('page')).toContain('max-h-full')
     expect(pageImageClass('page')).toContain('object-contain')
   })
 })
@@ -161,5 +165,103 @@ describe('zoom helpers', () => {
     const next = focalZoomAdjust(100, 200, 1.5)
     expect((next + 200) / 1.5).toBeCloseTo(300)
     expect(focalZoomAdjust(0, 0, 2)).toBe(0)
+  })
+})
+
+describe('classifySwipe', () => {
+  it('classifies fast horizontal left/right gestures', () => {
+    expect(classifySwipe(-50, 5, -0.5)).toBe('left')
+    expect(classifySwipe(60, -10, 0.5)).toBe('right')
+  })
+
+  it('rejects gestures below minDistance', () => {
+    expect(classifySwipe(-30, 0, -1)).toBeNull()
+    expect(classifySwipe(39, 0, 1)).toBeNull()
+  })
+
+  it('rejects gestures dominated by vertical motion', () => {
+    // dx = -50, dy = 45 (ratio < 1.25)
+    expect(classifySwipe(-50, 45, -0.5)).toBeNull()
+    // dx = -50, dy = 10 (ratio 5.0 >= 1.25) -> accepted
+    expect(classifySwipe(-50, 10, -0.5)).toBe('left')
+  })
+
+  it('rejects slow small gestures below minVelocity', () => {
+    expect(classifySwipe(50, 0, 0.1)).toBeNull()
+  })
+
+  it('accepts slow gestures if displacement is large enough', () => {
+    expect(classifySwipe(100, 0, 0.1)).toBe('right')
+    expect(classifySwipe(-120, 10, -0.1)).toBe('left')
+  })
+
+  it('supports custom thresholds', () => {
+    expect(classifySwipe(30, 0, 0.5, { minDistance: 20 })).toBe('right')
+    expect(classifySwipe(50, 35, 0.5, { dominanceRatio: 1.1 })).toBe('right')
+  })
+})
+
+describe('swipePageOffset', () => {
+  it('in LTR: left swipe advances (+step), right swipe goes back (-step)', () => {
+    expect(swipePageOffset('left', 'ltr', 1)).toBe(1)
+    expect(swipePageOffset('right', 'ltr', 1)).toBe(-1)
+    expect(swipePageOffset('left', 'ltr', 2)).toBe(2)
+    expect(swipePageOffset('right', 'ltr', 2)).toBe(-2)
+  })
+
+  it('in RTL: right swipe advances (+step), left swipe goes back (-step)', () => {
+    expect(swipePageOffset('right', 'rtl', 1)).toBe(1)
+    expect(swipePageOffset('left', 'rtl', 1)).toBe(-1)
+    expect(swipePageOffset('right', 'rtl', 2)).toBe(2)
+    expect(swipePageOffset('left', 'rtl', 2)).toBe(-2)
+  })
+
+  it('defaults to step = 1', () => {
+    expect(swipePageOffset('left', 'ltr')).toBe(1)
+    expect(swipePageOffset('right', 'rtl')).toBe(1)
+  })
+})
+
+describe('decayVelocity', () => {
+  it('decays velocity exponentially over elapsed time', () => {
+    const v0 = 1.0
+    const v1 = decayVelocity(v0, 100)
+    expect(v1).toBeLessThan(v0)
+    expect(v1).toBeCloseTo(v0 * Math.exp(-0.0035 * 100))
+
+    const v2 = decayVelocity(v0, 500)
+    expect(v2).toBeLessThan(v1)
+  })
+
+  it('returns unchanged velocity when dt <= 0', () => {
+    expect(decayVelocity(1.5, 0)).toBe(1.5)
+    expect(decayVelocity(1.5, -10)).toBe(1.5)
+  })
+
+  it('accepts custom decay constant', () => {
+    const v = decayVelocity(2.0, 50, 0.01)
+    expect(v).toBeCloseTo(2.0 * Math.exp(-0.01 * 50))
+  })
+})
+
+describe('panStep', () => {
+  it('updates scroll position when within boundaries', () => {
+    const res = panStep(100, 20, 500)
+    expect(res).toEqual({ nextScroll: 120, stopped: false })
+  })
+
+  it('clamps to 0 and stops when scrolling past start', () => {
+    const res = panStep(10, -30, 500)
+    expect(res).toEqual({ nextScroll: 0, stopped: true })
+  })
+
+  it('clamps to maxScroll and stops when scrolling past end', () => {
+    const res = panStep(480, 50, 500)
+    expect(res).toEqual({ nextScroll: 500, stopped: true })
+  })
+
+  it('stops immediately if maxScroll is 0 or negative', () => {
+    expect(panStep(0, 10, 0)).toEqual({ nextScroll: 0, stopped: true })
+    expect(panStep(0, -10, -50)).toEqual({ nextScroll: 0, stopped: true })
   })
 })

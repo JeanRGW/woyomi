@@ -30,7 +30,8 @@ export function ReaderImage({
     return (
       <button
         type="button"
-        onClick={() => {
+        onClick={(event) => {
+          event.stopPropagation()
           setAttempt((n) => n + 1)
           setFailed(false)
         }}

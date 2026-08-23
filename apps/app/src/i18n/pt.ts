@@ -263,5 +263,21 @@ export const pt: Messages = {
   'reader.autoAdvance': 'Avançar automaticamente para o próximo capítulo',
   'reader.pageFailed': 'Falha ao carregar a página',
   'reader.tapToRetry': 'Toque para tentar novamente',
-  'reader.pageAlt': 'página {number}'
+  'reader.pageAlt': 'página {number}',
+  'reader.titleOverride': 'Layout personalizado para esta obra',
+  'reader.fontFamily': 'Fonte',
+  'reader.fontSerif': 'Serifada',
+  'reader.fontSans': 'Sem serifa',
+  'reader.fontSize': 'Tamanho da fonte',
+  'reader.fontSizeValue': '{value}px',
+  'reader.lineHeight': 'Altura da linha',
+  'reader.lineHeightValue': '{value}',
+  'reader.columnWidth': 'Largura da coluna',
+  'reader.columnWidthValue': '{value}ch',
+  'reader.paragraphSpacing': 'Espaçamento de parágrafo',
+  'reader.paragraphSpacingValue': '{value}em',
+  'reader.stripWidthValue': '{value}%',
+  'reader.keepAwake': 'Manter tela ativa',
+  'reader.seek': 'Navegar pelo capítulo',
+  'reader.progressPercent': '{value}% lido'
 }

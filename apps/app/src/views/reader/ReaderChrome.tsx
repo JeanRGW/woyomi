@@ -28,6 +28,9 @@ export function ReaderChrome({
   onOpenSettings,
   progress,
   pageLabel,
+  seekValue,
+  seekMax,
+  onSeek,
   zoom,
   onZoomIn,
   onZoomOut,
@@ -48,6 +51,9 @@ export function ReaderChrome({
   /** 0..1 */
   progress: number
   pageLabel: string
+  seekValue?: number
+  seekMax?: number
+  onSeek?: (value: number) => void
   /** paged-only zoom cluster; omit for text */
   zoom?: number
   onZoomIn?: () => void
@@ -63,13 +69,14 @@ export function ReaderChrome({
     <>
       {/* top bar */}
       <div
-        className={`pointer-events-none absolute inset-x-0 top-0 z-20 transition-opacity ${visible ? 'opacity-100' : 'opacity-0'}`}
+        aria-hidden={!visible}
+        className={`pointer-events-none absolute inset-x-0 top-0 z-20 transition-[opacity,transform] ${visible ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'}`}
       >
         <div className="h-0.5 bg-surface-2">
           <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.min(1, Math.max(0, progress)) * 100}%` }} />
         </div>
-        <div className="pointer-events-auto flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur">
-          <ChromeBtn label={t('common.back')} onClick={() => history.back()}>
+        <div className={`flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur ${visible ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+          <ChromeBtn label={t('common.back')} onClick={() => history.back()} disabled={!visible}>
             <Icon name="back" size={19} />
           </ChromeBtn>
           <div className="min-w-0 flex-1 px-1">
@@ -80,15 +87,16 @@ export function ReaderChrome({
             <button
               type="button"
               onClick={onModeToggle}
+              disabled={!visible}
               className="min-h-9 cursor-pointer rounded-xl px-3 text-xs font-bold text-fg transition-colors hover:bg-surface-2"
             >
               {mode === 'continuous' ? t('reader.strip') : t('reader.pages')}
             </button>
           )}
-          <ChromeBtn label={t('reader.chapters')} onClick={onOpenChapters}>
+          <ChromeBtn label={t('reader.chapters')} onClick={onOpenChapters} disabled={!visible}>
             <Icon name="list" size={19} />
           </ChromeBtn>
-          <ChromeBtn label={t('reader.readerSettings')} onClick={onOpenSettings}>
+          <ChromeBtn label={t('reader.readerSettings')} onClick={onOpenSettings} disabled={!visible}>
             <Icon name="sliders" size={19} />
           </ChromeBtn>
         </div>
@@ -96,35 +104,54 @@ export function ReaderChrome({
 
       {/* bottom bar */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-20 transition-opacity ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        aria-hidden={!visible}
+        className={`absolute inset-x-0 bottom-0 z-20 transition-[opacity,transform] ${visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0'}`}
       >
-        <div className="flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur" style={{ paddingBottom: 'var(--sab)' }}>
-          <ChromeBtn label={t('reader.prevChapter')} onClick={onPrevChapter} disabled={!hasPrev}>
-            <Icon name="chevronLeft" size={19} />
-          </ChromeBtn>
-          <span className="min-w-16 text-center text-xs font-bold tabular-nums text-muted">{pageLabel}</span>
-          {zoom !== undefined && onZoomIn && onZoomOut && onZoomReset && (
-            <span className="mx-auto flex items-center gap-0.5">
-              <ChromeBtn label={t('reader.zoomOut')} onClick={onZoomOut}>
-                <span className="text-base font-extrabold leading-none">−</span>
-              </ChromeBtn>
-              <button
-                type="button"
-                onClick={onZoomReset}
-                title={t('reader.resetZoom')}
-                className="min-h-9 min-w-12 cursor-pointer rounded-xl px-1 text-xs font-bold tabular-nums text-fg transition-colors hover:bg-surface-2"
-              >
-                {Math.round(zoom * 100)}%
-              </button>
-              <ChromeBtn label={t('reader.zoomIn')} onClick={onZoomIn}>
-                <Icon name="plus" size={16} />
-              </ChromeBtn>
-            </span>
+        <div className="bg-ink/85 px-2 pt-1.5 backdrop-blur" style={{ paddingBottom: 'var(--sab)' }}>
+          {seekMax !== undefined && seekMax > 0 && seekValue !== undefined && onSeek && (
+            <input
+              type="range"
+              min={0}
+              max={seekMax}
+              step={1}
+              value={Math.min(seekMax, Math.max(0, seekValue))}
+              disabled={!visible}
+              aria-label={t('reader.seek')}
+              aria-valuetext={pageLabel}
+              onChange={(event) => onSeek(Number(event.target.value))}
+              className="block h-5 w-full cursor-pointer accent-accent disabled:cursor-default"
+            />
           )}
-          {zoom === undefined && <span className="mx-auto" />}
-          <ChromeBtn label={t('reader.nextChapter')} onClick={onNextChapter} disabled={!hasNext}>
-            <Icon name="chevronRight" size={19} />
-          </ChromeBtn>
+          <div className="flex items-center gap-1">
+            <ChromeBtn label={t('reader.prevChapter')} onClick={onPrevChapter} disabled={!visible || !hasPrev}>
+              <Icon name="chevronLeft" size={19} />
+            </ChromeBtn>
+            <span className="min-w-16 text-center text-xs font-bold tabular-nums text-muted">{pageLabel}</span>
+            {zoom !== undefined && onZoomIn && onZoomOut && onZoomReset && (
+              <span className="mx-auto flex items-center gap-0.5">
+                <ChromeBtn label={t('reader.zoomOut')} onClick={onZoomOut} disabled={!visible}>
+                  <span className="text-base font-extrabold leading-none">−</span>
+                </ChromeBtn>
+                <button
+                  type="button"
+                  onClick={onZoomReset}
+                  disabled={!visible}
+                  aria-label={t('reader.resetZoom')}
+                  title={t('reader.resetZoom')}
+                  className="min-h-9 min-w-12 cursor-pointer rounded-xl px-1 text-xs font-bold tabular-nums text-fg transition-colors hover:bg-surface-2 disabled:cursor-default"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <ChromeBtn label={t('reader.zoomIn')} onClick={onZoomIn} disabled={!visible}>
+                  <Icon name="plus" size={16} />
+                </ChromeBtn>
+              </span>
+            )}
+            {zoom === undefined && <span className="mx-auto" />}
+            <ChromeBtn label={t('reader.nextChapter')} onClick={onNextChapter} disabled={!visible || !hasNext}>
+              <Icon name="chevronRight" size={19} />
+            </ChromeBtn>
+          </div>
         </div>
       </div>
     </>

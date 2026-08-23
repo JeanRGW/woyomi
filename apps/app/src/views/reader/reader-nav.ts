@@ -15,6 +15,11 @@ export interface PageView {
   readingEnd: number
 }
 
+export interface PageSeekRequest {
+  page: number
+  requestId: number
+}
+
 /** Direction-free; the caller maps left/right to prev/next. */
 export type TapZone = 'left' | 'center' | 'right'
 export function tapZoneAt(x: number, width: number): TapZone {
@@ -70,7 +75,7 @@ export function prefixReady(ready: ReadonlySet<number>, upTo: number): boolean {
 /** Per-image classes; the 26rem spread cap lives on the double-page container. */
 export function pageImageClass(fit: ReaderFit): string {
   return fit === 'page'
-    ? 'block m-auto h-auto w-auto max-w-[min(100%,52rem)] max-h-[100vh] object-contain'
+    ? 'block m-auto h-auto w-auto max-w-[min(100%,52rem)] max-h-full object-contain'
     : 'block m-auto w-full max-w-[min(100%,52rem)]'
 }
 
@@ -94,4 +99,89 @@ export function toggleZoom(z: number): number {
 /** Keep `focus` (container coords) stable while scaling: scroll' = (scroll + focus) * factor - focus. */
 export function focalZoomAdjust(scroll: number, focus: number, factor: number): number {
   return (scroll + focus) * factor - focus
+}
+
+export type SwipeDirection = 'left' | 'right'
+
+export interface SwipeThresholds {
+  minDistance?: number
+  minVelocity?: number
+  dominanceRatio?: number
+}
+
+export const DEFAULT_SWIPE_THRESHOLDS: Required<SwipeThresholds> = {
+  minDistance: 40,
+  minVelocity: 0.25,
+  dominanceRatio: 1.25
+}
+
+/**
+ * Classifies a drag gesture into a horizontal swipe direction ('left' | 'right')
+ * based on distance, velocity, and axis-dominance thresholds. Returns null if
+ * the gesture does not meet swipe criteria (e.g. too vertical, too short, or too slow).
+ */
+export function classifySwipe(
+  deltaX: number,
+  deltaY: number,
+  velocityX: number,
+  thresholds: SwipeThresholds = {}
+): SwipeDirection | null {
+  const minDistance = thresholds.minDistance ?? DEFAULT_SWIPE_THRESHOLDS.minDistance
+  const minVelocity = thresholds.minVelocity ?? DEFAULT_SWIPE_THRESHOLDS.minVelocity
+  const dominanceRatio = thresholds.dominanceRatio ?? DEFAULT_SWIPE_THRESHOLDS.dominanceRatio
+
+  const absX = Math.abs(deltaX)
+  const absY = Math.abs(deltaY)
+
+  if (absX < minDistance) return null
+  if (absX < absY * dominanceRatio) return null
+
+  // Accept a release flick or a deliberate long drag.
+  if (Math.abs(velocityX) < minVelocity && absX < minDistance * 2) return null
+
+  return deltaX > 0 ? 'right' : 'left'
+}
+
+/**
+ * Maps a horizontal swipe direction to a signed page delta (+step or -step).
+ * In LTR: swipe left advances (+step), swipe right goes back (-step).
+ * In RTL: swipe right advances (+step), swipe left goes back (-step).
+ */
+export function swipePageOffset(
+  swipe: SwipeDirection,
+  direction: ReadingDirection,
+  step: number = 1
+): number {
+  const isNext = direction === 'rtl' ? swipe === 'right' : swipe === 'left'
+  return isNext ? step : -step
+}
+
+export const DEFAULT_FLING_DECAY = 0.0035 // 1/ms
+export const MIN_FLING_VELOCITY = 0.05 // px/ms
+
+/**
+ * Applies time-based exponential decay to velocity: v(t) = v * exp(-decay * dt).
+ */
+export function decayVelocity(
+  velocity: number,
+  dtMs: number,
+  decayConstant: number = DEFAULT_FLING_DECAY
+): number {
+  if (dtMs <= 0) return velocity
+  return velocity * Math.exp(-decayConstant * dtMs)
+}
+
+/**
+ * Computes the next scroll position and whether movement on this axis has stopped.
+ */
+export function panStep(
+  currentScroll: number,
+  delta: number,
+  maxScroll: number
+): { nextScroll: number; stopped: boolean } {
+  if (maxScroll <= 0) return { nextScroll: 0, stopped: true }
+  const unclamped = currentScroll + delta
+  if (unclamped <= 0) return { nextScroll: 0, stopped: true }
+  if (unclamped >= maxScroll) return { nextScroll: maxScroll, stopped: true }
+  return { nextScroll: unclamped, stopped: false }
 }

@@ -5,12 +5,23 @@ import { navigate } from '../App'
 import { recordOpen } from '../hooks'
 import { useT } from '../i18n'
 import { BackButton, Banner, Page } from '../components'
-import { findAdjacent, restorePage, viewLabel, type PageView } from './reader/reader-nav'
-import { BACKGROUNDS, getReadPosition, saveReadPosition, useReaderPrefs } from './reader/reader-prefs'
+import { findAdjacent, restorePage, viewLabel, type PageSeekRequest, type PageView } from './reader/reader-nav'
+import {
+  BACKGROUNDS,
+  NOVEL_FOREGROUNDS,
+  getReadPosition,
+  getTextPosition,
+  restoreTextProgress,
+  saveReadPosition,
+  saveTextPosition,
+  useReaderPrefs
+} from './reader/reader-prefs'
 import { PagedReader, type ZoomClusterState } from './reader/PagedReader'
 import { ContinuousReader } from './reader/ContinuousReader'
 import { ReaderChrome } from './reader/ReaderChrome'
 import { ChapterDrawer, ReaderSettingsSheet } from './reader/ReaderSettings'
+import { NovelReader, type NovelSeekRequest } from './reader/NovelReader'
+import { useWakeLock } from './reader/useWakeLock'
 
 export function ReaderView({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   return <ReaderSession key={episodeId} runtime={runtime} sourceId={sourceId} mediaId={mediaId} episodeId={episodeId} />
@@ -24,18 +35,46 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [seen, setSeen] = useState<Set<string>>(new Set())
 
-  const { prefs, loaded: prefsLoaded, set: setPref } = useReaderPrefs(runtime.engine.prefs)
+  const { prefs, loaded: prefsLoaded, set: setPref, hasTitleOverride, toggleTitleOverride } = useReaderPrefs(
+    runtime.engine.prefs,
+    `${sourceId}/${mediaId}`
+  )
   const [initialPage, setInitialPage] = useState<number | null>(null)
+  const [initialTextProgress, setInitialTextProgress] = useState<number | null>(null)
+  const [textProgress, setTextProgress] = useState(0)
   const [view, setView] = useState<PageView>({ start: 0, count: 1, readingStart: 0, readingEnd: 0 })
   const [chromeVisible, setChromeVisible] = useState(false)
   const [sheet, setSheet] = useState<'none' | 'settings' | 'chapters'>('none')
   const [zoomCtl, setZoomCtl] = useState<ZoomClusterState | null>(null)
+  const [pageSeek, setPageSeek] = useState<PageSeekRequest>()
+  const [textSeek, setTextSeek] = useState<NovelSeekRequest>()
 
   const autoAdvanceFired = useRef(false)
   const lastSavedRef = useRef<number | null>(null)
+  const lastSavedTextRef = useRef<number | null>(null)
+  const seekRequestId = useRef(0)
   // live mirror of `view` so unmount-time effects read the current page
   const viewRef = useRef(view)
   viewRef.current = view
+  const textProgressRef = useRef(textProgress)
+  textProgressRef.current = textProgress
+  const hasReportedView = useRef(false)
+  const readerContentRef = useRef<HTMLDivElement>(null)
+  const handleViewChange = useCallback((nextView: PageView) => {
+    hasReportedView.current = true
+    setView(nextView)
+  }, [])
+  const closeSheet = useCallback(() => setSheet('none'), [])
+
+  const total = content?.type === 'pages' ? content.images.length : 0
+  const totalRef = useRef(total)
+  totalRef.current = total
+
+  useWakeLock(prefsLoaded && prefs.keepAwake)
+
+  useEffect(() => {
+    readerContentRef.current?.toggleAttribute('inert', sheet !== 'none')
+  }, [sheet])
 
   useEffect(() => {
     let cancelled = false
@@ -102,19 +141,34 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
     }
   }, [runtime, sourceId, mediaId, episodeId])
 
-  const total = content?.type === 'pages' ? content.images.length : 0
-
   // restore position once prefs + pages are known
   useEffect(() => {
     if (!prefsLoaded || total === 0 || initialPage !== null) return
     let cancelled = false
     getReadPosition(runtime.engine.prefs, episodeId).then((saved) => {
-      if (!cancelled) setInitialPage(restorePage(saved, total))
+      if (cancelled) return
+      const restoredPage = restorePage(saved, total)
+      setView({ start: restoredPage, count: 1, readingStart: restoredPage, readingEnd: restoredPage })
+      setInitialPage(restoredPage)
     })
     return () => {
       cancelled = true
     }
   }, [runtime, prefsLoaded, total, initialPage, sourceId, mediaId, episodeId])
+
+  useEffect(() => {
+    if (!prefsLoaded || content?.type !== 'text' || initialTextProgress !== null) return
+    let cancelled = false
+    getTextPosition(runtime.engine.prefs, episodeId).then((saved) => {
+      if (cancelled) return
+      const restored = restoreTextProgress(saved)
+      setInitialTextProgress(restored)
+      setTextProgress(restored)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [runtime, prefsLoaded, content, initialTextProgress, episodeId])
 
   const prevEpisode = findAdjacent(episodes, episodeId, -1)
   const nextEpisode = findAdjacent(episodes, episodeId, 1)
@@ -133,13 +187,14 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   // `lastSavedRef` re-saves `total` if the reader comes back to the end.
   useEffect(() => {
     if (total === 0 || initialPage === null) return
-    if (finished && lastSavedRef.current !== total) {
+    if (!finished) return
+    if (lastSavedRef.current !== total) {
       lastSavedRef.current = total
       saveReadPosition(runtime.engine.prefs, episodeId, total)
-      if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
-        autoAdvanceFired.current = true
-        jumpTo(nextEpisode)
-      }
+    }
+    if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
+      autoAdvanceFired.current = true
+      jumpTo(nextEpisode)
     }
   }, [finished, total, initialPage, runtime, episodeId, prefs.autoNext, nextEpisode, jumpTo])
 
@@ -157,11 +212,58 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   useEffect(() => {
     return () => {
       const lastView = viewRef.current
-      if (lastSavedRef.current === null && lastView.readingStart > 0) {
-        saveReadPosition(runtime.engine.prefs, episodeId, lastView.readingStart)
+      const finalTotal = totalRef.current
+      if (finalTotal === 0) return
+      const position = lastView.readingEnd === finalTotal - 1 ? finalTotal : lastView.readingStart
+      if (lastSavedRef.current !== position) saveReadPosition(runtime.engine.prefs, episodeId, position)
+    }
+  }, [runtime, episodeId])
+
+  const textFinished = content?.type === 'text' && !!content.html.trim() && textProgress >= 0.99
+
+  useEffect(() => {
+    if (content?.type !== 'text' || initialTextProgress === null || !textFinished) return
+    if (lastSavedTextRef.current !== 1) {
+      lastSavedTextRef.current = 1
+      saveTextPosition(runtime.engine.prefs, episodeId, 1)
+    }
+    if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
+      autoAdvanceFired.current = true
+      jumpTo(nextEpisode)
+    }
+  }, [content, initialTextProgress, textFinished, runtime, episodeId, prefs.autoNext, nextEpisode, jumpTo])
+
+  useEffect(() => {
+    if (content?.type !== 'text' || initialTextProgress === null || textFinished) return
+    const timeout = window.setTimeout(() => {
+      lastSavedTextRef.current = textProgress
+      saveTextPosition(runtime.engine.prefs, episodeId, textProgress)
+    }, 400)
+    return () => window.clearTimeout(timeout)
+  }, [content, initialTextProgress, textFinished, textProgress, runtime, episodeId])
+
+  useEffect(() => {
+    return () => {
+      const progress = textProgressRef.current
+      const position = progress >= 0.99 ? 1 : progress
+      if (position > 0 && lastSavedTextRef.current !== position) saveTextPosition(runtime.engine.prefs, episodeId, position)
+    }
+  }, [runtime, episodeId])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (sheet !== 'none') {
+        event.preventDefault()
+        setSheet('none')
+      } else if (chromeVisible) {
+        event.preventDefault()
+        setChromeVisible(false)
       }
     }
-  }, [runtime, episodeId, viewRef])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [sheet, chromeVisible])
 
   if (error)
     return (
@@ -171,7 +273,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
       </Page>
     )
 
-  if (!content || (content.type === 'pages' && initialPage === null)) {
+  if (
+    !content ||
+    (content.type === 'pages' && content.images.length > 0 && initialPage === null) ||
+    (content.type === 'text' && initialTextProgress === null)
+  ) {
     return (
       <div className="grid h-full place-items-center">
         <p className="text-sm text-muted">{t('common.loadingChapter')}</p>
@@ -192,43 +298,69 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   // strip mode is always vertical; pages mode is rtl/ltr (stored value may be
   // stale from the other mode, so coerce here too)
   const pagedDirection = prefs.direction === 'vertical' ? 'rtl' : prefs.direction
+  const keyboardEnabled = sheet === 'none'
+  const readerInitialPage = hasReportedView.current ? view.readingStart : (initialPage ?? 0)
+  const requestSeek = (value: number) => {
+    seekRequestId.current += 1
+    if (isImages) setPageSeek({ page: value, requestId: seekRequestId.current })
+    else setTextSeek({ progress: value / 1000, requestId: seekRequestId.current })
+  }
+  const progress = isImages && total > 0 ? (labelView.readingEnd + 1) / total : textProgress
+  const pageLabel = isImages && total > 0 ? viewLabel(labelView, total) : t('reader.progressPercent', { value: Math.round(textProgress * 100) })
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden" style={{ backgroundColor: BACKGROUNDS[prefs.background] }}>
-      {empty ? (
-        <div className="grid h-full place-items-center px-4">
-          <p className="mx-auto max-w-md py-10 text-center text-sm text-muted">{t('reader.emptyChapter')}</p>
-        </div>
-      ) : isImages ? (
-        prefs.mode === 'paged' ? (
-          <PagedReader
-            images={content.images}
-            direction={pagedDirection}
-            fit={prefs.fit}
-            doublePage={prefs.doublePage}
-            tapNav={prefs.tapNav}
-            initialPage={initialPage ?? 0}
-            onViewChange={setView}
-            onToggleChrome={() => setChromeVisible((v) => !v)}
-            onZoomChange={setZoomCtl}
-          />
+      <div ref={readerContentRef} className="h-full min-h-0" aria-hidden={sheet !== 'none'}>
+        {empty ? (
+          <div className="grid h-full place-items-center px-4">
+            <p
+              className="mx-auto max-w-md py-10 text-center text-sm"
+              style={{ color: prefs.background === 'sepia' ? NOVEL_FOREGROUNDS.sepia : 'var(--color-muted)' }}
+            >
+              {t('reader.emptyChapter')}
+            </p>
+          </div>
+        ) : isImages ? (
+          prefs.mode === 'paged' ? (
+            <PagedReader
+              images={content.images}
+              direction={pagedDirection}
+              fit={prefs.fit}
+              doublePage={prefs.doublePage}
+              tapNav={prefs.tapNav}
+              initialPage={readerInitialPage}
+              seek={pageSeek}
+              keyboardEnabled={keyboardEnabled}
+              onViewChange={handleViewChange}
+              onToggleChrome={() => setChromeVisible((v) => !v)}
+              onZoomChange={setZoomCtl}
+            />
+          ) : (
+            <ContinuousReader
+              images={content.images}
+              stripWidth={prefs.stripWidth}
+              initialPage={readerInitialPage}
+              seek={pageSeek}
+              keyboardEnabled={keyboardEnabled}
+              onViewChange={handleViewChange}
+              onToggleChrome={() => setChromeVisible((v) => !v)}
+            />
+          )
         ) : (
-          <ContinuousReader
-            images={content.images}
-            stripWidth={prefs.stripWidth}
-            initialPage={initialPage ?? 0}
-            onViewChange={setView}
-            onToggleChrome={() => setChromeVisible((v) => !v)}
+          <NovelReader
+            html={content.html}
+            initialProgress={initialTextProgress ?? 0}
+            prefs={prefs}
+            keyboardEnabled={keyboardEnabled}
+            seek={textSeek}
+            onProgressChange={setTextProgress}
+            onToggleChrome={() => setChromeVisible((visible) => !visible)}
           />
-        )
-      ) : (
-        <div className="h-full overflow-y-auto" onClick={() => setChromeVisible((v) => !v)}>
-          <article className="novel-body mx-auto max-w-3xl px-4 py-12" dangerouslySetInnerHTML={{ __html: content.html }} />
-        </div>
-      )}
+        )}
+      </div>
 
       <ReaderChrome
-        visible={chromeVisible}
+        visible={chromeVisible && sheet === 'none'}
         title={media?.title ?? ''}
         chapterLabel={chapterLabel}
         isImages={isImages && !empty}
@@ -242,8 +374,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
         }}
         onOpenChapters={() => setSheet('chapters')}
         onOpenSettings={() => setSheet('settings')}
-        progress={isImages && total > 0 ? (labelView.readingEnd + 1) / total : 0}
-        pageLabel={isImages && total > 0 ? viewLabel(labelView, total) : ''}
+        progress={progress}
+        pageLabel={pageLabel}
+        seekValue={isImages ? labelView.readingStart : Math.round(textProgress * 1000)}
+        seekMax={isImages ? total - 1 : 1000}
+        onSeek={empty ? undefined : requestSeek}
         zoom={isImages && !empty && prefs.mode === 'paged' ? (zoomCtl?.zoom ?? 1) : undefined}
         onZoomIn={zoomCtl?.zoomIn}
         onZoomOut={zoomCtl?.zoomOut}
@@ -254,17 +389,26 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
         hasNext={!!nextEpisode}
       />
 
-      {sheet === 'settings' && <ReaderSettingsSheet prefs={prefs} setPref={setPref} isImages={isImages} onClose={() => setSheet('none')} />}
+      {sheet === 'settings' && (
+        <ReaderSettingsSheet
+          prefs={prefs}
+          setPref={setPref}
+          isImages={isImages}
+          hasTitleOverride={hasTitleOverride}
+          onToggleTitleOverride={toggleTitleOverride}
+          onClose={closeSheet}
+        />
+      )}
       {sheet === 'chapters' && (
         <ChapterDrawer
           episodes={episodes}
           currentId={episodeId}
           seen={seen}
           onJump={(ep) => {
-            setSheet('none')
+            closeSheet()
             jumpTo(ep)
           }}
-          onClose={() => setSheet('none')}
+          onClose={closeSheet}
         />
       )}
     </div>
