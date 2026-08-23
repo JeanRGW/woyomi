@@ -25,6 +25,8 @@ import {
   getBufferedEnd,
   getStreamIdentity,
   getStreamLabels,
+  getVodDuration,
+  isLiveStream,
   isResumeEligible
 } from './player-state'
 import {
@@ -126,7 +128,8 @@ export function VideoPlayer({
   const rootRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls>()
-  const hlsLiveRef = useRef(false)
+  const hlsLiveRef = useRef<boolean>()
+  const streamKindRef = useRef<StreamSource['kind']>('mp4')
   const wakeLockRef = useRef<{ release(): Promise<void> }>()
   const hideTimerRef = useRef<number>()
   const feedbackTimerRef = useRef<number>()
@@ -259,16 +262,15 @@ export function VideoPlayer({
     const video = videoRef.current
     if (!video) return
 
-    const syncSeekable = () => {
+    const syncTimeline = () => {
       const ranges = toTimeRanges(video.seekable)
+      const live = isLiveStream(streamKindRef.current, video.duration, hlsLiveRef.current)
+      const timelineDuration = live ? 0 : getVodDuration(video.duration, ranges)
       setSeekStart(ranges[0]?.[0] ?? 0)
       setSeekEnd(ranges[ranges.length - 1]?.[1] ?? 0)
-    }
-    const syncDuration = () => {
-      const nextDuration = video.duration
-      setDuration(Number.isFinite(nextDuration) ? nextDuration : 0)
-      setIsLive(hlsLiveRef.current || !Number.isFinite(nextDuration) || nextDuration === Infinity)
-      syncSeekable()
+      setDuration(timelineDuration)
+      setIsLive(live)
+      return timelineDuration
     }
     const syncBuffered = () => setBufferedEnd(getBufferedEnd(toTimeRanges(video.buffered), video.currentTime))
     const syncNativeSubtitleTracks = () => {
@@ -321,7 +323,7 @@ export function VideoPlayer({
       clearPlaybackPosition(runtime.engine.prefs, episode.id)
     }
     const restorePlayback = () => {
-      syncDuration()
+      const timelineDuration = syncTimeline()
       syncNativeSubtitleTracks()
       const pending = pendingPlaybackRef.current
       let target = pending?.time
@@ -331,7 +333,7 @@ export function VideoPlayer({
       } else if (!initialRestoreDoneRef.current) {
         initialRestoreDoneRef.current = true
         const saved = initialPositionRef.current
-        if (saved !== undefined && isResumeEligible(saved, video.duration)) {
+        if (saved !== undefined && isResumeEligible(saved, timelineDuration)) {
           target = saved
           setResumeTime(formatTime(saved))
           window.clearTimeout(resumeTimerRef.current)
@@ -350,7 +352,7 @@ export function VideoPlayer({
     }
     const onTimeUpdate = () => {
       setCurrentTime(video.currentTime)
-      syncSeekable()
+      syncTimeline()
       syncBuffered()
       const now = Date.now()
       if (!video.ended && video.currentTime > 0 && now - lastPositionSaveRef.current >= 5000) {
@@ -370,7 +372,14 @@ export function VideoPlayer({
       setBuffering(false)
       savePosition()
     }
-    const onPlaying = () => setBuffering(false)
+    const onPlaying = () => {
+      setBuffering(false)
+      syncTimeline()
+    }
+    const onProgress = () => {
+      syncTimeline()
+      syncBuffered()
+    }
     const onWaiting = () => {
       if (!video.paused) setBuffering(true)
     }
@@ -389,9 +398,9 @@ export function VideoPlayer({
     const onLeavePictureInPicture = () => setInPictureInPicture(false)
 
     video.addEventListener('loadedmetadata', restorePlayback)
-    video.addEventListener('durationchange', syncDuration)
+    video.addEventListener('durationchange', syncTimeline)
     video.addEventListener('timeupdate', onTimeUpdate)
-    video.addEventListener('progress', syncBuffered)
+    video.addEventListener('progress', onProgress)
     video.addEventListener('play', onPlay)
     video.addEventListener('pause', onPause)
     video.addEventListener('playing', onPlaying)
@@ -418,9 +427,9 @@ export function VideoPlayer({
     return () => {
       savePosition()
       video.removeEventListener('loadedmetadata', restorePlayback)
-      video.removeEventListener('durationchange', syncDuration)
+      video.removeEventListener('durationchange', syncTimeline)
       video.removeEventListener('timeupdate', onTimeUpdate)
-      video.removeEventListener('progress', syncBuffered)
+      video.removeEventListener('progress', onProgress)
       video.removeEventListener('play', onPlay)
       video.removeEventListener('pause', onPause)
       video.removeEventListener('playing', onPlaying)
@@ -458,8 +467,10 @@ export function VideoPlayer({
     let mediaRetries = 0
 
     setBuffering(true)
+    streamKindRef.current = source.kind
     setFatalError(undefined)
     setEnded(false)
+    setDuration(0)
     setSeekStart(0)
     setSeekEnd(0)
     setIsLive(false)
@@ -471,7 +482,7 @@ export function VideoPlayer({
     setSelectedAudio('')
     preferredLevelAppliedRef.current = false
     subtitlePreferenceAppliedRef.current = false
-    hlsLiveRef.current = false
+    hlsLiveRef.current = undefined
 
     const fail = (message: string) => {
       if (cancelled) return
@@ -549,7 +560,9 @@ export function VideoPlayer({
         hls.on(Hls.Events.LEVELS_UPDATED, (_event, data) => updateLevels(data.levels))
         hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
           hlsLiveRef.current = data.details.live
-          setIsLive(data.details.live)
+          const live = isLiveStream('hls', video.duration, data.details.live)
+          setDuration(live ? 0 : getVodDuration(video.duration, toTimeRanges(video.seekable)))
+          setIsLive(live)
         })
         hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
           if (hls?.autoLevelEnabled) setSelectedLevel(-1)

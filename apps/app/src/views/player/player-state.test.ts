@@ -10,6 +10,7 @@ import {
   getBufferedFraction,
   getStreamIdentity,
   getStreamLabels,
+  getVodDuration,
   isLiveStream,
   isResumeEligible,
   normalizeTimeRanges,
@@ -57,12 +58,19 @@ describe('formatTime', () => {
 })
 
 describe('isLiveStream', () => {
-  it('identifies live streams from duration', () => {
-    expect(isLiveStream(Infinity)).toBe(true)
-    expect(isLiveStream(-Infinity)).toBe(true)
-    expect(isLiveStream(NaN)).toBe(true)
-    expect(isLiveStream(120)).toBe(false)
-    expect(isLiveStream(0)).toBe(false)
+  it('does not classify MP4 streams as live when WebKit reports an unknown duration', () => {
+    expect(isLiveStream('mp4', NaN)).toBe(false)
+    expect(isLiveStream('mp4', Infinity)).toBe(false)
+    expect(isLiveStream('mp4', 120)).toBe(false)
+  })
+
+  it('uses playlist metadata for HLS and infinity for native HLS fallback', () => {
+    expect(isLiveStream('hls', NaN)).toBe(false)
+    expect(isLiveStream('hls', Infinity)).toBe(true)
+    expect(isLiveStream('hls', -Infinity)).toBe(false)
+    expect(isLiveStream('hls', 120)).toBe(false)
+    expect(isLiveStream('hls', Infinity, false)).toBe(false)
+    expect(isLiveStream('hls', 120, true)).toBe(true)
   })
 })
 
@@ -98,6 +106,23 @@ describe('normalizeTimeRanges', () => {
       [40, Infinity]
     ])
     expect(ranges).toEqual([[0, 10]])
+  })
+})
+
+describe('getVodDuration', () => {
+  it('prefers a finite media duration', () => {
+    expect(getVodDuration(120, [[0, 100]])).toBe(120)
+  })
+
+  it('falls back to the seekable endpoint for WebKit unknown durations', () => {
+    expect(getVodDuration(NaN, [[0, 120]])).toBe(120)
+    expect(getVodDuration(Infinity, [[0, 120]])).toBe(120)
+    expect(getVodDuration(Infinity, [[0, 40], [60, 120]])).toBe(120)
+  })
+
+  it('returns zero until duration metadata is available', () => {
+    expect(getVodDuration(NaN, [])).toBe(0)
+    expect(getVodDuration(0, [])).toBe(0)
   })
 })
 

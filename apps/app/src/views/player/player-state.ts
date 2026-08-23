@@ -51,9 +51,9 @@ export function formatTime(seconds: number, guideOrForceHours?: number | boolean
   return `${minutes}:${sStr}`
 }
 
-/** Returns true if duration represents a live/infinite stream. */
-export function isLiveStream(duration: number): boolean {
-  return !Number.isFinite(duration)
+/** Detects live HLS without treating WebKit's unknown MP4 duration as live. */
+export function isLiveStream(kind: StreamSource['kind'], duration: number, playlistLive?: boolean): boolean {
+  return kind === 'hls' && (playlistLive ?? duration === Infinity)
 }
 
 function parseRange(range: TimeRange): [number, number] | null {
@@ -98,6 +98,13 @@ export function normalizeTimeRanges(ranges: readonly TimeRange[]): [number, numb
   }
 
   return merged
+}
+
+/** Resolves VOD duration when WebKit exposes only a finite seekable range. */
+export function getVodDuration(duration: number, seekable: readonly TimeRange[]): number {
+  if (Number.isFinite(duration) && duration > 0) return duration
+  const ranges = normalizeTimeRanges(seekable)
+  return ranges[ranges.length - 1]?.[1] ?? 0
 }
 
 /** Clamps seek target to valid time within duration and normalized seekable ranges. */
