@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchRepoIndex, isNewerVersion, type RepoPlugin } from '../provider'
 import type { AppRuntime } from '../runtime'
 import { createFetchProvider } from '../runtime'
 import type { MediaType } from '@woyomi/core'
 import { useT } from '../i18n'
+import { useToast } from '../toast'
 import { MEDIA_TYPE_KEY } from '../i18n/messages'
 import { Banner, Btn, EmptyState, Page, PageHeader, PluginRowSkeleton, SectionHeading, TextInput } from '../components'
 import { Icon } from '../icons'
@@ -11,12 +12,16 @@ import { Icon } from '../icons'
 // No bundled sources and no default repo: users add a plugin repo URL
 // themselves. Added repos are persisted via the runtime so they survive restarts.
 const DEFAULT_REPOS: string[] = []
+const MEDIA_TYPES: MediaType[] = ['manga', 'anime', 'novel', 'movie', 'series']
 
 export function StoreView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
+  const { showToast } = useToast()
   const [repos, setRepos] = useState<string[]>(DEFAULT_REPOS)
   const [repoInput, setRepoInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [langFilter, setLangFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState<MediaType | 'all'>('all')
   const [plugins, setPlugins] = useState<RepoPlugin[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -92,14 +97,65 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
 
   const mediaTypeLabel = (mt: string) => (mt in MEDIA_TYPE_KEY ? t(MEDIA_TYPE_KEY[mt as MediaType]) : mt)
 
+  const updatablePlugins = useMemo(() => {
+    return plugins.filter((p) => {
+      const installedVer = runtime.installed.get(p.id)
+      return !!installedVer && isNewerVersion(p.version, installedVer)
+    })
+  }, [plugins, runtime.installed])
+
+  async function updateAll() {
+    if (updatablePlugins.length === 0 || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      for (const p of updatablePlugins) {
+        await runtime.installExternal({ id: p.id, version: p.version, url: p.url, sha256: p.sha256, manifestUrl: p.manifestUrl })
+      }
+      showToast(t('store.updatedAllToast', { count: updatablePlugins.length }), { tone: 'ok', icon: 'check' })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // Distinct languages available across all fetched plugins, for the filter.
   const availableLangs = Array.from(new Set(plugins.flatMap((p) => p.lang))).sort()
-  const visible = langFilter === 'all' ? plugins : plugins.filter((p) => p.lang.includes(langFilter))
+
+  const visible = useMemo(() => {
+    return plugins.filter((p) => {
+      const matchesLang = langFilter === 'all' || p.lang.includes(langFilter)
+      const matchesType = typeFilter === 'all' || p.mediaTypes.includes(typeFilter)
+      const q = searchQuery.trim().toLowerCase()
+      const matchesSearch =
+        !q ||
+        p.name.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        (p.description ?? '').toLowerCase().includes(q)
+      return matchesLang && matchesType && matchesSearch
+    })
+  }, [plugins, langFilter, typeFilter, searchQuery])
 
   const langChip = (code: string, active: boolean, label: string) => (
     <button
+      key={code}
+      type="button"
       onClick={() => setLangFilter(active ? 'all' : code)}
       className={`inline-flex cursor-pointer rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+        active ? 'border-transparent bg-accent text-white' : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-fg'
+      }`}
+    >
+      {label}
+    </button>
+  )
+
+  const typeChip = (type: MediaType | 'all', active: boolean, label: string) => (
+    <button
+      key={type}
+      type="button"
+      onClick={() => setTypeFilter(type)}
+      className={`inline-flex cursor-pointer rounded-full border px-3 py-1 text-xs font-semibold capitalize transition-colors ${
         active ? 'border-transparent bg-accent text-white' : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-fg'
       }`}
     >
@@ -143,25 +199,71 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
           </span>
         ))}
       </div>
+
+      {plugins.length > 0 && (
+        <div className="relative mt-4">
+          <Icon name="search" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+          <TextInput
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t('store.searchPlaceholder')}
+            className="min-h-10 pl-10 pr-9"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label={t('common.close')}
+              className="absolute right-3 top-1/2 grid size-5 -translate-y-1/2 cursor-pointer place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-fg"
+            >
+              <Icon name="clear" size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
       {error && <Banner tone="error">{error}</Banner>}
       {message && <Banner tone="ok">{message}</Banner>}
 
-      <SectionHeading title={t('store.available')} />
-      {availableLangs.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-muted">{t('store.language')}</span>
-          {langChip('all', langFilter === 'all', t('store.allLanguages'))}
-          {availableLangs.map((l) => langChip(l, langFilter === l, l.toUpperCase()))}
+      <SectionHeading
+        title={t('store.available')}
+        action={
+          updatablePlugins.length > 0 ? (
+            <Btn variant="primary" className="min-h-8 px-3 text-xs" onClick={updateAll} disabled={busy}>
+              <Icon name="download" size={14} />
+              {t('store.updateAll', { count: updatablePlugins.length })}
+            </Btn>
+          ) : undefined
+        }
+      />
+
+      {plugins.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2.5">
+          {availableLangs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted">{t('store.language')}:</span>
+              {langChip('all', langFilter === 'all', t('store.allLanguages'))}
+              {availableLangs.map((l) => langChip(l, langFilter === l, l.toUpperCase()))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted">{t('library.sort')}:</span>
+            {typeChip('all', typeFilter === 'all', t('store.allTypes'))}
+            {MEDIA_TYPES.map((type) => typeChip(type, typeFilter === type, mediaTypeLabel(type)))}
+          </div>
         </div>
       )}
+
       {plugins.length === 0 ? (
         busy ? (
           <PluginRowSkeleton count={4} />
         ) : (
           <EmptyState icon="plugins" title={t('store.emptyTitle')} hint={t('store.emptyHint')} />
         )
+      ) : visible.length === 0 ? (
+        <EmptyState icon="search" title={t('store.noMatchesTitle')} hint={t('store.noMatchesHint')} />
       ) : (
-        <div className="mt-2 flex flex-col gap-2">
+        <div className="mt-4 flex flex-col gap-2">
           {visible.map((p) => {
             const installedVer = runtime.installed.get(p.id)
             const updateAvailable = !!installedVer && isNewerVersion(p.version, installedVer)
