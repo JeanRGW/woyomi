@@ -6,6 +6,7 @@ import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
 import { Icon } from '../icons'
 import { useT } from '../i18n'
+import { useToast } from '../toast'
 import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '../i18n/messages'
 import { BackButton, Banner, Btn, CoverArt, EpisodeRow, MediaDetailSkeleton, Page, SelectInput } from '../components'
 
@@ -22,6 +23,7 @@ function coverRequestChanged(previous: Media, current: Media): boolean {
 
 export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime; sourceId: string; mediaId: string }) {
   const t = useT()
+  const { showToast } = useToast()
   const [media, setMedia] = useState<Awaited<ReturnType<AppRuntime['engine']['getMedia']>> | null>(null)
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [entry, setEntry] = useState<LibraryEntry | undefined>()
@@ -29,6 +31,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const [downloads, setDownloads] = useState<DownloadRecord[]>([])
   const [qualityEpisode, setQualityEpisode] = useState<Episode>()
   const [qualities, setQualities] = useState<string[]>([])
+  const [busyEpisodeId, setBusyEpisodeId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [coverOverride, setCoverOverride] = useState<string>()
   const [offlineSnapshot, setOfflineSnapshot] = useState(false)
@@ -115,10 +118,22 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     const manager = runtime.downloads
     if (!manager || !media) return
     setError('')
+    setBusyEpisodeId(episode.id)
     try {
       if (!isVideoType(media.type)) {
         await manager.enqueueReader(media, episode)
         await runtime.cacheMediaPage(media, episodes)
+        const chapterName = `${t('common.chapter', { number: episode.number })}${
+          episode.title ? t('common.title', { title: episode.title }) : ''
+        }`
+        showToast(t('downloads.queuedToast', { name: chapterName }), {
+          icon: 'download',
+          tone: 'ok',
+          action: {
+            label: t('downloads.viewDownloads'),
+            onClick: () => navigate({ name: 'downloads' })
+          }
+        })
         return
       }
       const available = await manager.getVideoQualities(media, episode)
@@ -131,6 +146,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       setQualityEpisode(episode)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (!isVideoType(media.type)) {
+        setBusyEpisodeId(null)
+      }
     }
   }
 
@@ -140,9 +159,21 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       await runtime.downloads.enqueueVideo(media, qualityEpisode, quality)
       await runtime.engine.prefs.set('__app', 'downloads.videoQuality', quality)
       await runtime.cacheMediaPage(media, episodes)
+      const epName = `${t('common.episode', { number: qualityEpisode.number })}${
+        qualityEpisode.title ? t('common.title', { title: qualityEpisode.title }) : ''
+      }`
+      showToast(t('downloads.queuedToast', { name: epName }), {
+        icon: 'download',
+        tone: 'ok',
+        action: {
+          label: t('downloads.viewDownloads'),
+          onClick: () => navigate({ name: 'downloads' })
+        }
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
+      setBusyEpisodeId(null)
       setQualityEpisode(undefined)
     }
   }
@@ -275,6 +306,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               onOpen={() => (video ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
               onToggleSeen={() => toggleSeen(ep)}
               downloadState={downloads.find((record) => record.id === ep.id)?.state}
+              busy={busyEpisodeId === ep.id}
               onDownload={runtime.downloads ? () => void downloadEpisode(ep) : undefined}
             />
           ))}
@@ -290,7 +322,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               <Btn
                 variant="ghost"
                 className="size-10 px-0"
-                onClick={() => setQualityEpisode(undefined)}
+                onClick={() => {
+                  setBusyEpisodeId(null)
+                  setQualityEpisode(undefined)
+                }}
                 aria-label={t('common.close')}
                 title={t('common.close')}
               >
@@ -303,7 +338,13 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
                   {t('downloads.quality', { quality })}
                 </Btn>
               ))}
-              <Btn variant="ghost" onClick={() => setQualityEpisode(undefined)}>
+              <Btn
+                variant="ghost"
+                onClick={() => {
+                  setBusyEpisodeId(null)
+                  setQualityEpisode(undefined)
+                }}
+              >
                 {t('downloads.cancel')}
               </Btn>
             </div>

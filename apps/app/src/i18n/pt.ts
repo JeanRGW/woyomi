@@ -93,6 +93,9 @@ export const pt: Messages = {
   'downloads.open': 'Abrir download',
   'downloads.retry': 'Tentar download novamente',
   'downloads.remove': 'Remover download',
+  'downloads.queuedToast': '{name} adicionado à fila de download',
+  'downloads.viewDownloads': 'Ver',
+  'downloads.probing': 'Verificando qualidades de stream…',
 
   // media detail
   'media.addToLibrary': 'Adicionar à biblioteca…',

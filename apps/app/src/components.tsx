@@ -1,4 +1,4 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { useEffect, useId, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { Media } from '@woyomi/core'
 import type { DownloadState } from './downloads'
 import { navigate } from './App'
@@ -341,13 +341,65 @@ export function MediaGrid({ children }: { children: ReactNode }) {
   return <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:gap-4 lg:grid-cols-5 xl:grid-cols-6">{children}</div>
 }
 
+export function DownloadingWaveIcon({ size = 17, className = '' }: { size?: number; className?: string }) {
+  const rawId = useId()
+  const id = `dl-wave-${rawId.replace(/:/g, '')}`
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <defs>
+        <linearGradient id={`${id}-grad`} x1="0" y1="0" x2="0" y2="100%">
+          <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0" />
+          <stop offset="30%" stopColor="var(--color-accent)" stopOpacity="0.8" />
+          <stop offset="50%" stopColor="#ffffff" stopOpacity="1" />
+          <stop offset="70%" stopColor="var(--color-accent)" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
+        </linearGradient>
+        <mask id={`${id}-mask`}>
+          <g stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <path d="m7 10 5 5 5-5" />
+            <path d="M12 15V3" />
+          </g>
+        </mask>
+      </defs>
+
+      {/* Base faint icon */}
+      <g stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-muted/30">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M12 15V3" />
+      </g>
+
+      {/* Animated wave masked to icon stroke */}
+      <g mask={`url(#${id}-mask)`}>
+        <rect
+          x="0"
+          y="-24"
+          width="24"
+          height="24"
+          fill={`url(#${id}-grad)`}
+          className="animate-download-wave"
+        />
+      </g>
+    </svg>
+  )
+}
+
 export function EpisodeRow({
   label,
   active,
   onOpen,
   onToggleSeen,
   downloadState,
-  onDownload
+  onDownload,
+  busy
 }: {
   label: string
   active: boolean
@@ -355,16 +407,24 @@ export function EpisodeRow({
   onToggleSeen: () => void
   downloadState?: DownloadState
   onDownload?: () => void
+  busy?: boolean
 }) {
   const t = useT()
-  const downloadLabel =
-    downloadState === 'queued'
-      ? t('downloads.stateQueued')
-      : downloadState === 'downloading'
-        ? t('downloads.stateDownloading')
-        : downloadState === 'complete'
-          ? t('downloads.stateComplete')
+  const isQueued = downloadState === 'queued'
+  const isDownloading = downloadState === 'downloading' || busy
+  const isComplete = downloadState === 'complete'
+  const isFailed = downloadState === 'failed'
+
+  const downloadLabel = isQueued
+    ? t('downloads.stateQueued')
+    : isDownloading
+      ? t('downloads.stateDownloading')
+      : isComplete
+        ? t('downloads.stateComplete')
+        : isFailed
+          ? t('downloads.stateFailed')
           : t('downloads.download')
+
   return (
     <div
       className={`flex items-center justify-between gap-2 rounded-xl border border-line-soft bg-surface px-3 py-2 transition-colors hover:border-accent/50 ${
@@ -391,14 +451,28 @@ export function EpisodeRow({
           <button
             type="button"
             onClick={onDownload}
-            disabled={downloadState === 'queued' || downloadState === 'downloading' || downloadState === 'complete'}
+            disabled={isQueued || isDownloading || isComplete}
             title={downloadLabel}
             aria-label={downloadLabel}
             className={`grid size-9 cursor-pointer place-items-center rounded-lg transition-colors disabled:cursor-default ${
-              downloadState === 'complete' ? 'text-accent' : 'text-faint hover:bg-surface-2 hover:text-fg disabled:hover:bg-transparent disabled:hover:text-faint'
+              isComplete
+                ? 'text-ok'
+                : isDownloading || isQueued
+                  ? 'text-accent'
+                  : isFailed
+                    ? 'text-danger hover:bg-surface-2'
+                    : 'text-faint hover:bg-surface-2 hover:text-fg disabled:hover:bg-transparent disabled:hover:text-faint'
             }`}
           >
-            <Icon name={downloadState === 'complete' ? 'check' : 'download'} size={17} />
+            {isDownloading || isQueued ? (
+              <DownloadingWaveIcon size={17} />
+            ) : isComplete ? (
+              <Icon name="check" size={17} />
+            ) : isFailed ? (
+              <Icon name="refresh" size={17} />
+            ) : (
+              <Icon name="download" size={17} />
+            )}
           </button>
         )}
         <button

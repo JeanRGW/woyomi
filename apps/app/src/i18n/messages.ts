@@ -98,6 +98,9 @@ const en = {
     'downloads.open': 'Open download',
     'downloads.retry': 'Retry download',
     'downloads.remove': 'Remove download',
+    'downloads.queuedToast': 'Added {name} to download queue',
+    'downloads.viewDownloads': 'View',
+    'downloads.probing': 'Checking stream qualities…',
 
     // media detail
     'media.addToLibrary': 'Add to library…',

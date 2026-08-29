@@ -203,6 +203,20 @@ body {
   animation: rise-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Download wave animation: light bar sweeping top to bottom */
+@keyframes download-wave-slide {
+  0% {
+    transform: translateY(0px);
+  }
+  100% {
+    transform: translateY(48px);
+  }
+}
+
+.animate-download-wave {
+  animation: download-wave-slide 1.25s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
 /* Cross-WebView media ranges. The input itself owns the played/buffered
    gradient; browser tracks stay transparent so all platforms render it. */
 .player-timeline,
@@ -283,7 +297,8 @@ video::cue {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise-in {
+  .rise-in,
+  .animate-download-wave {
     animation: none;
   }
   * {
