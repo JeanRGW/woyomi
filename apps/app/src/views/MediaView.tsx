@@ -8,7 +8,7 @@ import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { useToast } from '../toast'
 import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '../i18n/messages'
-import { BackButton, Banner, Btn, CoverArt, EpisodeRow, MediaDetailSkeleton, Page, SelectInput } from '../components'
+import { BackButton, Banner, Btn, CoverArt, EpisodeRow, MediaDetailSkeleton, Page, SelectInput, TextInput } from '../components'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
@@ -32,6 +32,9 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const [qualityEpisode, setQualityEpisode] = useState<Episode>()
   const [qualities, setQualities] = useState<string[]>([])
   const [busyEpisodeId, setBusyEpisodeId] = useState<string | null>(null)
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [episodeQuery, setEpisodeQuery] = useState('')
+  const [synopsisExpanded, setSynopsisExpanded] = useState(false)
   const [error, setError] = useState('')
   const [coverOverride, setCoverOverride] = useState<string>()
   const [offlineSnapshot, setOfflineSnapshot] = useState(false)
@@ -99,6 +102,28 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     () => (media?.synopsis ? marked.parse(media.synopsis, { async: false }) : ''),
     [media?.synopsis]
   )
+
+  const nextUnseenEpisode = useMemo(() => {
+    if (episodes.length === 0) return undefined
+    return episodes.find((ep) => !seen.has(ep.id)) ?? episodes[episodes.length - 1]
+  }, [episodes, seen])
+
+  const filteredEpisodes = useMemo(() => {
+    let list = [...episodes]
+    if (sortOrder === 'desc') {
+      list.reverse()
+    }
+    const q = episodeQuery.trim().toLowerCase()
+    if (q) {
+      list = list.filter((ep) => {
+        const numStr = String(ep.number)
+        const titleStr = (ep.title ?? '').toLowerCase()
+        const seasonStr = ep.season != null ? `s${ep.season}` : ''
+        return numStr.includes(q) || titleStr.includes(q) || seasonStr.includes(q)
+      })
+    }
+    return list
+  }, [episodes, sortOrder, episodeQuery])
 
   async function setStatus(status: LibraryStatus) {
     if (!media) return
@@ -226,6 +251,13 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   // override already points at the local /covers/ URL and needs no headers.
   const heroCoverUrl = coverOverride ? displayCoverUrl : (proxiedHref(media.coverUrl, media.coverHeaders) ?? media.coverUrl)
 
+  const openEpisode = (ep: Episode) =>
+    video
+      ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id })
+      : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id })
+
+  const hasLongSynopsis = (media.synopsis?.length ?? 0) > 160
+
   return (
     <div className="relative min-h-full">
       {displayCoverUrl && (
@@ -257,6 +289,18 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               </div>
             )}
             <div className="mt-4 flex flex-wrap items-center gap-2">
+              {nextUnseenEpisode && (
+                <Btn
+                  variant="primary"
+                  onClick={() => openEpisode(nextUnseenEpisode)}
+                  className="gap-2"
+                >
+                  <Icon name={video ? 'play' : 'bookOpen'} size={16} />
+                  {seen.size > 0
+                    ? t(video ? 'media.resumeEpisode' : 'media.resumeChapter', { number: nextUnseenEpisode.number })
+                    : t(video ? 'media.startWatching' : 'media.startReading')}
+                </Btn>
+              )}
               <SelectInput value={entry?.status ?? ''} onChange={(e) => e.target.value && setStatus(e.target.value as LibraryStatus)}>
                 <option value="" disabled>
                   {t('media.addToLibrary')}
@@ -283,33 +327,84 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
           </div>
         </div>
 
-        {descriptionHtml && <div className="prose-body mt-6" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />}
+        {descriptionHtml && (
+          <div className="mt-6">
+            <div className={`prose-body ${synopsisExpanded ? '' : 'line-clamp-3'}`} dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
+            {hasLongSynopsis && (
+              <button
+                type="button"
+                onClick={() => setSynopsisExpanded((prev) => !prev)}
+                className="mt-1.5 inline-flex cursor-pointer items-center gap-1 text-xs font-bold text-accent hover:underline"
+              >
+                {synopsisExpanded ? t('media.readLess') : t('media.readMore')}
+              </button>
+            )}
+          </div>
+        )}
         {error && <Banner tone="error">{error}</Banner>}
         {offlineSnapshot && <Banner tone="ok">{t('media.offlineSnapshot')}</Banner>}
 
-        <div className="mb-3 mt-8 flex items-center gap-3">
+        <div className="mb-3 mt-8 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
-            {t(video ? 'media.episodeCount' : 'media.chapterCount', { count: episodes.length })}
+            {t(video ? 'media.episodeCount' : 'media.chapterCount', { count: filteredEpisodes.length })}
           </h2>
-          <Btn variant="ghost" className="ml-auto min-h-8 px-2.5 text-xs" onClick={allSeen ? markAllUnseen : markAllSeen}>
-            {allSeen ? t('media.markAllUnseen') : t('media.markAllSeen')}
-          </Btn>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Btn
+              variant="ghost"
+              className="min-h-8 px-2.5 text-xs"
+              onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              title={sortOrder === 'asc' ? t('media.sortAsc') : t('media.sortDesc')}
+              aria-label={sortOrder === 'asc' ? t('media.sortAsc') : t('media.sortDesc')}
+            >
+              <Icon name="sort" size={14} />
+              <span className="hidden sm:inline">{sortOrder === 'asc' ? t('media.sortAsc') : t('media.sortDesc')}</span>
+            </Btn>
+            <Btn variant="ghost" className="min-h-8 px-2.5 text-xs" onClick={allSeen ? markAllUnseen : markAllSeen}>
+              {allSeen ? t('media.markAllUnseen') : t('media.markAllSeen')}
+            </Btn>
+          </div>
         </div>
+
+        {episodes.length > 5 && (
+          <div className="relative mb-3">
+            <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+            <TextInput
+              value={episodeQuery}
+              onChange={(e) => setEpisodeQuery(e.target.value)}
+              placeholder={t(video ? 'media.filterEpisodes' : 'media.filterChapters')}
+              className="min-h-9 pl-9 pr-8 text-sm"
+            />
+            {episodeQuery && (
+              <button
+                type="button"
+                onClick={() => setEpisodeQuery('')}
+                aria-label={t('common.close')}
+                className="absolute right-2.5 top-1/2 grid size-5 -translate-y-1/2 cursor-pointer place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-fg"
+              >
+                <Icon name="clear" size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-1.5">
-          {episodes.map((ep) => (
+          {filteredEpisodes.map((ep) => (
             <EpisodeRow
               key={ep.id}
               label={`${ep.number}${ep.season != null ? t('common.season', { season: ep.season }) : ''}${
                 ep.title ? t('common.title', { title: ep.title }) : ''
               }`}
               active={seen.has(ep.id)}
-              onOpen={() => (video ? navigate({ name: 'player', sourceId, mediaId, episodeId: ep.id }) : navigate({ name: 'reader', sourceId, mediaId, episodeId: ep.id }))}
+              onOpen={() => openEpisode(ep)}
               onToggleSeen={() => toggleSeen(ep)}
               downloadState={downloads.find((record) => record.id === ep.id)?.state}
               busy={busyEpisodeId === ep.id}
               onDownload={runtime.downloads ? () => void downloadEpisode(ep) : undefined}
             />
           ))}
+          {filteredEpisodes.length === 0 && episodeQuery && (
+            <p className="py-6 text-center text-sm text-muted">{t('library.noMatchesTitle')}</p>
+          )}
         </div>
       </div>
       {qualityEpisode && (
