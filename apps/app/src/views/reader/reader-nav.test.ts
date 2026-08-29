@@ -100,6 +100,11 @@ describe('viewForPage', () => {
   it('single-page chapter ignores double', () => {
     expect(viewForPage(0, 1, true)).toEqual({ start: 0, count: 1, readingStart: 0, readingEnd: 0 })
   })
+
+  it('virtual end page (page === total) maps to chapter end', () => {
+    expect(viewForPage(33, 33, false)).toEqual({ start: 33, count: 1, readingStart: 32, readingEnd: 32 })
+    expect(viewForPage(33, 33, true)).toEqual({ start: 33, count: 1, readingStart: 32, readingEnd: 32 })
+  })
 })
 
 describe('viewImages', () => {
@@ -119,6 +124,7 @@ describe('viewLabel', () => {
     expect(viewLabel(viewForPage(6, 33, false), 33)).toBe('7 / 33')
     expect(viewLabel(viewForPage(6, 33, true), 33)).toBe('7–8 / 33')
     expect(viewLabel(viewForPage(32, 33, true), 33)).toBe('33 / 33')
+    expect(viewLabel(viewForPage(33, 33, false), 33)).toBe('33 / 33')
   })
 
   it('page numbering is linear — RTL never reverses the plugin page order', () => {

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Episode } from '@woyomi/core'
 import type { PageSeekRequest, PageView } from './reader-nav'
 import { prefixReady } from './reader-nav'
 import { useT } from '../../i18n'
 import { ReaderImage } from './ImagePage'
 import { ignoreReaderKey } from './reader-keyboard'
+import { ChapterClosureCard } from './ChapterClosureCard'
 
 /**
  * Vertical long-strip reader. Single sizing control: `stripWidth` (% of the
@@ -19,6 +21,11 @@ export function ContinuousReader({
   stripWidth,
   initialPage,
   seek,
+  chapter,
+  nextEpisode,
+  autoNext,
+  onNext,
+  onBackToSeries,
   keyboardEnabled = true,
   onViewChange,
   onToggleChrome
@@ -27,6 +34,11 @@ export function ContinuousReader({
   stripWidth: number
   initialPage: number
   seek?: PageSeekRequest
+  chapter?: Episode
+  nextEpisode?: Episode
+  autoNext?: boolean
+  onNext?: () => void
+  onBackToSeries?: () => void
   keyboardEnabled?: boolean
   onViewChange: (view: PageView) => void
   onToggleChrome: () => void
@@ -285,6 +297,20 @@ export function ContinuousReader({
             </div>
           )
         })}
+        <div onClick={(e) => e.stopPropagation()}>
+          <ChapterClosureCard
+            chapter={chapter}
+            nextEpisode={nextEpisode}
+            autoNext={autoNext}
+            canAutoAdvance={restored}
+            onNext={onNext}
+            onRestart={() => {
+              const el = containerRef.current
+              if (el) el.scrollTo({ top: 0, behavior: 'smooth' })
+            }}
+            onBackToSeries={onBackToSeries}
+          />
+        </div>
       </div>
     </div>
   )

@@ -306,7 +306,18 @@ const en = {
     'reader.stripWidthValue': '{value}%',
     'reader.keepAwake': 'Keep screen awake',
     'reader.seek': 'Seek through chapter',
-    'reader.progressPercent': '{value}% read'
+    'reader.progressPercent': '{value}% read',
+    'reader.chapterCompleted': 'Chapter {number} completed',
+    'reader.nextChapterTitle': 'Next: Chapter {number}',
+    'reader.readNextNow': 'Read next now',
+    'reader.readNextChapter': 'Read next chapter',
+    'reader.cancelAutoAdvance': 'Cancel',
+    'reader.nextIn': 'Next chapter in {seconds}s',
+    'reader.caughtUpTitle': "You're all caught up!",
+    'reader.caughtUpHint': "You've reached the latest available chapter.",
+    'reader.returnToSeries': 'Return to series',
+    'reader.restartChapter': 'Restart chapter',
+    'reader.endOfChapter': 'End of chapter'
 } as const
 
 export const messages = { en, pt } as const

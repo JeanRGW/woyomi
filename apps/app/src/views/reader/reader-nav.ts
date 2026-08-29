@@ -42,6 +42,7 @@ export function findAdjacent(episodes: Episode[], currentId: string, relative: -
 
 /** View containing file page `page`; double-page snaps to even boundaries. */
 export function viewForPage(page: number, total: number, double: boolean): PageView {
+  if (page >= total) return { start: total, count: 1, readingStart: Math.max(0, total - 1), readingEnd: Math.max(0, total - 1) }
   if (!double || total <= 1) return { start: page, count: 1, readingStart: page, readingEnd: page }
   const start = page % 2 === 0 ? page : page - 1
   const count = start + 1 < total ? 2 : 1
@@ -52,12 +53,17 @@ export function viewForPage(page: number, total: number, double: boolean): PageV
 
 /** File page indexes in display order (earlier page first for LTR, last for RTL). */
 export function viewImages(view: PageView, direction: ReadingDirection): number[] {
-  const pages = view.count === 2 ? [view.start, view.start + 1] : [view.start]
-  return direction === 'rtl' ? pages.reverse() : pages
+  if (view.count === 2) {
+    const pages = [view.start, view.start + 1]
+    return direction === 'rtl' ? pages.reverse() : pages
+  }
+  return [view.start]
 }
 
 /** Label for the view, e.g. 7 / 33 or 7–8 / 33 (1-based, reading order). */
 export function viewLabel(view: PageView, total: number): string {
+  if (total <= 0) return '0 / 0'
+  if (view.start >= total) return `${total} / ${total}`
   return view.count === 2
     ? `${view.readingStart + 1}–${view.readingEnd + 1} / ${total}`
     : `${view.readingStart + 1} / ${total}`

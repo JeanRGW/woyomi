@@ -1,8 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import type { Episode } from '@woyomi/core'
 import { useMediaQuery } from '../../hooks'
 import type { ReaderPrefs } from './reader-prefs'
 import { NOVEL_FONT_FAMILIES, NOVEL_FOREGROUNDS } from './reader-prefs'
 import { ignoreReaderKey } from './reader-keyboard'
+import { ChapterClosureCard } from './ChapterClosureCard'
 
 export interface NovelSeekRequest {
   progress: number
@@ -13,6 +15,11 @@ export interface NovelReaderProps {
   html: string
   initialProgress?: number
   prefs: ReaderPrefs
+  chapter?: Episode
+  nextEpisode?: Episode
+  autoNext?: boolean
+  onNext?: () => void
+  onBackToSeries?: () => void
   keyboardEnabled?: boolean
   seek?: NovelSeekRequest
   onProgressChange?: (progress: number) => void
@@ -23,6 +30,11 @@ export function NovelReader({
   html,
   initialProgress,
   prefs,
+  chapter,
+  nextEpisode,
+  autoNext,
+  onNext,
+  onBackToSeries,
   keyboardEnabled = true,
   seek,
   onProgressChange,
@@ -38,6 +50,8 @@ export function NovelReader({
   const lastSeekRequestIdRef = useRef<number | null>(null)
   const typographyKey = `${prefs.fontFamily}:${prefs.fontSize}:${prefs.lineHeight}:${prefs.columnWidth}:${prefs.paragraphSpacing}`
   const lastTypographyKeyRef = useRef(typographyKey)
+
+  const [currentProgress, setCurrentProgress] = useState(initialProgress ?? 0)
 
   useEffect(() => {
     restoredRef.current = false
@@ -165,6 +179,7 @@ export function NovelReader({
       if (!el) return
       const maxScroll = el.scrollHeight - el.clientHeight
       const progress = maxScroll > 0 ? Math.min(1, Math.max(0, el.scrollTop / maxScroll)) : 0
+      setCurrentProgress(progress)
       if (Math.abs(progress - lastReportedProgressRef.current) > 0.001 || progress === 0 || progress === 1) {
         lastReportedProgressRef.current = progress
         onProgressChange?.(progress)
@@ -272,6 +287,20 @@ export function NovelReader({
       onScroll={handleScroll}
     >
       <article ref={articleRef} className="novel-body mx-auto px-4 py-12" dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="mx-auto max-w-2xl px-4 pb-16" onClick={(e) => e.stopPropagation()}>
+        <ChapterClosureCard
+          chapter={chapter}
+          nextEpisode={nextEpisode}
+          autoNext={autoNext}
+          canAutoAdvance={restoredRef.current && currentProgress >= 0.95}
+          onNext={onNext}
+          onRestart={() => {
+            const el = containerRef.current
+            if (el) el.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' })
+          }}
+          onBackToSeries={onBackToSeries}
+        />
+      </div>
     </div>
   )
 }

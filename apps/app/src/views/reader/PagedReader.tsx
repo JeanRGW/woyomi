@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { Episode } from '@woyomi/core'
 import { useMediaQuery } from '../../hooks'
 import { useT } from '../../i18n'
 import {
@@ -23,6 +24,7 @@ import {
 import { useTouchGestures } from './pinch'
 import { ReaderImage } from './ImagePage'
 import { ignoreReaderKey } from './reader-keyboard'
+import { ChapterClosureCard } from './ChapterClosureCard'
 
 const DOUBLE_TAP_MS = 200
 
@@ -41,6 +43,11 @@ export function PagedReader({
   tapNav,
   initialPage,
   seek,
+  chapter,
+  nextEpisode,
+  autoNext,
+  onNext,
+  onBackToSeries,
   keyboardEnabled = true,
   onViewChange,
   onToggleChrome,
@@ -53,6 +60,11 @@ export function PagedReader({
   tapNav: boolean
   initialPage: number
   seek?: PageSeekRequest
+  chapter?: Episode
+  nextEpisode?: Episode
+  autoNext?: boolean
+  onNext?: () => void
+  onBackToSeries?: () => void
   keyboardEnabled?: boolean
   onViewChange: (view: PageView) => void
   onToggleChrome: () => void
@@ -110,7 +122,7 @@ export function PagedReader({
   // double-page arrangement, so stepping is a plain file-index walk.
   const turnBy = (positions: number) => {
     cancelFling()
-    setPage((prev) => Math.min(total - 1, Math.max(0, prev + positions)))
+    setPage((prev) => Math.min(total, Math.max(0, prev + positions)))
   }
 
   const applyZoom = (next: number, focus?: { x: number; y: number }) => {
@@ -236,7 +248,7 @@ export function PagedReader({
   useEffect(() => {
     if (!seek) return
     cancelFling()
-    setPage(Math.min(total - 1, Math.max(0, Math.floor(seek.page))))
+    setPage(Math.min(total, Math.max(0, Math.floor(seek.page))))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seek?.requestId, total])
 
@@ -252,7 +264,7 @@ export function PagedReader({
       else if (event.key === 'PageDown' || (event.key === ' ' && !event.shiftKey)) nextPage = page + nextOffset
       else if (event.key === 'PageUp' || (event.key === ' ' && event.shiftKey)) nextPage = page + previousOffset
       else if (event.key === 'Home') nextPage = 0
-      else if (event.key === 'End') nextPage = total - 1
+      else if (event.key === 'End') nextPage = total
       if (nextPage === undefined) return
       event.preventDefault()
       turnBy(nextPage - page)
@@ -340,44 +352,58 @@ export function PagedReader({
       onClick={onClick}
       onPointerMove={onPointerMoveCapture}
     >
-      <div
-        className={`flex shrink-0 justify-center ${widthFit ? 'items-start' : 'items-center'} ${zoom > 1 ? '' : widthFit ? 'mx-auto' : 'm-auto'} ${double ? 'w-full flex-row' : ''}`}
-        style={{ width: `${zoom * 100}%`, height: widthFit ? 'auto' : `${zoom * 100}%`, minHeight: widthFit ? '100%' : undefined }}
-      >
-        {viewImages(view, direction).map((filePage, slotIndex) => {
-          const image = (
-            <ReaderImage
-              src={images[filePage] ?? ''}
-              alt={t('reader.pageAlt', { number: filePage + 1 })}
-              eager
-              className={double ? 'block' : pageImageClass(fit)}
-              // double: each page is contained in a half-width slot (no rem
-              // caps — they left dead space at the seam on wide windows).
-              // single zoomed: fill the zoom box; unzoomed keeps natural caps.
-              style={
-                double
-                  ? { maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }
-                  : zoom !== 1
-                    ? { maxWidth: 'none', maxHeight: 'none', width: '100%', height: '100%', objectFit: 'contain' }
-                    : undefined
-              }
-            />
-          )
-          // double always uses two fixed half-width slots hugging the center
-          // seam (left slot right-aligned, right slot left-aligned): the pair
-          // meets at the exact center of the box at every zoom, zero gap.
-          return double ? (
-            <div
-              key={filePage}
-              className={`flex h-full w-1/2 items-center overflow-hidden ${slotIndex === 0 ? 'justify-end' : 'justify-start'}`}
-            >
-              {image}
-            </div>
-          ) : (
-            <React.Fragment key={filePage}>{image}</React.Fragment>
-          )
-        })}
-      </div>
+      {page === total ? (
+        <div className="flex h-full min-h-full w-full items-center justify-center" onClick={(e) => e.stopPropagation()}>
+          <ChapterClosureCard
+            chapter={chapter}
+            nextEpisode={nextEpisode}
+            autoNext={autoNext}
+            onNext={onNext}
+            onRestart={() => setPage(0)}
+            onBackToSeries={onBackToSeries}
+            isVirtualPage
+          />
+        </div>
+      ) : (
+        <div
+          className={`flex shrink-0 justify-center ${widthFit ? 'items-start' : 'items-center'} ${zoom > 1 ? '' : widthFit ? 'mx-auto' : 'm-auto'} ${double ? 'w-full flex-row' : ''}`}
+          style={{ width: `${zoom * 100}%`, height: widthFit ? 'auto' : `${zoom * 100}%`, minHeight: widthFit ? '100%' : undefined }}
+        >
+          {viewImages(view, direction).map((filePage, slotIndex) => {
+            const image = (
+              <ReaderImage
+                src={images[filePage] ?? ''}
+                alt={t('reader.pageAlt', { number: filePage + 1 })}
+                eager
+                className={double ? 'block' : pageImageClass(fit)}
+                // double: each page is contained in a half-width slot (no rem
+                // caps — they left dead space at the seam on wide windows).
+                // single zoomed: fill the zoom box; unzoomed keeps natural caps.
+                style={
+                  double
+                    ? { maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }
+                    : zoom !== 1
+                      ? { maxWidth: 'none', maxHeight: 'none', width: '100%', height: '100%', objectFit: 'contain' }
+                      : undefined
+                }
+              />
+            )
+            // double always uses two fixed half-width slots hugging the center
+            // seam (left slot right-aligned, right slot left-aligned): the pair
+            // meets at the exact center of the box at every zoom, zero gap.
+            return double ? (
+              <div
+                key={filePage}
+                className={`flex h-full w-1/2 items-center overflow-hidden ${slotIndex === 0 ? 'justify-end' : 'justify-start'}`}
+              >
+                {image}
+              </div>
+            ) : (
+              <React.Fragment key={filePage}>{image}</React.Fragment>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

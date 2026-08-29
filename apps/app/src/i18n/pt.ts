@@ -301,5 +301,16 @@ export const pt: Messages = {
   'reader.stripWidthValue': '{value}%',
   'reader.keepAwake': 'Manter tela ativa',
   'reader.seek': 'Navegar pelo capítulo',
-  'reader.progressPercent': '{value}% lido'
+  'reader.progressPercent': '{value}% lido',
+  'reader.chapterCompleted': 'Capítulo {number} concluído',
+  'reader.nextChapterTitle': 'Próximo: Capítulo {number}',
+  'reader.readNextNow': 'Ler próximo agora',
+  'reader.readNextChapter': 'Ler próximo capítulo',
+  'reader.cancelAutoAdvance': 'Cancelar',
+  'reader.nextIn': 'Próximo capítulo em {seconds}s',
+  'reader.caughtUpTitle': 'Você está em dia!',
+  'reader.caughtUpHint': 'Você chegou ao último capítulo disponível.',
+  'reader.returnToSeries': 'Voltar para a série',
+  'reader.restartChapter': 'Recomeçar capítulo',
+  'reader.endOfChapter': 'Fim do capítulo'
 }

@@ -49,7 +49,6 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const [pageSeek, setPageSeek] = useState<PageSeekRequest>()
   const [textSeek, setTextSeek] = useState<NovelSeekRequest>()
 
-  const autoAdvanceFired = useRef(false)
   const lastSavedRef = useRef<number | null>(null)
   const lastSavedTextRef = useRef<number | null>(null)
   const seekRequestId = useRef(0)
@@ -182,8 +181,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   // position + finish + auto-advance
   const finished = total > 0 && view.readingEnd === total - 1
 
-  // save on finish: persists the "read to the end" marker, and auto-advances
-  // in the same effect so it can't be unmounted past a pending save.
+  // save on finish: persists the "read to the end" marker
   // `lastSavedRef` re-saves `total` if the reader comes back to the end.
   useEffect(() => {
     if (total === 0 || initialPage === null) return
@@ -192,11 +190,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
       lastSavedRef.current = total
       saveReadPosition(runtime.engine.prefs, episodeId, total)
     }
-    if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
-      autoAdvanceFired.current = true
-      jumpTo(nextEpisode)
-    }
-  }, [finished, total, initialPage, runtime, episodeId, prefs.autoNext, nextEpisode, jumpTo])
+  }, [finished, total, initialPage, runtime, episodeId])
 
   // mid-chapter position is saved debounced (continuous scroll re-views pages)
   useEffect(() => {
@@ -227,11 +221,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
       lastSavedTextRef.current = 1
       saveTextPosition(runtime.engine.prefs, episodeId, 1)
     }
-    if (prefs.autoNext && nextEpisode && !autoAdvanceFired.current) {
-      autoAdvanceFired.current = true
-      jumpTo(nextEpisode)
-    }
-  }, [content, initialTextProgress, textFinished, runtime, episodeId, prefs.autoNext, nextEpisode, jumpTo])
+  }, [content, initialTextProgress, textFinished, runtime, episodeId])
 
   useEffect(() => {
     if (content?.type !== 'text' || initialTextProgress === null || textFinished) return
@@ -330,6 +320,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
               tapNav={prefs.tapNav}
               initialPage={readerInitialPage}
               seek={pageSeek}
+              chapter={chapter}
+              nextEpisode={nextEpisode}
+              autoNext={prefs.autoNext}
+              onNext={() => nextEpisode && jumpTo(nextEpisode)}
+              onBackToSeries={() => navigate({ name: 'media', sourceId, mediaId })}
               keyboardEnabled={keyboardEnabled}
               onViewChange={handleViewChange}
               onToggleChrome={() => setChromeVisible((v) => !v)}
@@ -341,6 +336,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
               stripWidth={prefs.stripWidth}
               initialPage={readerInitialPage}
               seek={pageSeek}
+              chapter={chapter}
+              nextEpisode={nextEpisode}
+              autoNext={prefs.autoNext}
+              onNext={() => nextEpisode && jumpTo(nextEpisode)}
+              onBackToSeries={() => navigate({ name: 'media', sourceId, mediaId })}
               keyboardEnabled={keyboardEnabled}
               onViewChange={handleViewChange}
               onToggleChrome={() => setChromeVisible((v) => !v)}
@@ -351,6 +351,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
             html={content.html}
             initialProgress={initialTextProgress ?? 0}
             prefs={prefs}
+            chapter={chapter}
+            nextEpisode={nextEpisode}
+            autoNext={prefs.autoNext}
+            onNext={() => nextEpisode && jumpTo(nextEpisode)}
+            onBackToSeries={() => navigate({ name: 'media', sourceId, mediaId })}
             keyboardEnabled={keyboardEnabled}
             seek={textSeek}
             onProgressChange={setTextProgress}
