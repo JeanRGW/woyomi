@@ -135,7 +135,155 @@ export function BackButton() {
   )
 }
 
+/* ---------- Skeletons ---------- */
+
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse rounded-xl bg-surface-2 ${className}`} aria-hidden="true" />
+}
+
+export function MediaCardSkeleton({ className = '' }: { className?: string }) {
+  return (
+    <div className={`flex flex-col ${className}`} aria-hidden="true">
+      <div className="aspect-[2/3] w-full animate-pulse rounded-xl bg-surface-2 ring-1 ring-white/5" />
+      <div className="mt-2 h-3.5 w-4/5 animate-pulse rounded bg-surface-2" />
+      <div className="mt-1.5 h-3 w-1/2 animate-pulse rounded bg-surface-2/70" />
+    </div>
+  )
+}
+
+export function MediaGridSkeleton({ count = 12 }: { count?: number }) {
+  return (
+    <MediaGrid>
+      {Array.from({ length: count }).map((_, i) => (
+        <MediaCardSkeleton key={i} />
+      ))}
+    </MediaGrid>
+  )
+}
+
+export function HomeRailSkeleton() {
+  return (
+    <div className="mb-6 rise-in" aria-hidden="true">
+      <div className="mb-2 mt-6 h-6 w-36 animate-pulse rounded-lg bg-surface-2" />
+      <div className="mb-2 mt-4 h-4 w-28 animate-pulse rounded bg-surface-2/70" />
+      <div className="rail no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-8 md:px-8">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36">
+            <div className="aspect-[2/3] w-full animate-pulse rounded-xl bg-surface-2 ring-1 ring-white/5" />
+            <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2" />
+            <div className="mt-1 h-2.5 w-1/2 animate-pulse rounded bg-surface-2/70" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function MediaDetailSkeleton() {
+  return (
+    <div className="relative min-h-full" aria-hidden="true">
+      <div className="relative mx-auto w-full max-w-4xl px-4 py-5 md:px-8 md:py-8">
+        <div className="mb-4 h-10 w-24 animate-pulse rounded-xl bg-surface/80" />
+        <div className="flex gap-4 md:gap-6">
+          <div className="w-28 shrink-0 overflow-hidden rounded-2xl sm:w-36 md:w-44">
+            <div className="aspect-[2/3] w-full animate-pulse rounded-2xl bg-surface-2 ring-1 ring-white/10" />
+          </div>
+          <div className="min-w-0 flex-1 pt-1">
+            <div className="h-7 w-3/4 animate-pulse rounded-lg bg-surface-2 md:h-9" />
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <div className="h-6 w-16 animate-pulse rounded-full bg-surface-2" />
+              <div className="h-6 w-20 animate-pulse rounded-full bg-surface-2" />
+              <div className="h-6 w-16 animate-pulse rounded-full bg-surface-2" />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <div className="h-10 w-36 animate-pulse rounded-xl bg-surface-2" />
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 flex flex-col gap-2">
+          <div className="h-4 w-full animate-pulse rounded bg-surface-2/80" />
+          <div className="h-4 w-5/6 animate-pulse rounded bg-surface-2/80" />
+          <div className="h-4 w-2/3 animate-pulse rounded bg-surface-2/80" />
+        </div>
+        <div className="mb-3 mt-8 flex items-center justify-between">
+          <div className="h-5 w-28 animate-pulse rounded bg-surface-2" />
+          <div className="h-7 w-24 animate-pulse rounded-lg bg-surface-2" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-12 w-full animate-pulse rounded-xl border border-line-soft bg-surface/60" />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function PluginRowSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="mt-2 flex flex-col gap-2" aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-2xl border border-line-soft bg-surface p-3">
+          <div className="size-12 shrink-0 animate-pulse rounded-xl bg-surface-2" />
+          <div className="min-w-0 flex-1">
+            <div className="h-4 w-1/3 animate-pulse rounded bg-surface-2" />
+            <div className="mt-2 h-3 w-1/4 animate-pulse rounded bg-surface-2/70" />
+            <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2/50" />
+          </div>
+          <div className="h-10 w-24 shrink-0 animate-pulse rounded-xl bg-surface-2" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function HistoryRowSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="flex flex-col gap-2" aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-2xl border border-line-soft bg-surface p-2.5">
+          <div className="h-16 w-11 shrink-0 animate-pulse rounded-lg bg-surface-2" />
+          <div className="min-w-0 flex-1">
+            <div className="h-4 w-1/2 animate-pulse rounded bg-surface-2" />
+            <div className="mt-2 h-3 w-1/3 animate-pulse rounded bg-surface-2/70" />
+            <div className="mt-2 h-2.5 w-1/4 animate-pulse rounded bg-surface-2/50" />
+          </div>
+          <div className="size-10 shrink-0 animate-pulse rounded-xl bg-surface-2" />
+          <div className="size-10 shrink-0 animate-pulse rounded-xl bg-surface-2" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function DownloadRowSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <div className="flex flex-col gap-2" aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex flex-col gap-3 rounded-2xl border border-line-soft bg-surface px-3 py-3 sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1">
+            <div className="h-4 w-1/3 animate-pulse rounded bg-surface-2" />
+            <div className="mt-2 h-3 w-1/4 animate-pulse rounded bg-surface-2/70" />
+            <div className="mt-3 h-1.5 w-full animate-pulse rounded-full bg-surface-3" />
+          </div>
+          <div className="flex shrink-0 items-center justify-end gap-1">
+            <div className="size-10 shrink-0 animate-pulse rounded-xl bg-surface-2" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* ---------- Media ---------- */
+
+export const TYPE_ICONS: Record<string, IconName> = {
+  manga: 'bookOpen',
+  anime: 'tv',
+  novel: 'fileText',
+  movie: 'film',
+  series: 'tv'
+}
 
 const TYPE_TINTS: Record<string, string> = {
   manga: 'from-rose-500/25',
@@ -155,11 +303,12 @@ export function CoverArt({ media, coverUrl, className = '' }: { media: Media; co
   if (src && !failed) {
     return <img className={`aspect-[2/3] w-full object-cover ${className}`} src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
   }
+  const iconName = TYPE_ICONS[media.type] ?? 'bookOpen'
   return (
     <div
-      className={`grid aspect-[2/3] w-full place-items-center bg-gradient-to-b ${tint} to-surface-2 text-3xl font-extrabold uppercase text-fg/70 ${className}`}
+      className={`grid aspect-[2/3] w-full place-items-center bg-gradient-to-b ${tint} to-surface-2 text-muted/70 ${className}`}
     >
-      {media.type.slice(0, 1)}
+      <Icon name={iconName} size={32} />
     </div>
   )
 }

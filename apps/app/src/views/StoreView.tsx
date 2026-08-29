@@ -5,7 +5,7 @@ import { createFetchProvider } from '../runtime'
 import type { MediaType } from '@woyomi/core'
 import { useT } from '../i18n'
 import { MEDIA_TYPE_KEY } from '../i18n/messages'
-import { Banner, Btn, EmptyState, Page, PageHeader, SectionHeading, TextInput } from '../components'
+import { Banner, Btn, EmptyState, Page, PageHeader, PluginRowSkeleton, SectionHeading, TextInput } from '../components'
 import { Icon } from '../icons'
 
 // No bundled sources and no default repo: users add a plugin repo URL
@@ -156,7 +156,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
       )}
       {plugins.length === 0 ? (
         busy ? (
-          <p className="text-sm text-muted">{t('common.loading')}</p>
+          <PluginRowSkeleton count={4} />
         ) : (
           <EmptyState icon="plugins" title={t('store.emptyTitle')} hint={t('store.emptyHint')} />
         )

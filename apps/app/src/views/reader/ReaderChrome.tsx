@@ -130,7 +130,7 @@ export function ReaderChrome({
             {zoom !== undefined && onZoomIn && onZoomOut && onZoomReset && (
               <span className="mx-auto flex items-center gap-0.5">
                 <ChromeBtn label={t('reader.zoomOut')} onClick={onZoomOut} disabled={!visible}>
-                  <span className="text-base font-extrabold leading-none">−</span>
+                  <Icon name="minus" size={16} />
                 </ChromeBtn>
                 <button
                   type="button"

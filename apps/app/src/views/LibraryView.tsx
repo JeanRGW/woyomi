@@ -3,7 +3,7 @@ import type { LibraryEntry, LibraryStatus } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import { useT } from '../i18n'
 import { libraryStatusFilterKey } from '../i18n/messages'
-import { Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader } from '../components'
+import { Btn, Chip, EmptyState, MediaCard, MediaGrid, MediaGridSkeleton, Page, PageHeader } from '../components'
 import { Icon } from '../icons'
 import { navigate } from '../App'
 
@@ -12,9 +12,16 @@ const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'p
 export function LibraryView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
   const [entries, setEntries] = useState<LibraryEntry[]>([])
+  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<LibraryStatus | 'all'>('all')
 
-  const refresh = useCallback(async () => setEntries(await runtime.store.list()), [runtime])
+  const refresh = useCallback(async () => {
+    try {
+      setEntries(await runtime.store.list())
+    } finally {
+      setLoading(false)
+    }
+  }, [runtime])
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -49,7 +56,9 @@ export function LibraryView({ runtime }: { runtime: AppRuntime }) {
           </Chip>
         ))}
       </div>
-      {filtered.length === 0 ? (
+      {loading && entries.length === 0 ? (
+        <MediaGridSkeleton count={12} />
+      ) : filtered.length === 0 ? (
         <EmptyState icon="library" title={t('library.emptyTitle')} hint={t('library.emptyHint')} />
       ) : (
         <MediaGrid>

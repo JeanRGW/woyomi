@@ -3,7 +3,22 @@ import type { HomeSection, SearchResults, Source } from '@woyomi/core'
 import type { AppRuntime } from '../runtime'
 import type { SourceResults } from '@woyomi/core'
 import { useT } from '../i18n'
-import { Banner, Btn, Chip, EmptyState, MediaCard, MediaGrid, Page, PageHeader, SectionHeading, SelectInput, TextInput } from '../components'
+import {
+  Banner,
+  Btn,
+  Chip,
+  EmptyState,
+  HomeRailSkeleton,
+  MediaCard,
+  MediaCardSkeleton,
+  MediaGrid,
+  MediaGridSkeleton,
+  Page,
+  PageHeader,
+  SectionHeading,
+  SelectInput,
+  TextInput
+} from '../components'
 import { Icon } from '../icons'
 
 /** Runs tasks one at a time; a rejected task never blocks the next. */
@@ -127,7 +142,14 @@ function HomeTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[] 
     await runtime.setLandingSources(next)
   }
 
-  if (pinned === null) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (pinned === null) {
+    return (
+      <div>
+        <HomeRailSkeleton />
+        <HomeRailSkeleton />
+      </div>
+    )
+  }
 
   const pinnedSources = avail.filter((s) => pinned.includes(s.id))
   const selectedSource = avail.find((s) => s.id === selected)
@@ -258,10 +280,7 @@ function SectionRail({
           ? result.items.map((m) => <MediaCard key={m.id} media={m} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36" />)
           : !error &&
             Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36">
-                <div className="aspect-[2/3] w-full animate-pulse rounded-xl bg-surface-2" />
-                <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-surface-2" />
-              </div>
+              <MediaCardSkeleton key={i} className="w-[7.5rem] shrink-0 sm:w-32 md:w-36" />
             ))}
         {result?.hasNextPage && (
           <button
@@ -354,18 +373,46 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
         <div className="relative flex-1">
           <Icon name="search" size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
           <TextInput
-            className="pl-10"
+            className="pl-10 pr-10"
             placeholder={t('browse.searchPlaceholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && run()}
           />
+          {query.trim() && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('')
+                setAllResults([])
+                setSingle(null)
+              }}
+              aria-label={t('common.close')}
+              className="absolute right-3 top-1/2 grid size-6 -translate-y-1/2 cursor-pointer place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-fg"
+            >
+              <Icon name="clear" size={16} />
+            </button>
+          )}
         </div>
         <Btn variant="primary" onClick={() => run()} disabled={loading}>
           {loading ? t('browse.searching') : t('browse.search')}
         </Btn>
       </div>
       {error && <Banner tone="error">{error}</Banner>}
+      {loading && !hasResults && !error && (
+        <div className="mt-6">
+          {mode === 'all' ? (
+            sources.slice(0, 3).map((s) => (
+              <div key={s.id}>
+                <SectionHeading title={s.name} />
+                <MediaGridSkeleton count={6} />
+              </div>
+            ))
+          ) : (
+            <MediaGridSkeleton count={12} />
+          )}
+        </div>
+      )}
       {!hasResults && !loading && !error && (
         <div className="mt-6">
           <EmptyState icon="search" title={t('browse.searchEmptyTitle')} hint={t('browse.searchEmptyHint')} />
@@ -379,7 +426,11 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
               title={r.sourceName}
               action={r.error ? <span className="text-xs font-normal normal-case text-danger">{r.error}</span> : undefined}
             />
-            <MediaGrid>{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
+            {r.items.length === 0 && loading && !r.error ? (
+              <MediaGridSkeleton count={6} />
+            ) : (
+              <MediaGrid>{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
+            )}
             {r.hasNextPage && (
               <Btn variant="outline" className="mt-4 w-full" onClick={() => run((r.page ?? 1) + 1)} disabled={loading}>
                 {loading ? t('common.loading') : t('browse.loadMoreFrom', { name: r.sourceName })}

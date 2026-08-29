@@ -7,7 +7,7 @@ import { navigate } from '../App'
 import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { libraryStatusLabelKey, mediaStatusLabelKey, mediaTypeLabelKey } from '../i18n/messages'
-import { BackButton, Banner, Btn, CoverArt, EpisodeRow, Page, SelectInput } from '../components'
+import { BackButton, Banner, Btn, CoverArt, EpisodeRow, MediaDetailSkeleton, Page, SelectInput } from '../components'
 
 const STATUSES: LibraryStatus[] = ['reading', 'plan', 'completed', 'dropped', 'paused']
 
@@ -186,12 +186,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         )}
       </Page>
     )
-  if (!media)
-    return (
-      <div className="grid h-full place-items-center">
-        <p className="text-sm text-muted">{t('common.loading')}</p>
-      </div>
-    )
+  if (!media) return <MediaDetailSkeleton />
 
   const video = isVideoType(media.type)
   const allSeen = episodes.length > 0 && episodes.every((ep) => seen.has(ep.id))

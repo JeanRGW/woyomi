@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isVideoType } from '@woyomi/core'
 import { navigate } from '../App'
-import { Btn, EmptyState, Page, PageHeader } from '../components'
+import { Btn, DownloadRowSkeleton, EmptyState, Page, PageHeader } from '../components'
 import type { DownloadRecord, DownloadState } from '../downloads'
 import { Icon } from '../icons'
 import { useLocale, useT } from '../i18n'
@@ -45,8 +45,15 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
   const locale = useLocale()
   const manager = runtime.downloads
   const [records, setRecords] = useState<DownloadRecord[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const refresh = useCallback(async () => setRecords(manager ? await manager.list() : []), [manager])
+  const refresh = useCallback(async () => {
+    try {
+      setRecords(manager ? await manager.list() : [])
+    } finally {
+      setLoading(false)
+    }
+  }, [manager])
 
   useEffect(() => {
     void refresh()
@@ -62,7 +69,9 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
         </Btn>
       </PageHeader>
 
-      {records.length === 0 ? (
+      {loading && records.length === 0 ? (
+        <DownloadRowSkeleton count={3} />
+      ) : records.length === 0 ? (
         <EmptyState icon="download" title={t('downloads.emptyTitle')} hint={t('downloads.emptyHint')} />
       ) : (
         <div className="flex flex-col gap-2">

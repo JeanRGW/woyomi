@@ -3,15 +3,23 @@ import { isVideoType, type HistoryEntry } from '@woyomi/core'
 import { imageSrc, type AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { useLocale, useT } from '../i18n'
-import { EmptyState, Page, PageHeader } from '../components'
+import { EmptyState, HistoryRowSkeleton, Page, PageHeader, TYPE_ICONS } from '../components'
 import { Icon } from '../icons'
 
 export function HistoryView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
   const locale = useLocale()
   const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const refresh = useCallback(async () => setHistory(await runtime.store.listHistory()), [runtime])
+  const refresh = useCallback(async () => {
+    try {
+      setHistory(await runtime.store.listHistory())
+    } finally {
+      setLoading(false)
+    }
+  }, [runtime])
+
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -31,7 +39,9 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
   return (
     <Page>
       <PageHeader title={t('nav.history')} />
-      {history.length === 0 ? (
+      {loading && history.length === 0 ? (
+        <HistoryRowSkeleton count={4} />
+      ) : history.length === 0 ? (
         <EmptyState icon="history" title={t('history.emptyTitle')} hint={t('history.emptyHint')} />
       ) : (
         <div className="flex flex-col gap-2">
@@ -44,8 +54,8 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
                 {h.media.coverUrl ? (
                   <img className="h-16 w-11 shrink-0 rounded-lg object-cover ring-1 ring-white/5" src={imageSrc(h.media.coverUrl, h.media.coverHeaders) ?? h.media.coverUrl} alt="" loading="lazy" />
                 ) : (
-                  <div className="grid h-16 w-11 shrink-0 place-items-center rounded-lg bg-surface-2 text-sm font-extrabold uppercase text-muted">
-                    {h.media.type.slice(0, 1)}
+                  <div className="grid h-16 w-11 shrink-0 place-items-center rounded-lg bg-surface-2 text-muted">
+                    <Icon name={TYPE_ICONS[h.media.type] ?? 'bookOpen'} size={20} />
                   </div>
                 )}
                 <div className="min-w-0">
