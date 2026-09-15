@@ -3,6 +3,7 @@ import type { StreamSource } from '@woyomi/core'
 import {
   calculateSwipeUnlock,
   clampSeekTarget,
+  decideStallRecovery,
   findFallbackStreamIndex,
   formatStreamLabel,
   formatTime,
@@ -11,9 +12,12 @@ import {
   getStreamIdentity,
   getStreamLabels,
   getVodDuration,
+  isMainHlsFragment,
   isLiveStream,
   isResumeEligible,
   normalizeTimeRanges,
+  playbackFragmentContains,
+  splitStreamOptions,
   SWIPE_UNLOCK_THRESHOLD
 } from './player-state'
 
@@ -106,6 +110,151 @@ describe('normalizeTimeRanges', () => {
       [40, Infinity]
     ])
     expect(ranges).toEqual([[0, 10]])
+  })
+})
+
+describe('repeated HLS fragment stalls', () => {
+  const mushoku720Fragment = {
+    key: 'stream|level:1|sn:39|40.jpg',
+    start: 239.531,
+    end: 246.538
+  }
+
+  it('ignores audio and subtitle activity when tracking main-video loads', () => {
+    expect(isMainHlsFragment({ type: 'main' })).toBe(true)
+    expect(isMainHlsFragment({ type: 'audio' })).toBe(false)
+    expect(isMainHlsFragment({ type: 'subtitle' })).toBe(false)
+    expect(isMainHlsFragment(undefined)).toBe(false)
+  })
+
+  it('recognizes the playhead inside a fragment with a small boundary tolerance', () => {
+    expect(playbackFragmentContains(mushoku720Fragment, 243)).toBe(true)
+    expect(playbackFragmentContains(mushoku720Fragment, 239.4)).toBe(true)
+    expect(playbackFragmentContains(mushoku720Fragment, 239)).toBe(false)
+    expect(playbackFragmentContains(mushoku720Fragment, 246.538)).toBe(false)
+  })
+
+  it('skips precisely past the Mushoku 720p fragment after a repeated stall', () => {
+    const decision = decideStallRecovery({
+      suspectedFragment: mushoku720Fragment,
+      currentFragment: mushoku720Fragment,
+      currentTime: 243,
+      buffered: [[228.8, 259.1]],
+      mainFragmentLoading: false,
+      recoveries: 1,
+      maxRecoveries: 2
+    })
+    expect(decision.action).toBe('skip')
+    if (decision.action === 'skip') expect(decision.target).toBeCloseTo(246.588)
+  })
+
+  it('reloads an ordinary stall without repeat evidence or buffered media beyond the fragment', () => {
+    expect(
+      decideStallRecovery({
+        currentFragment: mushoku720Fragment,
+        currentTime: 243,
+        buffered: [[228.8, 259.1]],
+        mainFragmentLoading: false,
+        recoveries: 0,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: mushoku720Fragment,
+        currentTime: 243,
+        buffered: [[228.8, 259.1]],
+        mainFragmentLoading: false,
+        recoveries: 0,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: mushoku720Fragment,
+        currentTime: 243,
+        buffered: [[228.8, 246.6]],
+        mainFragmentLoading: false,
+        recoveries: 1,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+    // A later range far away is not evidence that the fragment boundary is a
+    // safe landing point.
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: mushoku720Fragment,
+        currentTime: 243,
+        buffered: [[300, 320]],
+        mainFragmentLoading: false,
+        recoveries: 1,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: mushoku720Fragment,
+        currentTime: 243,
+        buffered: [[228.8, 259.1]],
+        mainFragmentLoading: true,
+        recoveries: 1,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+  })
+
+  it('does not skip when the rendition changed or the playhead left the fragment', () => {
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: { ...mushoku720Fragment, key: 'stream|level:0|sn:39|40.jpg' },
+        currentTime: 243,
+        buffered: [[228.8, 259.1]],
+        mainFragmentLoading: false,
+        recoveries: 1,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+    expect(
+      decideStallRecovery({
+        suspectedFragment: mushoku720Fragment,
+        currentFragment: mushoku720Fragment,
+        currentTime: 250,
+        buffered: [[228.8, 259.1]],
+        mainFragmentLoading: false,
+        recoveries: 1,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'reload' })
+  })
+
+  it('fails only after the reload budget is exhausted', () => {
+    expect(
+      decideStallRecovery({
+        currentTime: 243,
+        buffered: [],
+        mainFragmentLoading: false,
+        recoveries: 2,
+        maxRecoveries: 2
+      })
+    ).toEqual({ action: 'fail' })
+  })
+
+  it('still skips a confirmed repeat when the regular reload budget is exhausted', () => {
+    const decision = decideStallRecovery({
+      suspectedFragment: mushoku720Fragment,
+      currentFragment: mushoku720Fragment,
+      currentTime: 243,
+      buffered: [[228.8, 259.1]],
+      mainFragmentLoading: false,
+      recoveries: 2,
+      maxRecoveries: 2
+    })
+    expect(decision.action).toBe('skip')
   })
 })
 
@@ -297,6 +446,31 @@ describe('stream display labels', () => {
     const attempted = new Set([getStreamIdentity(streams[0]!)])
     expect(findFallbackStreamIndex(streams, attempted)).toBe(1)
   })
+
+  it('treats audio variants at the same URL as distinct streams', () => {
+    const streams: StreamSource[] = [
+      { kind: 'hls', url: 'https://video.test/master.m3u8', audio: 'Dublado' },
+      { kind: 'hls', url: 'https://video.test/master.m3u8', audio: 'Legendado' }
+    ]
+    expect(getStreamIdentity(streams[0]!)).not.toBe(getStreamIdentity(streams[1]!))
+  })
+
+  it('never falls back across audio versions', () => {
+    const streams: StreamSource[] = [
+      { quality: '1080p', audio: 'Dublado', kind: 'hls', url: 'https://video.test/dub.m3u8' },
+      { quality: '720p', audio: 'Legendado', kind: 'hls', url: 'https://video.test/leg.m3u8' }
+    ]
+    const attempted = new Set([getStreamIdentity(streams[0]!)])
+    // Dublado failed and there is no other Dublado source: fail instead of
+    // silently switching the language.
+    expect(findFallbackStreamIndex(streams, attempted, 'Dublado')).toBe(-1)
+    // Unlabelled sources (no audio metadata) keep the old provider-order behavior.
+    const untagged: StreamSource[] = [
+      { quality: '1080p', kind: 'hls', url: 'https://video.test/a.m3u8' },
+      { quality: '720p', kind: 'hls', url: 'https://video.test/b.m3u8' }
+    ]
+    expect(findFallbackStreamIndex(untagged, new Set([getStreamIdentity(untagged[0]!)]))).toBe(1)
+  })
 })
 
 describe('calculateSwipeUnlock', () => {
@@ -355,5 +529,39 @@ describe('calculateSwipeUnlock', () => {
     expect(res.unlocked).toBe(false)
     expect(res.failed).toBe(true)
     expect(res.cancelled).toBe(true)
+  })
+})
+
+describe('splitStreamOptions', () => {
+  it('routes audio-labelled streams to the audio menu and keeps original indexes', () => {
+    const streams: StreamSource[] = [
+      { url: 'https://cdn.test/dub.m3u8', kind: 'hls', quality: '1080p', audio: 'Dublado' },
+      { url: 'https://cdn.test/leg.m3u8', kind: 'hls', quality: '720p', audio: 'Legendado' }
+    ]
+    const split = splitStreamOptions(streams)
+    expect(split.audio).toEqual([
+      { value: 'stream:0', label: 'Dublado' },
+      { value: 'stream:1', label: 'Legendado' }
+    ])
+    expect(split.quality).toEqual([])
+  })
+
+  it('keeps streams without audio in the quality menu with their deduped labels', () => {
+    const streams: StreamSource[] = [
+      { url: 'https://cdn.test/a.mp4', kind: 'mp4', quality: '720p' },
+      { url: 'https://cdn.test/b.mp4', kind: 'mp4', quality: '720p' },
+      { url: 'https://cdn.test/c.m3u8', kind: 'hls', quality: '1080p', audio: 'Dublado' }
+    ]
+    const split = splitStreamOptions(streams)
+    expect(split.audio).toEqual([{ value: 'stream:2', label: 'Dublado' }])
+    expect(split.quality).toEqual([
+      { value: 'stream:0', label: '720p (MP4) (1)' },
+      { value: 'stream:1', label: '720p (MP4) (2)' }
+    ])
+  })
+
+  it('falls back to the kind when a stream has no quality label', () => {
+    const split = splitStreamOptions([{ url: 'https://cdn.test/a.mp4', kind: 'mp4' }])
+    expect(split.quality).toEqual([{ value: 'stream:0', label: 'MP4' }])
   })
 })

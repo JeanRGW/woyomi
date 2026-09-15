@@ -36,8 +36,9 @@ export const ChapterContentSchema = z.discriminatedUnion('type', [
 
 export const StreamSourceSchema = z.object({
   url: z.string(),
-  kind: z.enum(['hls', 'mp4']),
+  kind: z.enum(['hls', 'mp4', 'dash']),
   quality: z.string().optional(),
+  audio: z.string().optional(),
   headers: z.record(z.string()).optional()
 })
 

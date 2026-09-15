@@ -15,6 +15,7 @@
   "dependencies": {
     "@woyomi/core": "workspace:*",
     "@tauri-apps/plugin-sql": "^2.4.0",
+    "dashjs": "^4.7.4",
     "hls.js": "^1.5.20",
     "linkedom": "^0.18.13",
     "marked": "^14.0.0",

@@ -11,7 +11,7 @@ export type MediaStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled'
 
 export type LibraryStatus = 'reading' | 'plan' | 'completed' | 'dropped' | 'paused'
 
-export type StreamKind = 'hls' | 'mp4'
+export type StreamKind = 'hls' | 'mp4' | 'dash'
 
 export interface Media {
   /** globally unique: `${sourceId}/${mediaId}` */
@@ -55,7 +55,15 @@ export type ChapterContent =
 export interface StreamSource {
   url: string
   kind: StreamKind
+  /** Display hint for the video quality (e.g. `1080p`); not guaranteed to be a rendition list. */
   quality?: string
+  /**
+   * Display label of the audio version (e.g. `Dublado`, `Legendado`), stable
+   * across episodes so hosts can offer an audio menu and persist a preference.
+   * Set when a source delivers each audio variant as its own stream; leave
+   * unset for HLS masters that embed their audio tracks.
+   */
+  audio?: string
   headers?: Record<string, string>
 }
 

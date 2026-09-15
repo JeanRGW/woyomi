@@ -969,14 +969,23 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
         .to_ip()
         .ok_or_else(|| "stream proxy address is not an IP address".to_string())?
         .port();
-    // No total timeout on the proxy client — a 122MB stream must not be
-    // aborted mid-download like the 15s fetch_url client would.
-    let client = reqwest::blocking::Client::builder()
+    // No total timeout on the proxy — a 122MB stream must not be aborted
+    // mid-download like the 15s fetch_url client would. The async client's
+    // per-read timeout instead drops connections that go silent (a stalled
+    // segment), so the player errors and retries quickly.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|e| format!("build stream proxy runtime: {e}"))?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("build stream proxy client: {e}"))?;
     let _stream_proxy = std::thread::Builder::new()
         .name("woyomi-stream-proxy".to_string())
-        .spawn(move || serve_streams(server, downloads_root, client))
+        .spawn(move || serve_streams(server, downloads_root, Arc::new(runtime), client))
         .map_err(|e| format!("start stream proxy: {e}"))?;
     *current = Some(port);
     Ok(port)
@@ -985,10 +994,12 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
 fn serve_streams(
     server: tiny_http::Server,
     downloads_root: PathBuf,
-    client: reqwest::blocking::Client,
+    runtime: Arc<tokio::runtime::Runtime>,
+    client: reqwest::Client,
 ) {
     for request in server.incoming_requests() {
         let client = client.clone();
+        let runtime = runtime.clone();
         let downloads_root = downloads_root.clone();
         let _ = std::thread::spawn(move || {
             let result = if matches!(request.method(), tiny_http::Method::Options) {
@@ -998,7 +1009,7 @@ fn serve_streams(
             } else if request.url().starts_with("/covers/") {
                 serve_cover(&downloads_root, request)
             } else {
-                proxy_one(&client, request)
+                proxy_one(runtime, &client, request)
             };
             if let Err(error) = result {
                 eprintln!("stream proxy: {error}");
@@ -1071,7 +1082,8 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
 }
 
 fn proxy_one(
-    client: &reqwest::blocking::Client,
+    runtime: Arc<tokio::runtime::Runtime>,
+    client: &reqwest::Client,
     request: tiny_http::Request,
 ) -> Result<(), String> {
     // tiny_http gives the path+query (relative); parse against a dummy base so
@@ -1103,8 +1115,8 @@ fn proxy_one(
         }
     }
 
-    let resp = builder
-        .send()
+    let mut resp = runtime
+        .block_on(async { builder.send().await })
         .map_err(|e| format!("upstream request failed: {e}"))?;
     let status = resp.status();
 
@@ -1130,16 +1142,107 @@ fn proxy_one(
         }
     }
 
-    struct UpstreamBody(reqwest::blocking::Response);
-    impl Read for UpstreamBody {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.0.read(buf)
+    // Small responses (playlists, media segments) are read fully before
+    // responding: if the upstream goes silent, the player gets a clean 502 it
+    // can retry immediately instead of a truncated 200 left hanging on the
+    // keep-alive socket. Large bodies stream immediately; unknown-sized bodies
+    // are probed up to the limit first.
+    const BUFFER_LIMIT: u64 = 12 * 1024 * 1024;
+    let mut prefix: Vec<u8> = Vec::new();
+    match resp.content_length() {
+        Some(length) if length <= BUFFER_LIMIT => {
+            let body = match runtime.block_on(resp.bytes()) {
+                Ok(body) => body,
+                Err(error) => {
+                    eprintln!("stream proxy: upstream body stalled: {error}");
+                    return respond_stream_failure(request);
+                }
+            };
+            let length = body.len();
+            return request
+                .respond(response.with_data(std::io::Cursor::new(body), Some(length)))
+                .map_err(|e| format!("respond: {e}"));
+        }
+        Some(_) => {}
+        None => {
+            let mut failure: Option<reqwest::Error> = None;
+            while prefix.len() < BUFFER_LIMIT as usize {
+                match runtime.block_on(resp.chunk()) {
+                    Ok(Some(chunk)) if !chunk.is_empty() => prefix.extend_from_slice(&chunk),
+                    Ok(_) => break,
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+            }
+            if let Some(error) = failure {
+                eprintln!("stream proxy: upstream body stalled: {error}");
+                return respond_stream_failure(request);
+            }
+            if prefix.len() < BUFFER_LIMIT as usize {
+                let length = prefix.len();
+                return request
+                    .respond(response.with_data(std::io::Cursor::new(prefix), Some(length)))
+                    .map_err(|e| format!("respond: {e}"));
+            }
         }
     }
 
-    let stream = UpstreamBody(resp);
+    // Pull async body chunks on this (blocking) proxy thread. A silent upstream
+    // makes `chunk()` fail after the client's read timeout, which aborts the
+    // response so the player can retry instead of spinning forever. Any bytes
+    // probed above are served from `pending` first.
+    struct UpstreamBody {
+        runtime: Arc<tokio::runtime::Runtime>,
+        response: reqwest::Response,
+        pending: Vec<u8>,
+        offset: usize,
+    }
+    impl Read for UpstreamBody {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.offset >= self.pending.len() {
+                self.pending.clear();
+                self.offset = 0;
+                let chunk = self
+                    .runtime
+                    .block_on(self.response.chunk())
+                    .map_err(std::io::Error::other)?;
+                match chunk {
+                    Some(bytes) if !bytes.is_empty() => self.pending.extend_from_slice(&bytes),
+                    _ => return Ok(0),
+                }
+            }
+            let available = &self.pending[self.offset..];
+            let length = available.len().min(buf.len());
+            buf[..length].copy_from_slice(&available[..length]);
+            self.offset += length;
+            Ok(length)
+        }
+    }
+
+    let stream = UpstreamBody {
+        runtime,
+        response: resp,
+        pending: prefix,
+        offset: 0,
+    };
     request
         .respond(response.with_data(stream, None))
+        .map_err(|e| format!("respond: {e}"))
+}
+
+/// A proxied upstream failure the player can retry (CORS-visible, no body).
+fn respond_stream_failure(request: tiny_http::Request) -> Result<(), String> {
+    request
+        .respond(
+            tiny_http::Response::empty(502)
+                .with_header(response_header("Access-Control-Allow-Origin", "*")?)
+                .with_header(response_header(
+                    "Access-Control-Expose-Headers",
+                    "Content-Length, Content-Range, Accept-Ranges",
+                )?),
+        )
         .map_err(|e| format!("respond: {e}"))
 }
 

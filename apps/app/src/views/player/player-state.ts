@@ -154,6 +154,84 @@ export function clampSeekTarget(target: number, duration: number, seekable?: rea
   return Math.min(safeTarget, duration)
 }
 
+/** An HLS rendition fragment associated with the current playhead. */
+export interface PlaybackFragment {
+  /** Stable across a same-stream rebuild; includes stream, rendition, and fragment identity. */
+  key: string
+  start: number
+  end: number
+}
+
+/** hls.js reports audio and subtitle fragment activity through the same events. */
+export function isMainHlsFragment(fragment: { type: string } | null | undefined): boolean {
+  return fragment?.type === 'main'
+}
+
+/**
+ * Whether the playhead is still inside the fragment implicated by a stall.
+ * A small leading tolerance accounts for media-element timestamps landing just
+ * before the fragment boundary.
+ */
+export function playbackFragmentContains(
+  fragment: PlaybackFragment,
+  currentTime: number,
+  lead = 0.15
+): boolean {
+  if (!Number.isFinite(currentTime) || !Number.isFinite(fragment.start) || !Number.isFinite(fragment.end)) return false
+  if (fragment.end <= fragment.start) return false
+  return currentTime >= fragment.start - lead && currentTime < fragment.end
+}
+
+/**
+ * Recovery decision for a stalled stream. Skipping is allowed only when the
+ * same stream/rendition fragment failed before, the playhead is still inside
+ * it, no main fragment is loading, and media immediately beyond its end is
+ * already buffered. Ordinary network stalls therefore reload at the same
+ * position instead of silently discarding content.
+ */
+export type StallRecoveryDecision =
+  | { action: 'reload' }
+  | { action: 'skip'; target: number }
+  | { action: 'fail' }
+
+export interface StallRecoveryInput {
+  suspectedFragment?: PlaybackFragment
+  currentFragment?: PlaybackFragment
+  currentTime: number
+  buffered: readonly TimeRange[]
+  mainFragmentLoading: boolean
+  recoveries: number
+  maxRecoveries: number
+}
+
+export function decideStallRecovery({
+  suspectedFragment,
+  currentFragment,
+  currentTime,
+  buffered,
+  mainFragmentLoading,
+  recoveries,
+  maxRecoveries
+}: StallRecoveryInput): StallRecoveryDecision {
+  const repeatedFragment =
+    recoveries > 0 &&
+    suspectedFragment !== undefined &&
+    currentFragment !== undefined &&
+    suspectedFragment.key === currentFragment.key &&
+    playbackFragmentContains(currentFragment, currentTime)
+
+  if (repeatedFragment && !mainFragmentLoading) {
+    const target = currentFragment.end + 0.05
+    const hasBufferedLanding = normalizeTimeRanges(buffered).some(
+      ([start, end]) => start <= target + 0.25 && end > target + 0.25
+    )
+    if (hasBufferedLanding) return { action: 'skip', target }
+  }
+
+  if (recoveries >= maxRecoveries) return { action: 'fail' }
+  return { action: 'reload' }
+}
+
 /** Selects buffered end time around or ahead of currentTime. */
 export function getBufferedEnd(buffered: readonly TimeRange[], currentTime = 0): number {
   const safeTime = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0
@@ -242,15 +320,59 @@ export function getStreamLabels(streams: readonly StreamSource[]): string[] {
   return finalLabels
 }
 
+/** A player-menu entry pointing at a stream by its original index. */
+export interface StreamOption {
+  value: string
+  label: string
+}
+
+/**
+ * Splits plugin streams into the two player menus:
+ * - `audio`: streams that declare an `audio` version (Dublado/Legendado) — the
+ *   audio menu;
+ * - `quality`: everything else (quality/provider variants) — stays in the
+ *   quality menu next to the HLS rendition levels.
+ * `value` keeps the original `stream:<index>` so selection maps back to `streams`.
+ */
+export function splitStreamOptions(streams: readonly StreamSource[]): { audio: StreamOption[]; quality: StreamOption[] } {
+  const labels = getStreamLabels(streams)
+  const audio: StreamOption[] = []
+  const quality: StreamOption[] = []
+  for (let index = 0; index < streams.length; index++) {
+    const stream = streams[index]!
+    const value = `stream:${index}`
+    const audioLabel = stream.audio?.trim()
+    if (audioLabel) {
+      audio.push({ value, label: audioLabel })
+    } else {
+      quality.push({ value, label: labels[index] ?? stream.kind.toUpperCase() })
+    }
+  }
+  return { audio, quality }
+}
+
 /** Stable stream identity used to avoid retrying duplicate provider entries. */
 export function getStreamIdentity(stream: StreamSource): string {
   const headers = Object.entries(stream.headers ?? {}).sort(([left], [right]) => left.localeCompare(right))
-  return JSON.stringify([stream.kind, stream.url, headers])
+  return JSON.stringify([stream.kind, stream.url, headers, stream.audio?.trim() ?? ''])
 }
 
-/** First provider-ordered stream whose effective URL/header tuple has not failed. */
-export function findFallbackStreamIndex(streams: readonly StreamSource[], attempted: ReadonlySet<string>): number {
-  return streams.findIndex((stream) => !attempted.has(getStreamIdentity(stream)))
+/**
+ * First provider-ordered stream whose effective URL/header tuple has not
+ * failed *and* whose audio version matches the one being played. Falling back
+ * across audio versions (Dublado -> Legendado) would silently change the
+ * language, so a source without a same-audio alternative surfaces the error
+ * instead.
+ */
+export function findFallbackStreamIndex(
+  streams: readonly StreamSource[],
+  attempted: ReadonlySet<string>,
+  audio?: string
+): number {
+  const wanted = audio?.trim() ?? ''
+  return streams.findIndex(
+    (stream) => !attempted.has(getStreamIdentity(stream)) && (stream.audio?.trim() ?? '') === wanted
+  )
 }
 
 /** Evaluates swipe-to-unlock gesture. Horizontal swipe must dominate vertical and exceed threshold. */

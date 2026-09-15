@@ -52,7 +52,10 @@ export interface PlayerControlsState {
   hasPrevious: boolean
   hasNext: boolean
   nextUnavailableOffline: boolean
-  canChooseQuality: boolean
+  /** Playback failed and another source/quality is worth offering. */
+  canChooseSource: boolean
+  /** Menu that lists the alternative sources/qualities for the error screen. */
+  sourceMenu: PlayerMenu
   canUsePictureInPicture: boolean
   inPictureInPicture: boolean
   canUseFullscreen: boolean
@@ -522,7 +525,7 @@ export function PlayerControls({ state, actions }: { state: PlayerControlsState;
             <p className="text-sm font-bold text-white">{state.fatalError}</p>
             <div className="flex gap-2">
               <button type="button" onClick={actions.retry} className="min-h-11 rounded-xl bg-accent px-5 text-sm font-bold text-white">{t('player.retry')}</button>
-              {state.canChooseQuality && <button type="button" onClick={() => actions.setMenu('quality')} className="min-h-11 rounded-xl bg-white/10 px-5 text-sm font-bold text-white">{t('player.chooseSource')}</button>}
+              {state.canChooseSource && <button type="button" onClick={() => actions.setMenu(state.sourceMenu)} className="min-h-11 rounded-xl bg-white/10 px-5 text-sm font-bold text-white">{t('player.chooseSource')}</button>}
               <button type="button" onClick={actions.back} className="min-h-11 rounded-xl bg-white/10 px-5 text-sm font-bold text-white">{t('common.back')}</button>
             </div>
           </div>

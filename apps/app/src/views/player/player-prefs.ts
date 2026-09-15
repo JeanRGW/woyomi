@@ -10,7 +10,10 @@ export interface PlayerPrefs {
   fit: PlayerFit
   autoNext: boolean
   autoRotate: boolean
+  /** Level label chosen in the quality menu (`''` = auto); audio never lands here. */
   preferredQuality: string
+  /** Audio label chosen among per-audio streams (`''` = plugin order). */
+  preferredAudio: string
   subtitleLanguage: string
 }
 
@@ -22,6 +25,7 @@ export const DEFAULT_PLAYER_PREFS: PlayerPrefs = {
   autoNext: false,
   autoRotate: true,
   preferredQuality: '',
+  preferredAudio: '',
   subtitleLanguage: ''
 }
 
@@ -53,6 +57,8 @@ export function validatePlayerPref<K extends keyof PlayerPrefs>(key: K, value: u
       return (typeof value === 'boolean' ? value : DEFAULT_PLAYER_PREFS.autoRotate) as PlayerPrefs[K]
     case 'preferredQuality':
       return (typeof value === 'string' && value.length <= 160 ? value : DEFAULT_PLAYER_PREFS.preferredQuality) as PlayerPrefs[K]
+    case 'preferredAudio':
+      return (typeof value === 'string' && value.length <= 160 ? value : DEFAULT_PLAYER_PREFS.preferredAudio) as PlayerPrefs[K]
     case 'subtitleLanguage':
       return (typeof value === 'string' && value.length <= 64 ? value : DEFAULT_PLAYER_PREFS.subtitleLanguage) as PlayerPrefs[K]
     default:

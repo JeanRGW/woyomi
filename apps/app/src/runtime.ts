@@ -87,6 +87,138 @@ export function playableStreamUrl(stream: { url: string; headers?: Record<string
   return Promise.resolve(proxiedHref(stream.url, stream.headers) ?? stream.url)
 }
 
+/**
+ * Rewrite a DASH manifest's segment templates so each segment request rides
+ * the same stream proxy as the manifest itself.
+ *
+ * DASH manifests (e.g. akumast.net) reference segments with root-relative
+ * templates (`media="/i/.../$RepresentationID$/$Number$.jpg"`). After the
+ * manifest is loaded through the localhost `/stream` (or web `/api/stream`)
+ * proxy, dash.js would resolve those against the proxy base and 404. Wrapping
+ * each template in an absolute proxied URL keeps segments header-gated
+ * (Referer) and CORS-clean (proxy answers `Access-Control-Allow-Origin: *`).
+ *
+ * `$` variables are preserved verbatim (URL-encoding would turn them into
+ * `%24` and break dash.js substitution). No-op when the manifest isn't
+ * proxied (direct URL: relative segments resolve naturally).
+ */
+export function rewriteDashManifest(manifest: string, realManifestUrl: string, proxiedManifestUrl: string): string {
+  if (!manifest || proxiedManifestUrl === realManifestUrl) return manifest
+  const queryIndex = proxiedManifestUrl.indexOf('?')
+  if (queryIndex < 0) return manifest
+  const base = proxiedManifestUrl.slice(0, queryIndex)
+  const params = new URLSearchParams(proxiedManifestUrl.slice(queryIndex + 1))
+  if (!params.has('url')) return manifest
+  const headersParam = params.get('headers') ?? '{}'
+  const token = params.get('token')
+  let origin: string
+  try {
+    origin = new URL(realManifestUrl).origin
+  } catch {
+    return manifest
+  }
+  const wrap = (template: string): string => {
+    const absolute = /^https?:\/\//.test(template)
+      ? template
+      : `${origin}${template.startsWith('/') ? '' : '/'}${template}`
+    if (/^https?:\/\//.test(absolute)) {
+      try {
+        if (new URL(absolute).origin !== origin) return template
+      } catch {
+        return template
+      }
+    }
+    const next = new URLSearchParams()
+    next.set('url', absolute)
+    next.set('headers', headersParam)
+    if (token) next.set('token', token)
+    // The URL is embedded in an XML attribute: a raw `&` separator makes the
+    // manifest not well-formed and dash.js fails with MANIFEST parsing code 10.
+    // The XML parser decodes `&amp;` back, so requests still carry both params.
+    return `${base}?${next.toString().replaceAll('%24', '$').replaceAll('&', '&amp;')}`
+  }
+  return manifest.replace(/(media|initialization)="([^"]+)"/g, (match, attr: string, template: string) => {
+    if (/^https?:\/\//.test(template)) {
+      try {
+        if (new URL(template).origin !== origin) return match
+      } catch {
+        return match
+      }
+      return `${attr}="${wrap(template)}"`
+    }
+    if (!template.startsWith('/')) return match
+    return `${attr}="${wrap(template)}"`
+  })
+}
+
+/**
+ * Rewrite an HLS playlist fetched through the app's stream proxy so every URI
+ * it references (variant playlists, media segments, `EXT-X-MAP` init sections)
+ * rides the same proxy.
+ *
+ * HLS manifests reference media with relative paths (`DFt9.../p.jpg`). hls.js
+ * resolves those against the playlist's response URL — the proxied URL
+ * (`http://127.0.0.1:<port>/stream?...`) — so a relative URI would become
+ * `http://127.0.0.1:<port>/DFt9.../p.jpg` and 404 at the proxy. Wrapping each
+ * URI keeps segments header-gated (Referer) and CORS-clean (proxy answers
+ * `Access-Control-Allow-Origin: *`).
+ *
+ * HLS is line-based, not XML, so raw `&` separators are fine (unlike DASH).
+ * Absolute URIs on another origin (CDNs that serve their own CORS), non-http
+ * schemes (`data:`, `skd:`) and broken refs are kept untouched. No-op when the
+ * playlist isn't proxied (relative URIs already resolve upstream).
+ */
+export function rewriteHlsPlaylist(playlist: string, proxiedPlaylistUrl: string): string {
+  if (!playlist) return playlist
+  const queryIndex = proxiedPlaylistUrl.indexOf('?')
+  if (queryIndex < 0) return playlist
+  const base = proxiedPlaylistUrl.slice(0, queryIndex)
+  const params = new URLSearchParams(proxiedPlaylistUrl.slice(queryIndex + 1))
+  const target = params.get('url')
+  if (!target) return playlist
+  const headersParam = params.get('headers') ?? '{}'
+  const token = params.get('token')
+  let origin: string
+  try {
+    origin = new URL(target).origin
+  } catch {
+    return playlist
+  }
+  const wrap = (uri: string): string => {
+    let absolute = uri
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(uri)) {
+      try {
+        absolute = new URL(uri, target).toString()
+      } catch {
+        return uri
+      }
+    }
+    if (!/^https?:\/\//i.test(absolute)) return uri
+    try {
+      if (new URL(absolute).origin !== origin) return uri
+    } catch {
+      return uri
+    }
+    const next = new URLSearchParams()
+    next.set('url', absolute)
+    next.set('headers', headersParam)
+    if (token) next.set('token', token)
+    return `${base}?${next.toString()}`
+  }
+  return playlist
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim()
+      if (!trimmed) return line
+      if (trimmed.startsWith('#')) {
+        // URI attributes (EXT-X-MAP, EXT-X-KEY, EXT-X-MEDIA, ...)
+        return line.replace(/URI="([^"]*)"/g, (match, uri: string) => (uri ? `URI="${wrap(uri)}"` : match))
+      }
+      return wrap(trimmed)
+    })
+    .join('\n')
+}
+
 /** Upper bound on an installable plugin bundle, to keep installs sane. */
 const MAX_PLUGIN_BYTES = 5 * 1024 * 1024
 

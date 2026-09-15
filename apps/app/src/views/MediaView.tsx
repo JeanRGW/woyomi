@@ -163,7 +163,8 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       }
       const available = await manager.getVideoQualities(media, episode)
       if (available.length === 0) {
-        setError(t('downloads.hlsUnsupported'))
+        const streams = await runtime.engine.getStreams(sourceId, media, episode).catch(() => [])
+        setError(t(streams.some((s) => s.kind === 'dash') ? 'downloads.dashUnsupported' : 'downloads.hlsUnsupported'))
         return
       }
       const saved = await runtime.engine.prefs.get<string>('__app', 'downloads.videoQuality')

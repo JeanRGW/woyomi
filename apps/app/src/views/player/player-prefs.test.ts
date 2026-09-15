@@ -103,6 +103,7 @@ describe('loadPlayerPrefs', () => {
     await prefsApi.set('__app', 'player.autoNext', true)
     await prefsApi.set('__app', 'player.autoRotate', false)
     await prefsApi.set('__app', 'player.preferredQuality', '720p')
+    await prefsApi.set('__app', 'player.preferredAudio', 'Legendado')
     await prefsApi.set('__app', 'player.subtitleLanguage', 'pt')
 
     const loaded = await loadPlayerPrefs(prefsApi)
@@ -114,6 +115,7 @@ describe('loadPlayerPrefs', () => {
       autoNext: true,
       autoRotate: false,
       preferredQuality: '720p',
+      preferredAudio: 'Legendado',
       subtitleLanguage: 'pt'
     })
   })

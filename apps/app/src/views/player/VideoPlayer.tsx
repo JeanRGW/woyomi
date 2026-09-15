@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import Hls, { type Level, type MediaPlaylist } from 'hls.js'
-import type { Episode, Media, StreamSource } from '@woyomi/core'
-import { imageSrc, playableStreamUrl, type AppRuntime } from '../../runtime'
+import Hls, {
+  type Fragment,
+  type Level,
+  type LoaderCallbacks,
+  type LoaderConfiguration,
+  type LoaderContext,
+  type MediaPlaylist,
+  type PlaylistLoaderContext
+} from 'hls.js'
+import type { Episode, Media, PreferencesApi, StreamSource } from '@woyomi/core'
+import { imageSrc, playableStreamUrl, rewriteDashManifest, rewriteHlsPlaylist, type AppRuntime } from '../../runtime'
 import { useT } from '../../i18n'
 import {
   PlayerControls,
@@ -20,14 +28,19 @@ import {
 import {
   calculateSwipeUnlock,
   clampSeekTarget,
+  decideStallRecovery,
   findFallbackStreamIndex,
   formatTime,
   getBufferedEnd,
   getStreamIdentity,
   getStreamLabels,
   getVodDuration,
+  isMainHlsFragment,
   isLiveStream,
-  isResumeEligible
+  isResumeEligible,
+  playbackFragmentContains,
+  splitStreamOptions,
+  type PlaybackFragment
 } from './player-state'
 import {
   canUsePictureInPicture,
@@ -106,9 +119,114 @@ interface KeyboardActions {
   closeMenu(): void
 }
 
+/** Best-effort rolling log of recovery events, readable from the app DB (`__app/debug.player`). */
+function recordPlayerDebug(prefs: PreferencesApi, event: string, detail: Record<string, unknown> = {}): void {
+  const entry = { at: Date.now(), event, ...detail }
+  console.warn('[player]', entry)
+  void prefs
+    .get<string>('__app', 'debug.player')
+    .then((previous) => {
+      let events: unknown[] = []
+      if (typeof previous === 'string' && previous) {
+        try {
+          events = JSON.parse(previous) as unknown[]
+        } catch {
+          events = []
+        }
+      }
+      events.push(entry)
+      return prefs.set('__app', 'debug.player', JSON.stringify(events.slice(-8)))
+    })
+    .catch(() => undefined)
+}
+
 const AUTO_HIDE_MS = 3000
 const AUTO_NEXT_SECONDS = 8
 const HLS_RETRY_LIMIT = 2
+/**
+ * Stall watchdog: WebKitGTK's MSE pipeline (and the odd stalled download) can
+ * wedge without hls.js emitting a fatal error, leaving an endless spinner. The
+ * player samples progress and rebuilds the same source — the manual recovery
+ * users found (switching streams) — while preserving position and play state.
+ * A frozen picture with data buffered is a wedge (shorter timeout); a starved
+ * buffer gets more time before we tear the download down.
+ */
+const STALL_WATCH_INTERVAL_MS = 500
+const STALL_WEDGE_MS = 4000
+const STALL_STARVED_MS = 8000
+const STALL_STARVED_LOADING_MS = 12000
+const STALL_MAX_RECOVERIES = 2
+const STALL_STABLE_MS = 30000
+/**
+ * A jump past an unplayable fragment can leave WebKitGTK's MSE pipeline
+ * starved even though the target fragment is intact; the manual unstick users
+ * found is a source rebuild. When a jump does not resume playback this fast —
+ * and no fragment download is in flight — rebuild right away instead of waiting
+ * out the stall tiers. Post-jump rebuilds get their own small budget: they are
+ * part of crossing the unplayable fragment, not a normal stall recovery.
+ */
+const POST_SKIP_GRACE_MS = 1200
+const POST_SKIP_MAX_WAIT_MS = 4000
+const POST_SKIP_MAX_REBUILDS = 1
+/** A seek that never resolves (wedged pipeline) counts as stalled after this. */
+const SEEK_STUCK_MS = 5000
+
+function toPlaybackFragment(streamIdentity: string, fragment: Fragment): PlaybackFragment | undefined {
+  if (!isMainHlsFragment(fragment) || typeof fragment.sn !== 'number') return undefined
+  const start = fragment.start
+  const end = fragment.end
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return undefined
+  return {
+    key: JSON.stringify([streamIdentity, fragment.level, fragment.sn, fragment.relurl ?? fragment.url]),
+    start,
+    end
+  }
+}
+
+function fragmentLoadKey(
+  streamIdentity: string,
+  fragment: Fragment,
+  part?: { index: number } | null
+): string | undefined {
+  if (!isMainHlsFragment(fragment)) return undefined
+  return JSON.stringify([
+    streamIdentity,
+    fragment.level,
+    fragment.sn,
+    fragment.relurl ?? fragment.url,
+    part?.index ?? null
+  ])
+}
+
+/**
+ * Playlist loader that rewrites every playlist fetched through the app's
+ * stream proxy so its relative URIs keep pointing upstream (see
+ * `rewriteHlsPlaylist`). Playlists fetched directly pass through untouched;
+ * fragments (segments, init sections) load through the default loader because
+ * their URLs already come rewritten from the playlist.
+ */
+class ProxiedPlaylistLoader extends Hls.DefaultConfig.loader {
+  // hls.js types the base loader's context as the generic LoaderContext; the
+  // playlist loader narrows it to PlaylistLoaderContext (no runtime change).
+  declare context: PlaylistLoaderContext | null
+
+  load(
+    context: PlaylistLoaderContext,
+    config: LoaderConfiguration,
+    callbacks: LoaderCallbacks<PlaylistLoaderContext>
+  ): void {
+    const onSuccess = callbacks.onSuccess
+    callbacks.onSuccess = (response, stats, ctx, networkDetails) => {
+      const data = response.data
+      if (typeof data === 'string') {
+        const rewritten = rewriteHlsPlaylist(data, ctx.url)
+        if (rewritten !== data) response = { ...response, data: rewritten }
+      }
+      onSuccess(response, stats, ctx, networkDetails)
+    }
+    super.load(context as LoaderContext, config, callbacks as unknown as LoaderCallbacks<LoaderContext>)
+  }
+}
 
 export function VideoPlayer({
   runtime,
@@ -129,6 +247,16 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls>()
   const hlsLiveRef = useRef<boolean>()
+  interface DashPlayer {
+    destroy(): void
+    initialize(video: HTMLVideoElement, url: string, autoplay: boolean): void
+    on(event: string, handler: (e?: { newQuality?: number }) => void): void
+    updateSettings(settings: { streaming: { abr: { autoSwitchBitrate: { video: boolean } } } }): void
+    setQualityFor(type: string, value: number): void
+    getBitrateInfoListFor(type: string): Array<{ qualityIndex: number; height: number; bitrate: number }>
+  }
+  const dashRef = useRef<DashPlayer>()
+  const dashAutoRef = useRef(true)
   const streamKindRef = useRef<StreamSource['kind']>('mp4')
   const wakeLockRef = useRef<{ release(): Promise<void> }>()
   const hideTimerRef = useRef<number>()
@@ -147,6 +275,23 @@ export function VideoPlayer({
   const mediaFailureRef = useRef<(message: string) => void>(() => undefined)
   const attemptedStreamsRef = useRef(new Set<string>())
   const lastPositionSaveRef = useRef(0)
+  // Stall watchdog: last observed playback position/time, and the rebuild budget.
+  const lastProgressRef = useRef({ time: 0, at: Date.now() })
+  const stallRecoveriesRef = useRef(0)
+  const stallRecoveryAtRef = useRef(0)
+  const seekingSinceRef = useRef(0)
+  // Exact main-rendition fragment at the playhead, plus one fragment that
+  // already stalled and was retried at the same position.
+  const playingFragmentRef = useRef<PlaybackFragment>()
+  const suspectedFragmentRef = useRef<PlaybackFragment>()
+  const activeStreamIdentityRef = useRef<string>()
+  // Only main-video fragment activity counts. Subtitle/audio requests must not
+  // make the watchdog mistake a decoder wedge for a slow network.
+  const loadingMainFragmentKeysRef = useRef(new Set<string>())
+  // Jump in progress whose seek has not resumed playback yet, and the rebuild
+  // budget for those (they do not consume the stall budget).
+  const pendingRebuildRef = useRef<{ at: number; from: number; target: number }>()
+  const postSkipRebuildsRef = useRef(0)
   const selectionInitializedRef = useRef(false)
   const preferredLevelAppliedRef = useRef(false)
   const subtitlePreferenceAppliedRef = useRef(false)
@@ -189,8 +334,14 @@ export function VideoPlayer({
   const [seekFeedback, setSeekFeedback] = useState<string>()
   const [resumeTime, setResumeTime] = useState<string>()
   const [fatalError, setFatalError] = useState<string>()
+  // Mirrors `fatalError` for the watchdog tick, which must clear a stale error
+  // overlay once playback recovers on its own.
+  const fatalErrorRef = useRef<string>()
+  fatalErrorRef.current = fatalError
   const [autoNextSeconds, setAutoNextSeconds] = useState<number>()
   const [autoNextCancelled, setAutoNextCancelled] = useState(false)
+  // Rendition levels for the quality menu; populated by hls.js or dash.js
+  // (dash reuses the same state — the menu + `level:` selection are player-agnostic).
   const [hlsLevels, setHlsLevels] = useState<HlsLevelChoice[]>([])
   const [selectedLevel, setSelectedLevel] = useState(-1)
   const [subtitleTracks, setSubtitleTracks] = useState<TrackChoice[]>([])
@@ -224,6 +375,16 @@ export function VideoPlayer({
     closeMenu: () => setMenu(undefined)
   }
 
+  function resetStallRecoveryHistory(): void {
+    playingFragmentRef.current = undefined
+    suspectedFragmentRef.current = undefined
+    stallRecoveriesRef.current = 0
+    stallRecoveryAtRef.current = 0
+    pendingRebuildRef.current = undefined
+    postSkipRebuildsRef.current = 0
+    lastProgressRef.current = { time: videoRef.current?.currentTime ?? 0, at: Date.now() }
+  }
+
   useEffect(() => {
     let cancelled = false
     getPlaybackPosition(runtime.engine.prefs, episode.id).then((position) => {
@@ -239,9 +400,19 @@ export function VideoPlayer({
   useEffect(() => {
     if (!prefsLoaded || selectionInitializedRef.current) return
     selectionInitializedRef.current = true
+    if (prefs.preferredAudio) {
+      const audioIndex = streams.findIndex((stream) => stream.audio?.trim() === prefs.preferredAudio)
+      if (audioIndex >= 0) {
+        setSelectedStreamIndex(audioIndex)
+        return
+      }
+    }
+    // Sources without per-audio streams keep the legacy behavior where the
+    // quality preference doubles as the provider/quality stream label.
+    if (streams.some((stream) => stream.audio?.trim())) return
     const preferredIndex = getStreamLabels(streams).findIndex((label) => label === prefs.preferredQuality)
     if (preferredIndex >= 0) setSelectedStreamIndex(preferredIndex)
-  }, [prefsLoaded, prefs.preferredQuality, streams])
+  }, [prefsLoaded, prefs.preferredAudio, prefs.preferredQuality, streams])
 
   useEffect(() => {
     if (prefsLoaded) enterAndroidPlayerMode(prefs.autoRotate)
@@ -274,7 +445,7 @@ export function VideoPlayer({
     }
     const syncBuffered = () => setBufferedEnd(getBufferedEnd(toTimeRanges(video.buffered), video.currentTime))
     const syncNativeSubtitleTracks = () => {
-      if (hlsRef.current || video.textTracks.length === 0) return
+      if (hlsRef.current || dashRef.current || video.textTracks.length === 0) return
       const tracks = Array.from(video.textTracks).map((track, index) => ({
         id: index,
         label: track.label || track.language || String(index + 1),
@@ -385,7 +556,7 @@ export function VideoPlayer({
     }
     const onEnded = () => finishPlayback()
     const onError = () => {
-      if (hlsRef.current || !video.currentSrc) return
+      if (hlsRef.current || dashRef.current || !video.currentSrc) return
       console.warn('video element playback error:', mediaErrorCategory(video.error), video.error)
       mediaFailureRef.current(t('player.playbackFailed'))
     }
@@ -462,7 +633,10 @@ export function VideoPlayer({
     }
 
     let cancelled = false
+    let failed = false
     let hls: Hls | undefined
+    let dash: DashPlayer | undefined
+    let dashObjectUrl: string | undefined
     let networkRetries = 0
     let mediaRetries = 0
 
@@ -476,6 +650,7 @@ export function VideoPlayer({
     setIsLive(false)
     setHlsLevels([])
     setSelectedLevel(-1)
+    dashAutoRef.current = true
     setSubtitleTracks([])
     setSelectedSubtitle('off')
     setAudioTracks([])
@@ -484,11 +659,31 @@ export function VideoPlayer({
     subtitlePreferenceAppliedRef.current = false
     hlsLiveRef.current = undefined
 
+    const streamIdentity = getStreamIdentity(source)
+    const streamChanged = activeStreamIdentityRef.current !== streamIdentity
+    activeStreamIdentityRef.current = streamIdentity
+    playingFragmentRef.current = undefined
+    loadingMainFragmentKeysRef.current.clear()
+    seekingSinceRef.current = 0
+    if (streamChanged) {
+      suspectedFragmentRef.current = undefined
+      stallRecoveriesRef.current = 0
+      stallRecoveryAtRef.current = 0
+      pendingRebuildRef.current = undefined
+      postSkipRebuildsRef.current = 0
+    }
+
     const fail = (message: string) => {
-      if (cancelled) return
+      if (cancelled || failed) return
+      failed = true
       if (selectedStream) attemptedStreamsRef.current.add(getStreamIdentity(selectedStream))
-      const fallbackIndex = localUrl ? -1 : findFallbackStreamIndex(streams, attemptedStreamsRef.current)
+      // Only retry sources of the same audio version: silently switching
+      // Dublado -> Legendado is worse than surfacing the failure.
+      const fallbackIndex = localUrl
+        ? -1
+        : findFallbackStreamIndex(streams, attemptedStreamsRef.current, selectedStream?.audio)
       if (fallbackIndex >= 0) {
+        recordPlayerDebug(runtime.engine.prefs, 'fallback', { index: fallbackIndex, audio: selectedStream?.audio ?? '' })
         pendingPlaybackRef.current = { time: video.currentTime, play: playIntentRef.current }
         setSeekFeedback(t('player.tryingAnotherStream'))
         window.clearTimeout(feedbackTimerRef.current)
@@ -496,6 +691,7 @@ export function VideoPlayer({
         setSelectedStreamIndex(fallbackIndex)
         return
       }
+      recordPlayerDebug(runtime.engine.prefs, 'fatal', { message })
       setBuffering(false)
       setLocked(false)
       setControlsFocused(false)
@@ -505,11 +701,299 @@ export function VideoPlayer({
     }
     mediaFailureRef.current = fail
 
-    void playableStreamUrl(source).then((url) => {
+    // A fragment is skipped only after it stalls, is retried at the same
+    // position, then stalls again while media beyond its end is already
+    // buffered. This handles decoder-hostile fragments without treating normal
+    // network starvation as damaged media.
+    const skipUnplayableFragment = (fragment: PlaybackFragment, target: number, delayMs: number) => {
+      const at = Date.now()
+      const from = video.currentTime
+      // The jump starts a new seek; give it a fresh window before the stuck-seek
+      // detection (and the tiers that depend on it) can act again.
+      seekingSinceRef.current = at
+      recordPlayerDebug(runtime.engine.prefs, 'fragment-skip', {
+        from,
+        to: target,
+        skipped: target - from,
+        fragmentStart: fragment.start,
+        fragmentEnd: fragment.end,
+        delayMs: Math.round(delayMs)
+      })
+      showSeekFeedback(t('player.skippingUnplayable'))
+      suspectedFragmentRef.current = undefined
+      stallRecoveriesRef.current = 0
+      stallRecoveryAtRef.current = 0
+      postSkipRebuildsRef.current = 0
+      video.currentTime = target
+      pendingRebuildRef.current = { at, from, target }
+      lastProgressRef.current = { time: target, at }
+    }
+
+    /**
+     * Rebuild the source in place at the given position (same stream, audio and
+     * quality). This is the reliable unstick for a wedged or starved MSE
+     * pipeline; used by the stall tiers and right after a jump whose seek did
+     * not resume playback.
+     */
+    const rebuildSource = (trigger: string, position: number, delayMs: number) => {
+      recordPlayerDebug(runtime.engine.prefs, 'rebuild', {
+        trigger,
+        position,
+        delayMs: Math.round(delayMs)
+      })
+      showSeekFeedback(t('player.reloadingStream'))
+      pendingRebuildRef.current = undefined
+      seekingSinceRef.current = 0
+      pendingPlaybackRef.current = { time: position, play: playIntentRef.current }
+      lastProgressRef.current = { time: position, at: Date.now() }
+      setSourceRevision((revision) => revision + 1)
+    }
+
+    lastProgressRef.current = { time: video.currentTime, at: Date.now() }
+    const stallTimer = window.setInterval(() => {
       if (cancelled) return
+      const now = Date.now()
+      const progressed = Math.abs(video.currentTime - lastProgressRef.current.time) > 0.05
+
+      if (video.seeking) {
+        if (!seekingSinceRef.current) seekingSinceRef.current = now
+      } else {
+        seekingSinceRef.current = 0
+      }
+      const stuckSeeking =
+        (seekingSinceRef.current > 0 && now - seekingSinceRef.current >= SEEK_STUCK_MS) || false
+      const shouldPlay = playIntentRef.current && !video.ended && (!video.seeking || stuckSeeking)
+
+      if (progressed) {
+        failed = false
+        lastProgressRef.current = { time: video.currentTime, at: now }
+        if (fatalErrorRef.current) {
+          // Playback came back on its own (retry, skip or hls.js recovery):
+          // drop the stale failure overlay instead of leaving it over the video.
+          fatalErrorRef.current = undefined
+          setFatalError(undefined)
+        }
+        if (stallRecoveriesRef.current > 0 && now - stallRecoveryAtRef.current > STALL_STABLE_MS) {
+          stallRecoveriesRef.current = 0
+          suspectedFragmentRef.current = undefined
+        }
+        const suspected = suspectedFragmentRef.current
+        if (suspected && !playbackFragmentContains(suspected, video.currentTime)) {
+          suspectedFragmentRef.current = undefined
+        }
+      }
+
+      // A jump starts a seek; on WebKitGTK's MSE pipeline that seek can leave
+      // the element starved even when the target fragment is intact. If
+      // playback did not resume almost immediately — downloads get a little
+      // longer — rebuild at the target instead of waiting out the stall tiers:
+      // ~2s instead of ~25s, same audio/quality/position.
+      const pendingSkip = pendingRebuildRef.current
+      if (pendingSkip && playIntentRef.current && !video.ended) {
+        // Playback resumed, or the user moved the playhead elsewhere on
+        // purpose: either way the jump is no longer ours to recover. A seek the
+        // element ignored keeps `currentTime` at the origin, so it stays
+        // pending and gets rebuilt below.
+        const latest = video.currentTime
+        const resumed =
+          latest > pendingSkip.target + 0.3 ||
+          (Math.abs(latest - pendingSkip.target) > 2 && latest < pendingSkip.from - 1)
+        if (resumed) {
+          pendingRebuildRef.current = undefined
+        } else if (now - pendingSkip.at >= POST_SKIP_GRACE_MS) {
+          const waiting = video.seeking || loadingMainFragmentKeysRef.current.size > 0
+          if (!waiting || now - pendingSkip.at >= POST_SKIP_MAX_WAIT_MS) {
+            pendingRebuildRef.current = undefined
+            if (postSkipRebuildsRef.current < POST_SKIP_MAX_REBUILDS && streamKindRef.current !== 'mp4') {
+              postSkipRebuildsRef.current += 1
+              rebuildSource('post-skip', pendingSkip.target, now - pendingSkip.at)
+              return
+            }
+          }
+        }
+      }
+      if (!shouldPlay) {
+        lastProgressRef.current = { time: video.currentTime, at: now }
+        return
+      }
+      const idleMs = stuckSeeking ? now - seekingSinceRef.current : now - lastProgressRef.current.at
+
+      // Rebuild the source (same audio/quality). Frozen with data buffered
+      // is a wedge (short timeout); a starved buffer waits for an in-flight
+      // download before we tear it down.
+      const mainFragmentLoading = loadingMainFragmentKeysRef.current.size > 0
+      const timeout =
+        video.readyState >= 2
+          ? STALL_WEDGE_MS
+          : mainFragmentLoading
+            ? STALL_STARVED_LOADING_MS
+            : STALL_STARVED_MS
+      if (idleMs < timeout) return
+
+      const playingFragment = streamKindRef.current === 'hls' ? playingFragmentRef.current : undefined
+      const decision = decideStallRecovery({
+        suspectedFragment: suspectedFragmentRef.current,
+        currentFragment: playingFragment,
+        currentTime: video.currentTime,
+        buffered: toTimeRanges(video.buffered),
+        mainFragmentLoading,
+        recoveries: stallRecoveriesRef.current,
+        maxRecoveries: STALL_MAX_RECOVERIES
+      })
+      if (decision.action === 'skip' && playingFragment) {
+        skipUnplayableFragment(playingFragment, decision.target, idleMs)
+        return
+      }
+      if (playingFragment && playbackFragmentContains(playingFragment, video.currentTime)) {
+        suspectedFragmentRef.current = playingFragment
+      }
+      if (decision.action === 'fail') {
+        console.warn('playback did not recover after stream reloads')
+        fail(t('player.playbackFailed'))
+        return
+      }
+      stallRecoveriesRef.current += 1
+      stallRecoveryAtRef.current = now
+      rebuildSource('stall', video.currentTime, idleMs)
+    }, STALL_WATCH_INTERVAL_MS)
+
+    void playableStreamUrl(source).then(async (url) => {
+      if (cancelled) return
+      if (source.kind === 'dash') {
+        // MPEG-DASH via MSE (dash.js, lazy-loaded like hls.js). Auto quality only (YAGNI:
+        // no manual level UI); per-audio choice stays as separate streams from the plugin.
+        if (typeof window.MediaSource === 'undefined') {
+          fail(t('player.dashUnsupported'))
+          return
+        }
+        try {
+          // Segment templates are root-relative (`/i/.../$RepresentationID$...`); after
+          // proxying they must be rewrapped or dash.js resolves them against the proxy
+          // base and 404s. Fetch + rewrite + Blob keeps $ variables intact.
+          const manifestRes = await fetch(url)
+          if (!manifestRes.ok) throw new Error(`DASH manifest -> HTTP ${manifestRes.status}`)
+          const manifestText = await manifestRes.text()
+          const rewritten = rewriteDashManifest(manifestText, source.url, url)
+          const wrappedCount = (rewritten.match(/\/stream\?/g) ?? []).length
+          const firstWrapped = /((?:media|initialization)="[^"]{0,160})/.exec(rewritten)?.[1]
+          const videoCodecs = /contentType="video"[\s\S]{0,800}?codecs="([^"]+)"/.exec(rewritten)?.[1]
+            ?? /codecs="(avc[^"]+)"/.exec(rewritten)?.[1]
+          const audioCodecs = /contentType="audio"[\s\S]{0,4000}?codecs="([^"]+)"/.exec(rewritten)?.[1]
+          const probeVideo = document.createElement('video')
+          console.info('[dash] manifest', {
+            status: manifestRes.status,
+            contentType: manifestRes.headers.get('content-type'),
+            bytes: manifestText.length,
+            wrappedTemplates: wrappedCount,
+            sample: firstWrapped,
+            videoCodecs,
+            audioCodecs,
+            videoSupported:
+              typeof window.MediaSource !== 'undefined' && !!videoCodecs
+                ? window.MediaSource.isTypeSupported(`video/mp4; codecs="${videoCodecs}"`)
+                : undefined,
+            // isTypeSupported can lie (container string OK, no real decoder —
+            // e.g. WebKitGTK without H.264 GStreamer plugins). canPlayType is
+            // the stricter probe: "" means the system cannot decode it.
+            videoCanPlay: videoCodecs
+              ? probeVideo.canPlayType(`video/mp4; codecs="${videoCodecs}"`)
+              : undefined,
+            audioSupported:
+              typeof window.MediaSource !== 'undefined' && !!audioCodecs
+                ? window.MediaSource.isTypeSupported(`audio/mp4; codecs="${audioCodecs}"`)
+                : undefined
+          })
+          const blobUrl = URL.createObjectURL(new Blob([rewritten], { type: 'application/dash+xml' }))
+          if (cancelled) {
+            URL.revokeObjectURL(blobUrl)
+            return
+          }
+          dashObjectUrl = blobUrl
+          const { default: dashjs } = await import('dashjs')
+          if (cancelled) return
+          const player = dashjs.MediaPlayer().create()
+          dash = player as unknown as DashPlayer
+          dashRef.current = dash
+          player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+            if (cancelled) return
+            const levels = player
+              .getBitrateInfoListFor('video')
+              .map((info) => ({ index: info.qualityIndex, label: hlsLevelLabel(info.height, '', info.bitrate) }))
+            setHlsLevels(levels)
+            const preferredQuality = preferredQualityRef.current
+            if (!preferredLevelAppliedRef.current && preferredQuality) {
+              preferredLevelAppliedRef.current = true
+              const preferred = levels.find((level) => level.label === preferredQuality)
+              if (preferred) {
+                dashAutoRef.current = false
+                player.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } })
+                player.setQualityFor('video', preferred.index)
+                setSelectedLevel(preferred.index)
+              }
+            }
+          })
+          player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e?: { newQuality?: number }) => {
+            if (cancelled) return
+            if (dashAutoRef.current) setSelectedLevel(-1)
+            else if (typeof e?.newQuality === 'number') setSelectedLevel(e.newQuality)
+          })
+          player.on(dashjs.MediaPlayer.events.MANIFEST_LOADED, () => {
+            if (!cancelled) console.info('[dash] MANIFEST_LOADED')
+          })
+          player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+            if (!cancelled) console.info('[dash] STREAM_INITIALIZED')
+          })
+          player.on(dashjs.MediaPlayer.events.ERROR, (e: unknown) => {
+            if (cancelled) return
+            const err = e as {
+              event?: { type?: string }
+              error?: { code?: unknown; message?: unknown; data?: unknown }
+            }
+            console.error('[dash] fatal playback error', {
+              eventType: err?.event?.type,
+              code: err?.error?.code,
+              message: err?.error?.message,
+              data: err?.error?.data,
+              streamIndex: selectedStreamIndex,
+              streamQuality: selectedStream?.quality
+            })
+            fail(t('player.playbackFailed'))
+          })
+          player.initialize(video, blobUrl, playIntentRef.current)
+        } catch (dashError) {
+          console.warn('DASH player failed to load:', dashError)
+          fail(dashError instanceof Error ? dashError.message : t('player.playbackFailed'))
+        }
+        return
+      }
       if (source.kind === 'hls' && Hls.isSupported()) {
-        hls = new Hls({ capLevelToPlayerSize: true })
+        hls = new Hls({
+          capLevelToPlayerSize: true,
+          pLoader: ProxiedPlaylistLoader,
+          // A stalled segment through the proxy must error/retry quickly
+          // instead of holding the spinner for hls.js's 120s default.
+          fragLoadPolicy: {
+            default: {
+              maxTimeToFirstByteMs: 10_000,
+              maxLoadTimeMs: 30_000,
+              timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 2_000 },
+              errorRetry: { maxNumRetry: 4, retryDelayMs: 1_000, maxRetryDelayMs: 4_000 }
+            }
+          },
+          playlistLoadPolicy: {
+            default: {
+              maxTimeToFirstByteMs: 10_000,
+              maxLoadTimeMs: 20_000,
+              timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 2_000 },
+              errorRetry: { maxNumRetry: 4, retryDelayMs: 1_000, maxRetryDelayMs: 4_000 }
+            }
+          }
+        })
         hlsRef.current = hls
+        const setPlayingFragment = (fragment: Fragment) => {
+          const playing = toPlaybackFragment(streamIdentity, fragment)
+          if (playing) playingFragmentRef.current = playing
+        }
         const updateSubtitleTracks = (tracks: MediaPlaylist[]) => {
           const choices = tracks.map((track) => ({ id: track.id, label: track.name || track.lang || String(track.id + 1), lang: track.lang }))
           setSubtitleTracks(choices)
@@ -552,12 +1036,40 @@ export function VideoPlayer({
             preferredLevelAppliedRef.current = true
             const preferred = levels.find((level) => level.label === preferredQuality)
             if (preferred) {
-              hls!.currentLevel = preferred.index
+              // `nextLevel` picks the level for the fragments about to load;
+              // `currentLevel` here would flush the buffer as playback starts,
+              // which is a known WebKitGTK MSE wedge trigger.
+              hls!.nextLevel = preferred.index
               setSelectedLevel(preferred.index)
             }
           }
         })
         hls.on(Hls.Events.LEVELS_UPDATED, (_event, data) => updateLevels(data.levels))
+        loadingMainFragmentKeysRef.current.clear()
+        hls.on(Hls.Events.FRAG_CHANGED, (_event, data) => setPlayingFragment(data.frag))
+        hls.on(Hls.Events.FRAG_LOADING, (_event, data) => {
+          const key = fragmentLoadKey(streamIdentity, data.frag, data.part)
+          if (key) loadingMainFragmentKeysRef.current.add(key)
+        })
+        hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+          const key = fragmentLoadKey(streamIdentity, data.frag, data.part)
+          if (key) loadingMainFragmentKeysRef.current.delete(key)
+        })
+        hls.on(Hls.Events.FRAG_LOAD_EMERGENCY_ABORTED, (_event, data) => {
+          const key = fragmentLoadKey(streamIdentity, data.frag, data.part)
+          if (key) loadingMainFragmentKeysRef.current.delete(key)
+        })
+        hls.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
+          if (!isMainHlsFragment(data.frag)) return
+          const key = fragmentLoadKey(streamIdentity, data.frag, data.part)
+          if (key) loadingMainFragmentKeysRef.current.delete(key)
+          // FRAG_CHANGED is preferred because it reflects the exact appended
+          // fragment under the playhead. During a decoder wedge it may not fire,
+          // so remember a newly buffered main fragment that contains the current
+          // position as a fallback.
+          const buffered = toPlaybackFragment(streamIdentity, data.frag)
+          if (buffered && playbackFragmentContains(buffered, video.currentTime)) playingFragmentRef.current = buffered
+        })
         hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
           hlsLiveRef.current = data.details.live
           const live = isLiveStream('hls', video.duration, data.details.live)
@@ -581,6 +1093,9 @@ export function VideoPlayer({
         })
         hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => setSelectedAudio(String(data.id)))
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          const key = data.frag ? fragmentLoadKey(streamIdentity, data.frag, data.part) : undefined
+          if (key) loadingMainFragmentKeysRef.current.delete(key)
+          if (data.fatal) loadingMainFragmentKeysRef.current.clear()
           if (!data.fatal || cancelled) return
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < HLS_RETRY_LIMIT) {
             networkRetries += 1
@@ -593,6 +1108,7 @@ export function VideoPlayer({
             return
           }
           console.warn('fatal HLS playback error:', data)
+          recordPlayerDebug(runtime.engine.prefs, 'hls-error', { type: data.type, details: data.details })
           fail(t('player.playbackFailed'))
         })
         hls.loadSource(url)
@@ -611,13 +1127,17 @@ export function VideoPlayer({
 
     return () => {
       cancelled = true
+      window.clearInterval(stallTimer)
       if (hlsRef.current === hls) hlsRef.current = undefined
       hls?.destroy()
+      if (dashRef.current === dash) dashRef.current = undefined
+      dash?.destroy()
+      if (dashObjectUrl) URL.revokeObjectURL(dashObjectUrl)
       video.pause()
       video.removeAttribute('src')
       video.load()
     }
-  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, t])
+  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, t, runtime.engine.prefs])
 
   useEffect(() => {
     window.clearTimeout(hideTimerRef.current)
@@ -842,6 +1362,7 @@ export function VideoPlayer({
   function replay(): void {
     const video = videoRef.current
     if (!video) return
+    resetStallRecoveryHistory()
     video.currentTime = getMediaStart(video)
     setCurrentTime(video.currentTime)
     setEnded(false)
@@ -854,6 +1375,7 @@ export function VideoPlayer({
     const video = videoRef.current
     if (!video || video.seekable.length === 0) return
     const clamped = clampToMedia(video, target)
+    resetStallRecoveryHistory()
     video.currentTime = clamped
     setCurrentTime(clamped)
     setGestureSeekTime(undefined)
@@ -938,13 +1460,27 @@ export function VideoPlayer({
         setMenu(undefined)
         return
       }
+      resetStallRecoveryHistory()
       pendingPlaybackRef.current = { time: video?.currentTime ?? currentTime, play: !!video && !video.paused }
       attemptedStreamsRef.current.clear()
       setSelectedStreamIndex(index)
       setPref('preferredQuality', getStreamLabels(streams)[index] ?? '')
     } else if (value.startsWith('level:')) {
       const level = Number(value.slice('level:'.length))
-      if (hlsRef.current) hlsRef.current.currentLevel = level
+      resetStallRecoveryHistory()
+      if (hlsRef.current) {
+        // While playing, switch at the next fragment boundary: `currentLevel`
+        // flushes the buffer immediately, which is stutter-prone (and has
+        // wedged WebKitGTK's MSE pipeline).
+        const video = videoRef.current
+        if (level >= 0 && video && !video.paused && !video.ended) hlsRef.current.nextLevel = level
+        else hlsRef.current.currentLevel = level
+      }
+      if (dashRef.current) {
+        dashAutoRef.current = level < 0
+        dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: level < 0 } } } })
+        if (level >= 0) dashRef.current.setQualityFor('video', level)
+      }
       setSelectedLevel(level)
       const label = level < 0 ? '' : hlsLevels.find((item) => item.index === level)?.label ?? ''
       setPref('preferredQuality', label)
@@ -992,7 +1528,26 @@ export function VideoPlayer({
   }
 
   function selectAudio(value: string): void {
+    if (value.startsWith('stream:')) {
+      // Per-audio plugin stream: rebuild the player on the chosen source and
+      // remember the audio version (never the quality — levels are separate).
+      const index = Number(value.slice('stream:'.length))
+      const stream = streams[index]
+      const video = videoRef.current
+      if (!stream || index === selectedStreamIndex) {
+        setMenu(undefined)
+        return
+      }
+      resetStallRecoveryHistory()
+      pendingPlaybackRef.current = { time: video?.currentTime ?? currentTime, play: !!video && !video.paused }
+      attemptedStreamsRef.current.clear()
+      setSelectedStreamIndex(index)
+      setPref('preferredAudio', stream.audio?.trim() ?? '')
+      setMenu(undefined)
+      return
+    }
     const id = Number(value)
+    resetStallRecoveryHistory()
     if (hlsRef.current) hlsRef.current.audioTrack = id
     setSelectedAudio(value)
     setMenu(undefined)
@@ -1050,6 +1605,7 @@ export function VideoPlayer({
       return
     }
     const video = videoRef.current
+    resetStallRecoveryHistory()
     pendingPlaybackRef.current = { time: video?.currentTime ?? currentTime, play: playIntentRef.current }
     attemptedStreamsRef.current.clear()
     setFatalError(undefined)
@@ -1216,27 +1772,41 @@ export function VideoPlayer({
     setControlsFocused(false)
   }
 
+  // Quality = renditions of the loaded source (plus any provider/quality
+  // variants that don't declare an audio version). Audio-labelled streams live
+  // in the audio menu instead, so picking one never doubles as a quality pick.
+  const streamOptions = splitStreamOptions(streams)
+  const hasLevels = !offline && hlsLevels.length > 1
   const qualityOptions: PlayerOption[] = []
-  if (!offline && hlsLevels.length > 1) {
+  if (hasLevels) {
     qualityOptions.push({ value: 'level:-1', label: t('player.qualityAuto') })
     qualityOptions.push(...hlsLevels.map((level) => ({ value: `level:${level.index}`, label: level.label })))
   }
-  if (!offline && streams.length > 1) {
-    qualityOptions.push(...streams.map((stream, index) => ({ value: `stream:${index}`, label: streamLabels[index] ?? stream.kind.toUpperCase() })))
+  if (!offline && streamOptions.quality.length > 1) {
+    qualityOptions.push(...streamOptions.quality)
   }
-  const selectedQuality = hlsLevels.length > 1 ? `level:${selectedLevel}` : `stream:${selectedStreamIndex}`
-  const qualityLabel = hlsLevels.length > 1
+  const selectedQualityStream = streamOptions.quality.some((option) => option.value === `stream:${selectedStreamIndex}`)
+  const selectedQuality = hasLevels ? `level:${selectedLevel}` : selectedQualityStream ? `stream:${selectedStreamIndex}` : ''
+  const qualityLabel = hasLevels
     ? selectedLevel < 0
       ? t('player.qualityAuto')
       : hlsLevels.find((level) => level.index === selectedLevel)?.label ?? t('player.qualityAuto')
-    : selectedStream
+    : selectedQualityStream && selectedStream
       ? streamLabels[selectedStreamIndex] ?? selectedStream.kind.toUpperCase()
       : ''
   const subtitleOptions: PlayerOption[] = [
     { value: 'off', label: t('player.captionsOff') },
     ...subtitleTracks.map((track) => ({ value: String(track.id), label: track.label }))
   ]
-  const audioOptions: PlayerOption[] = audioTracks.map((track) => ({ value: String(track.id), label: track.label }))
+  // Embedded HLS audio tracks win when the master has several; otherwise the
+  // plugin's per-audio streams (Dublado/Legendado) fill the audio menu.
+  const embeddedAudio = audioTracks.length > 1
+  const audioOptions: PlayerOption[] = embeddedAudio
+    ? audioTracks.map((track) => ({ value: String(track.id), label: track.label }))
+    : offline
+      ? []
+      : streamOptions.audio
+  const selectedAudioValue = embeddedAudio ? selectedAudio : `stream:${selectedStreamIndex}`
   const canSeek = seekEnd > seekStart
   const liveTarget = hlsRef.current?.liveSyncPosition ?? seekEnd
   const behindLive = isLive && canSeek && liveTarget - displayTime > 5
@@ -1276,14 +1846,15 @@ export function VideoPlayer({
     subtitleOptions,
     selectedSubtitle,
     audioOptions,
-    selectedAudio,
+    selectedAudio: selectedAudioValue,
     episodes,
     currentEpisodeId: episode.id,
     downloadedEpisodeIds,
     hasPrevious: previousEpisodePlayable,
     hasNext: !!nextEpisode,
     nextUnavailableOffline: !!nextEpisode && !nextEpisodePlayable,
-    canChooseQuality: qualityOptions.length > 0,
+    canChooseSource: qualityOptions.length > 0 || audioOptions.length > 1,
+    sourceMenu: qualityOptions.length > 0 ? 'quality' : 'audio',
     canUsePictureInPicture: !!video && canUsePictureInPicture(video),
     inPictureInPicture,
     canUseFullscreen: !hasAndroidPlayerBridge() && !!rootRef.current?.requestFullscreen,
