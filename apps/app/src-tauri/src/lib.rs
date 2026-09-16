@@ -1121,18 +1121,22 @@ fn proxy_one(
     let status = resp.status();
 
     let mut response = tiny_http::Response::empty(status.as_u16())
+        // Large known-length bodies must keep `Content-Length` framing:
+        // tiny_http switches anything past the chunked threshold (32 KiB by
+        // default) to `Transfer-Encoding: chunked`, which leaves media
+        // elements with an infinite duration and an unseekable timeline.
+        .with_chunked_threshold(usize::MAX)
         .with_header(response_header("Access-Control-Allow-Origin", "*")?)
         .with_header(response_header(
             "Access-Control-Expose-Headers",
             "Content-Length, Content-Range, Accept-Ranges",
         )?);
-    // Forward length/range headers so the media element can seek.
-    for name in [
-        "content-type",
-        "content-length",
-        "content-range",
-        "accept-ranges",
-    ] {
+    // Forward type/range headers so the media element can seek.
+    // `Content-Length` is intentionally not forwarded: tiny_http derives
+    // framing from the body length handed to `with_data` (a manual header is
+    // dropped there), so the upstream length is passed explicitly per
+    // response below and tiny_http emits the header itself.
+    for name in ["content-type", "content-range", "accept-ranges"] {
         if let Some(v) = resp.headers().get(name) {
             if let Ok(s) = v.to_str() {
                 let hdr = tiny_http::Header::from_bytes(name.as_bytes(), s.as_bytes())
@@ -1221,6 +1225,12 @@ fn proxy_one(
         }
     }
 
+    // A known upstream length rides along as the body length so the response
+    // keeps `Content-Length` framing (see the threshold above). Without it
+    // the player sees an infinite duration and seeks hang forever.
+    let total = resp
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok());
     let stream = UpstreamBody {
         runtime,
         response: resp,
@@ -1228,7 +1238,7 @@ fn proxy_one(
         offset: 0,
     };
     request
-        .respond(response.with_data(stream, None))
+        .respond(response.with_data(stream, total))
         .map_err(|e| format!("respond: {e}"))
 }
 

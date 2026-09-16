@@ -164,14 +164,24 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       const available = await manager.getVideoQualities(media, episode)
       if (available.length === 0) {
         const streams = await runtime.engine.getStreams(sourceId, media, episode).catch(() => [])
-        setError(t(streams.some((s) => s.kind === 'dash') ? 'downloads.dashUnsupported' : 'downloads.hlsUnsupported'))
+        // Expected outcome, not just an edge case: surface it as a toast so
+        // scrolled-down users see it, and keep the Banner as the persistent
+        // record. Also releases the row button (the success path clears it
+        // later in chooseQuality, which never runs from here).
+        const message = t(streams.some((s) => s.kind === 'dash') ? 'downloads.dashUnsupported' : 'downloads.hlsUnsupported')
+        setError(message)
+        showToast(message, { tone: 'error', icon: 'download', duration: 6000 })
+        setBusyEpisodeId(null)
         return
       }
       const saved = await runtime.engine.prefs.get<string>('__app', 'downloads.videoQuality')
       setQualities(saved && available.includes(saved) ? [saved, ...available.filter((quality) => quality !== saved)] : available)
       setQualityEpisode(episode)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      setError(message)
+      showToast(message, { tone: 'error', icon: 'download', duration: 6000 })
+      setBusyEpisodeId(null)
     } finally {
       if (!isVideoType(media.type)) {
         setBusyEpisodeId(null)
@@ -197,7 +207,9 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         }
       })
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      setError(message)
+      showToast(message, { tone: 'error', icon: 'download', duration: 6000 })
     } finally {
       setBusyEpisodeId(null)
       setQualityEpisode(undefined)
