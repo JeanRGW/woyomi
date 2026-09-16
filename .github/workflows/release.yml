@@ -96,6 +96,12 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list (`tools platform-tools`) no
+          # longer exists upstream (`tools` was removed from the SDK
+          # repository) and fails the run. The required components are
+          # installed explicitly via sdkmanager in the next step instead.
+          packages: ''
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
