@@ -158,6 +158,17 @@ const STALL_STARVED_LOADING_MS = 12000
 const STALL_MAX_RECOVERIES = 2
 const STALL_STABLE_MS = 30000
 /**
+ * Fresh loads get room to breathe: slow proxies and cold upstreams can take a
+ * while before the first frame, and tearing that load down mid-flight just
+ * restarts the clock. No stall rebuild fires before the first frame lands or
+ * this grace elapses — whichever comes first.
+ */
+const STALL_LOAD_GRACE_MS = 15000
+/** Over-threshold ticks in a row required before a stall rebuild fires. */
+const STALL_CONFIRM_TICKS = 3
+/** Minimum gap between two stall rebuilds (fragment-skip recoveries excepted). */
+const STALL_REBUILD_COOLDOWN_MS = 15000
+/**
  * A jump past an unplayable fragment can leave WebKitGTK's MSE pipeline
  * starved even though the target fragment is intact; the manual unstick users
  * found is a source rebuild. When a jump does not resume playback this fast —
@@ -250,6 +261,7 @@ export function VideoPlayer({
   interface DashPlayer {
     destroy(): void
     initialize(video: HTMLVideoElement, url: string, autoplay: boolean): void
+    seek(time: number): void
     on(event: string, handler: (e?: { newQuality?: number }) => void): void
     updateSettings(settings: { streaming: { abr: { autoSwitchBitrate: { video: boolean } } } }): void
     setQualityFor(type: string, value: number): void
@@ -269,16 +281,29 @@ export function VideoPlayer({
   const gestureTargetRef = useRef<number>()
   const unlockRef = useRef<UnlockStart>()
   const pendingPlaybackRef = useRef<PendingPlayback>()
+  // Restore seek issued at `loadedmetadata` but not yet confirmed by the
+  // element (that event can fire before MSE/native can honor a seek).
+  // Kept until the element lands on it so a rebuild never silently restarts
+  // playback from 0.
+  const pendingSeekRef = useRef<{ target: number; attempts: number }>()
   const initialPositionRef = useRef<number>()
   const initialRestoreDoneRef = useRef(false)
   const playIntentRef = useRef(true)
   const mediaFailureRef = useRef<(message: string) => void>(() => undefined)
   const attemptedStreamsRef = useRef(new Set<string>())
   const lastPositionSaveRef = useRef(0)
-  // Stall watchdog: last observed playback position/time, and the rebuild budget.
-  const lastProgressRef = useRef({ time: 0, at: Date.now() })
+  // Stall watchdog: last observed playback position/buffer/readiness, and the
+  // rebuild budget. A slow-but-moving load (buffer or readiness climbing)
+  // counts as progress — only a truly frozen pipeline rebuilds.
+  const lastProgressRef = useRef({ time: 0, bufferedEnd: 0, readyState: 0, at: Date.now() })
   const stallRecoveriesRef = useRef(0)
   const stallRecoveryAtRef = useRef(0)
+  const stallStrikesRef = useRef(0)
+  const lastStallRebuildAtRef = useRef(0)
+  // Fresh-load grace: keyed by episode+stream so rebuilds of the same load
+  // don't re-arm it, while a newly picked source does.
+  const loadGraceRef = useRef<{ key: string; at: number }>()
+  const loadSettledRef = useRef(false)
   const seekingSinceRef = useRef(0)
   // Exact main-rendition fragment at the playhead, plus one fragment that
   // already stalled and was retried at the same position.
@@ -378,11 +403,19 @@ export function VideoPlayer({
   function resetStallRecoveryHistory(): void {
     playingFragmentRef.current = undefined
     suspectedFragmentRef.current = undefined
+    pendingSeekRef.current = undefined
+    stallStrikesRef.current = 0
     stallRecoveriesRef.current = 0
     stallRecoveryAtRef.current = 0
     pendingRebuildRef.current = undefined
     postSkipRebuildsRef.current = 0
-    lastProgressRef.current = { time: videoRef.current?.currentTime ?? 0, at: Date.now() }
+    const video = videoRef.current
+    lastProgressRef.current = {
+      time: video?.currentTime ?? 0,
+      bufferedEnd: video ? getBufferedEnd(toTimeRanges(video.buffered), video.currentTime) : 0,
+      readyState: video?.readyState ?? 0,
+      at: Date.now()
+    }
   }
 
   useEffect(() => {
@@ -493,6 +526,24 @@ export function VideoPlayer({
       autoNextFiredRef.current = false
       clearPlaybackPosition(runtime.engine.prefs, episode.id)
     }
+    // Confirms a restore seek tracked by restorePlayback. A seek that missed
+    // (element wasn't ready) is retried once on the next signal; once
+    // playback reaches or passes the target — or retries are spent — the
+    // tracker is dropped instead of fighting the element or the user.
+    const settlePendingSeek = () => {
+      const pendingSeek = pendingSeekRef.current
+      if (!pendingSeek) return
+      const delta = video.currentTime - pendingSeek.target
+      if (Math.abs(delta) <= 1 || delta > 1) {
+        pendingSeekRef.current = undefined
+      } else if (pendingSeek.attempts < 2 && !video.seeking) {
+        pendingSeek.attempts += 1
+        video.currentTime = clampToMedia(video, pendingSeek.target)
+        setCurrentTime(video.currentTime)
+      } else if (pendingSeek.attempts >= 2) {
+        pendingSeekRef.current = undefined
+      }
+    }
     const restorePlayback = () => {
       const timelineDuration = syncTimeline()
       syncNativeSubtitleTracks()
@@ -512,6 +563,9 @@ export function VideoPlayer({
         }
       }
       if (target !== undefined && Number.isFinite(target)) {
+        // Tracked until confirmed (see settlePendingSeek): clearing the
+        // pending position here loses it when the seek can't take effect yet.
+        pendingSeekRef.current = { target, attempts: 1 }
         video.currentTime = clampToMedia(video, target)
         setCurrentTime(video.currentTime)
       }
@@ -525,6 +579,7 @@ export function VideoPlayer({
       setCurrentTime(video.currentTime)
       syncTimeline()
       syncBuffered()
+      settlePendingSeek()
       const now = Date.now()
       if (!video.ended && video.currentTime > 0 && now - lastPositionSaveRef.current >= 5000) {
         lastPositionSaveRef.current = now
@@ -546,6 +601,13 @@ export function VideoPlayer({
     const onPlaying = () => {
       setBuffering(false)
       syncTimeline()
+      loadSettledRef.current = true
+      settlePendingSeek()
+    }
+    const onSeeked = () => {
+      setCurrentTime(video.currentTime)
+      syncBuffered()
+      settlePendingSeek()
     }
     const onProgress = () => {
       syncTimeline()
@@ -576,6 +638,7 @@ export function VideoPlayer({
     video.addEventListener('pause', onPause)
     video.addEventListener('playing', onPlaying)
     video.addEventListener('canplay', onPlaying)
+    video.addEventListener('seeked', onSeeked)
     video.addEventListener('waiting', onWaiting)
     video.addEventListener('stalled', onWaiting)
     video.addEventListener('ended', onEnded)
@@ -605,6 +668,7 @@ export function VideoPlayer({
       video.removeEventListener('pause', onPause)
       video.removeEventListener('playing', onPlaying)
       video.removeEventListener('canplay', onPlaying)
+      video.removeEventListener('seeked', onSeeked)
       video.removeEventListener('waiting', onWaiting)
       video.removeEventListener('stalled', onWaiting)
       video.removeEventListener('ended', onEnded)
@@ -663,6 +727,7 @@ export function VideoPlayer({
     const streamChanged = activeStreamIdentityRef.current !== streamIdentity
     activeStreamIdentityRef.current = streamIdentity
     playingFragmentRef.current = undefined
+    pendingSeekRef.current = undefined
     loadingMainFragmentKeysRef.current.clear()
     seekingSinceRef.current = 0
     if (streamChanged) {
@@ -726,7 +791,13 @@ export function VideoPlayer({
       postSkipRebuildsRef.current = 0
       video.currentTime = target
       pendingRebuildRef.current = { at, from, target }
-      lastProgressRef.current = { time: target, at }
+      stallStrikesRef.current = 0
+      lastProgressRef.current = {
+        time: target,
+        bufferedEnd: getBufferedEnd(toTimeRanges(video.buffered), video.currentTime),
+        readyState: video.readyState,
+        at
+      }
     }
 
     /**
@@ -745,15 +816,38 @@ export function VideoPlayer({
       pendingRebuildRef.current = undefined
       seekingSinceRef.current = 0
       pendingPlaybackRef.current = { time: position, play: playIntentRef.current }
-      lastProgressRef.current = { time: position, at: Date.now() }
+      stallStrikesRef.current = 0
+      lastStallRebuildAtRef.current = Date.now()
+      lastProgressRef.current = {
+        time: position,
+        bufferedEnd: getBufferedEnd(toTimeRanges(video.buffered), video.currentTime),
+        readyState: video.readyState,
+        at: Date.now()
+      }
       setSourceRevision((revision) => revision + 1)
     }
 
-    lastProgressRef.current = { time: video.currentTime, at: Date.now() }
+    lastProgressRef.current = {
+      time: video.currentTime,
+      bufferedEnd: getBufferedEnd(toTimeRanges(video.buffered), video.currentTime),
+      readyState: video.readyState,
+      at: Date.now()
+    }
+    // Fresh sources start under grace (no stall rebuilds until the first
+    // frame or the timeout); rebuilds of the same load keep going without it.
+    const graceKey = `${episode.id}|${streamIdentity}`
+    if (loadGraceRef.current?.key !== graceKey) {
+      loadGraceRef.current = { key: graceKey, at: Date.now() }
+      loadSettledRef.current = false
+    }
     const stallTimer = window.setInterval(() => {
       if (cancelled) return
       const now = Date.now()
-      const progressed = Math.abs(video.currentTime - lastProgressRef.current.time) > 0.05
+      const currentBufferedEnd = getBufferedEnd(toTimeRanges(video.buffered), video.currentTime)
+      const progressed =
+        Math.abs(video.currentTime - lastProgressRef.current.time) > 0.05 ||
+        currentBufferedEnd > lastProgressRef.current.bufferedEnd + 0.1 ||
+        video.readyState > lastProgressRef.current.readyState
 
       if (video.seeking) {
         if (!seekingSinceRef.current) seekingSinceRef.current = now
@@ -766,7 +860,13 @@ export function VideoPlayer({
 
       if (progressed) {
         failed = false
-        lastProgressRef.current = { time: video.currentTime, at: now }
+        stallStrikesRef.current = 0
+        lastProgressRef.current = {
+          time: video.currentTime,
+          bufferedEnd: currentBufferedEnd,
+          readyState: video.readyState,
+          at: now
+        }
         if (fatalErrorRef.current) {
           // Playback came back on its own (retry, skip or hls.js recovery):
           // drop the stale failure overlay instead of leaving it over the video.
@@ -813,7 +913,25 @@ export function VideoPlayer({
         }
       }
       if (!shouldPlay) {
-        lastProgressRef.current = { time: video.currentTime, at: now }
+        lastProgressRef.current = {
+          time: video.currentTime,
+          bufferedEnd: currentBufferedEnd,
+          readyState: video.readyState,
+          at: now
+        }
+        stallStrikesRef.current = 0
+        return
+      }
+      // Fresh loads get room to breathe (see STALL_LOAD_GRACE_MS): a slow
+      // proxy start looks exactly like a stall until the first frame lands.
+      const loadGrace = loadGraceRef.current
+      if (!loadSettledRef.current && (!loadGrace || now - loadGrace.at < STALL_LOAD_GRACE_MS)) {
+        lastProgressRef.current = {
+          time: video.currentTime,
+          bufferedEnd: currentBufferedEnd,
+          readyState: video.readyState,
+          at: now
+        }
         return
       }
       const idleMs = stuckSeeking ? now - seekingSinceRef.current : now - lastProgressRef.current.at
@@ -828,7 +946,16 @@ export function VideoPlayer({
           : mainFragmentLoading
             ? STALL_STARVED_LOADING_MS
             : STALL_STARVED_MS
-      if (idleMs < timeout) return
+      if (idleMs < timeout) {
+        stallStrikesRef.current = 0
+        return
+      }
+      // One over-threshold sample isn't a stall on a slow link — insist on a
+      // run of them so a momentary hitch never tears the load down.
+      stallStrikesRef.current += 1
+      if (stallStrikesRef.current < STALL_CONFIRM_TICKS) return
+      stallStrikesRef.current = 0
+      if (now - lastStallRebuildAtRef.current < STALL_REBUILD_COOLDOWN_MS) return
 
       const playingFragment = streamKindRef.current === 'hls' ? playingFragmentRef.current : undefined
       const decision = decideStallRecovery({
@@ -930,6 +1057,15 @@ export function VideoPlayer({
                 player.setQualityFor('video', preferred.index)
                 setSelectedLevel(preferred.index)
               }
+            }
+            // Same restore contract as the native path: a rebuild carries the
+            // position in pendingPlaybackRef, applied once the stream is up.
+            const pending = pendingPlaybackRef.current
+            if (pending && Number.isFinite(pending.time)) {
+              pendingPlaybackRef.current = undefined
+              playIntentRef.current = pending.play
+              pendingSeekRef.current = { target: pending.time, attempts: 1 }
+              player.seek(clampToMedia(video, pending.time))
             }
           })
           player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e?: { newQuality?: number }) => {
@@ -1137,7 +1273,7 @@ export function VideoPlayer({
       video.removeAttribute('src')
       video.load()
     }
-  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, t, runtime.engine.prefs])
+  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, t, runtime.engine.prefs, episode.id])
 
   useEffect(() => {
     window.clearTimeout(hideTimerRef.current)
