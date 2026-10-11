@@ -53,7 +53,7 @@ export async function buildPlugin(opts: BuildOptions): Promise<{ pluginJs: strin
     // eslint-disable-next-line no-new-func
     new Function(code)()
   } catch (e) {
-    throw new Error(`plugin bundle failed to evaluate: ${String(e)}`)
+    throw new Error(`plugin bundle failed to evaluate: ${String(e)}`, { cause: e })
   } finally {
     if (prev === undefined) delete (globalThis as Record<string, unknown>)[REGISTER_KEY]
     else (globalThis as Record<string, unknown>)[REGISTER_KEY] = prev

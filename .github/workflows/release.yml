@@ -67,6 +67,8 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile --prod=false
       - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -133,6 +135,8 @@ jobs:
           jq --arg v "$version" '.version = $v' apps/app/src-tauri/tauri.conf.json > apps/app/src-tauri/tauri.conf.json.tmp && mv apps/app/src-tauri/tauri.conf.json.tmp apps/app/src-tauri/tauri.conf.json
       - run: pnpm install --frozen-lockfile --prod=false
       - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -47,7 +47,7 @@
     },
     "./gen-repo": {
       "types": "./dist/gen-repo.d.ts",
-    "default": "./dist/gen-repo.js"
+      "default": "./dist/gen-repo.js"
     }
   },
   "main": "dist/index.js",
@@ -60,6 +60,7 @@
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "prepublishOnly": "pnpm run build && pnpm run test"
   },
   "dependencies": {
@@ -68,6 +69,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^3.2.7",
     "typescript": "^5.7.2",
     "vitest": "^3.0.5"
   }
