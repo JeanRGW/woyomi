@@ -52,11 +52,10 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const lastSavedRef = useRef<number | null>(null)
   const lastSavedTextRef = useRef<number | null>(null)
   const seekRequestId = useRef(0)
-  // live mirror of `view` so unmount-time effects read the current page
+  // live mirror of `view`/`textProgress`/`total` so unmount-time effects read
+  // the current page (updated after render, never during render)
   const viewRef = useRef(view)
-  viewRef.current = view
   const textProgressRef = useRef(textProgress)
-  textProgressRef.current = textProgress
   const hasReportedView = useRef(false)
   const readerContentRef = useRef<HTMLDivElement>(null)
   const handleViewChange = useCallback((nextView: PageView) => {
@@ -67,7 +66,12 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
 
   const total = content?.type === 'pages' ? content.images.length : 0
   const totalRef = useRef(total)
-  totalRef.current = total
+
+  useEffect(() => {
+    viewRef.current = view
+    textProgressRef.current = textProgress
+    totalRef.current = total
+  })
 
   useWakeLock(prefsLoaded && prefs.keepAwake)
 
@@ -195,11 +199,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   // mid-chapter position is saved debounced (continuous scroll re-views pages)
   useEffect(() => {
     if (total === 0 || initialPage === null || finished) return
-    const t = window.setTimeout(() => {
+    const timerId = window.setTimeout(() => {
       lastSavedRef.current = view.readingStart
       saveReadPosition(runtime.engine.prefs, episodeId, view.readingStart)
     }, 400)
-    return () => window.clearTimeout(t)
+    return () => window.clearTimeout(timerId)
   }, [runtime, episodeId, view.readingStart, total, initialPage, finished])
 
   // flush a pending position on unmount (quick exit inside the debounce window)

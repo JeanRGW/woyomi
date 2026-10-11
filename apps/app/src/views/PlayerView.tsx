@@ -41,7 +41,9 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
 function PlayerSession({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const t = useT()
   const translateRef = useRef(t)
-  translateRef.current = t
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
   const [session, setSession] = useState<PlayerSessionData>()
   const [error, setError] = useState('')
   const [loadRevision, setLoadRevision] = useState(0)

@@ -331,9 +331,10 @@ export function VideoPlayer({
 
   const { prefs, loaded: prefsLoaded, set: setPref } = usePlayerPrefs(runtime.engine.prefs)
   const preferredQualityRef = useRef(prefs.preferredQuality)
-  preferredQualityRef.current = prefs.preferredQuality
   const subtitleLanguageRef = useRef(prefs.subtitleLanguage)
-  subtitleLanguageRef.current = prefs.subtitleLanguage
+  // Latest translator for long-lived effects: `t` changes identity on locale
+  // switch and must not re-run (and tear down) the stream/listener effects.
+  const translateRef = useRef(t)
   const [positionLoaded, setPositionLoaded] = useState(false)
   const [selectedStreamIndex, setSelectedStreamIndex] = useState(0)
   const [sourceRevision, setSourceRevision] = useState(0)
@@ -362,7 +363,6 @@ export function VideoPlayer({
   // Mirrors `fatalError` for the watchdog tick, which must clear a stale error
   // overlay once playback recovers on its own.
   const fatalErrorRef = useRef<string>()
-  fatalErrorRef.current = fatalError
   const [autoNextSeconds, setAutoNextSeconds] = useState<number>()
   const [autoNextCancelled, setAutoNextCancelled] = useState(false)
   // Rendition levels for the quality menu; populated by hls.js or dash.js
@@ -382,23 +382,33 @@ export function VideoPlayer({
   const offline = localUrl !== undefined
   const previousEpisodePlayable = !!previousEpisode && (!offline || downloadedEpisodeIds.has(previousEpisode.id))
   const nextEpisodePlayable = !!nextEpisode && (!offline || downloadedEpisodeIds.has(nextEpisode.id))
-  mediaActionsRef.current = { seekBy, previous: goToPrevious, next: goToNext }
-  keyboardActionsRef.current = {
-    locked,
-    menu,
-    inFullscreen,
-    duration,
-    back: onBack,
-    togglePlayback,
-    seekBy,
-    changeVolume,
-    toggleMuted,
-    toggleFullscreen: () => void toggleFullscreen(),
-    togglePictureInPicture: () => void togglePictureInPicture(),
-    toggleCaptions,
-    seekTo,
-    closeMenu: () => setMenu(undefined)
-  }
+  // Mirror fast-changing values into refs after each render so event handlers,
+  // the watchdog and the media session always read the latest without their
+  // subscriptions depending on render-only identities (refs may not be written
+  // during render).
+  useEffect(() => {
+    preferredQualityRef.current = prefs.preferredQuality
+    subtitleLanguageRef.current = prefs.subtitleLanguage
+    fatalErrorRef.current = fatalError
+    translateRef.current = t
+    mediaActionsRef.current = { seekBy, previous: goToPrevious, next: goToNext }
+    keyboardActionsRef.current = {
+      locked,
+      menu,
+      inFullscreen,
+      duration,
+      back: onBack,
+      togglePlayback,
+      seekBy,
+      changeVolume,
+      toggleMuted,
+      toggleFullscreen: () => void toggleFullscreen(),
+      togglePictureInPicture: () => void togglePictureInPicture(),
+      toggleCaptions,
+      seekTo,
+      closeMenu: () => setMenu(undefined)
+    }
+  })
 
   function resetStallRecoveryHistory(): void {
     playingFragmentRef.current = undefined
@@ -620,7 +630,7 @@ export function VideoPlayer({
     const onError = () => {
       if (hlsRef.current || dashRef.current || !video.currentSrc) return
       console.warn('video element playback error:', mediaErrorCategory(video.error), video.error)
-      mediaFailureRef.current(t('player.playbackFailed'))
+      mediaFailureRef.current(translateRef.current('player.playbackFailed'))
     }
     const onVolumeChange = () => {
       setVolumeState(video.volume)
@@ -683,7 +693,7 @@ export function VideoPlayer({
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('pagehide', onPageHide)
     }
-  }, [runtime.engine.prefs, episode.id, positionLoaded, t])
+  }, [runtime.engine.prefs, episode.id, positionLoaded])
 
   useEffect(() => {
     const video = videoRef.current
@@ -692,7 +702,7 @@ export function VideoPlayer({
     const source = localUrl ? { url: localUrl, kind: 'mp4' as const } : selectedStream
     if (!source) {
       setBuffering(false)
-      setFatalError(t('player.noStreams'))
+      setFatalError(translateRef.current('player.noStreams'))
       return
     }
 
@@ -750,7 +760,7 @@ export function VideoPlayer({
       if (fallbackIndex >= 0) {
         recordPlayerDebug(runtime.engine.prefs, 'fallback', { index: fallbackIndex, audio: selectedStream?.audio ?? '' })
         pendingPlaybackRef.current = { time: video.currentTime, play: playIntentRef.current }
-        setSeekFeedback(t('player.tryingAnotherStream'))
+        setSeekFeedback(translateRef.current('player.tryingAnotherStream'))
         window.clearTimeout(feedbackTimerRef.current)
         feedbackTimerRef.current = window.setTimeout(() => setSeekFeedback(undefined), 2200)
         setSelectedStreamIndex(fallbackIndex)
@@ -784,7 +794,7 @@ export function VideoPlayer({
         fragmentEnd: fragment.end,
         delayMs: Math.round(delayMs)
       })
-      showSeekFeedback(t('player.skippingUnplayable'))
+      showSeekFeedback(translateRef.current('player.skippingUnplayable'))
       suspectedFragmentRef.current = undefined
       stallRecoveriesRef.current = 0
       stallRecoveryAtRef.current = 0
@@ -812,7 +822,7 @@ export function VideoPlayer({
         position,
         delayMs: Math.round(delayMs)
       })
-      showSeekFeedback(t('player.reloadingStream'))
+      showSeekFeedback(translateRef.current('player.reloadingStream'))
       pendingRebuildRef.current = undefined
       seekingSinceRef.current = 0
       pendingPlaybackRef.current = { time: position, play: playIntentRef.current }
@@ -976,7 +986,7 @@ export function VideoPlayer({
       }
       if (decision.action === 'fail') {
         console.warn('playback did not recover after stream reloads')
-        fail(t('player.playbackFailed'))
+        fail(translateRef.current('player.playbackFailed'))
         return
       }
       stallRecoveriesRef.current += 1
@@ -990,7 +1000,7 @@ export function VideoPlayer({
         // MPEG-DASH via MSE (dash.js, lazy-loaded like hls.js). Auto quality only (YAGNI:
         // no manual level UI); per-audio choice stays as separate streams from the plugin.
         if (typeof window.MediaSource === 'undefined') {
-          fail(t('player.dashUnsupported'))
+          fail(translateRef.current('player.dashUnsupported'))
           return
         }
         try {
@@ -1001,35 +1011,6 @@ export function VideoPlayer({
           if (!manifestRes.ok) throw new Error(`DASH manifest -> HTTP ${manifestRes.status}`)
           const manifestText = await manifestRes.text()
           const rewritten = rewriteDashManifest(manifestText, source.url, url)
-          const wrappedCount = (rewritten.match(/\/stream\?/g) ?? []).length
-          const firstWrapped = /((?:media|initialization)="[^"]{0,160})/.exec(rewritten)?.[1]
-          const videoCodecs = /contentType="video"[\s\S]{0,800}?codecs="([^"]+)"/.exec(rewritten)?.[1]
-            ?? /codecs="(avc[^"]+)"/.exec(rewritten)?.[1]
-          const audioCodecs = /contentType="audio"[\s\S]{0,4000}?codecs="([^"]+)"/.exec(rewritten)?.[1]
-          const probeVideo = document.createElement('video')
-          console.info('[dash] manifest', {
-            status: manifestRes.status,
-            contentType: manifestRes.headers.get('content-type'),
-            bytes: manifestText.length,
-            wrappedTemplates: wrappedCount,
-            sample: firstWrapped,
-            videoCodecs,
-            audioCodecs,
-            videoSupported:
-              typeof window.MediaSource !== 'undefined' && !!videoCodecs
-                ? window.MediaSource.isTypeSupported(`video/mp4; codecs="${videoCodecs}"`)
-                : undefined,
-            // isTypeSupported can lie (container string OK, no real decoder —
-            // e.g. WebKitGTK without H.264 GStreamer plugins). canPlayType is
-            // the stricter probe: "" means the system cannot decode it.
-            videoCanPlay: videoCodecs
-              ? probeVideo.canPlayType(`video/mp4; codecs="${videoCodecs}"`)
-              : undefined,
-            audioSupported:
-              typeof window.MediaSource !== 'undefined' && !!audioCodecs
-                ? window.MediaSource.isTypeSupported(`audio/mp4; codecs="${audioCodecs}"`)
-                : undefined
-          })
           const blobUrl = URL.createObjectURL(new Blob([rewritten], { type: 'application/dash+xml' }))
           if (cancelled) {
             URL.revokeObjectURL(blobUrl)
@@ -1073,12 +1054,6 @@ export function VideoPlayer({
             if (dashAutoRef.current) setSelectedLevel(-1)
             else if (typeof e?.newQuality === 'number') setSelectedLevel(e.newQuality)
           })
-          player.on(dashjs.MediaPlayer.events.MANIFEST_LOADED, () => {
-            if (!cancelled) console.info('[dash] MANIFEST_LOADED')
-          })
-          player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-            if (!cancelled) console.info('[dash] STREAM_INITIALIZED')
-          })
           player.on(dashjs.MediaPlayer.events.ERROR, (e: unknown) => {
             if (cancelled) return
             const err = e as {
@@ -1093,12 +1068,12 @@ export function VideoPlayer({
               streamIndex: selectedStreamIndex,
               streamQuality: selectedStream?.quality
             })
-            fail(t('player.playbackFailed'))
+            fail(translateRef.current('player.playbackFailed'))
           })
           player.initialize(video, blobUrl, playIntentRef.current)
         } catch (dashError) {
           console.warn('DASH player failed to load:', dashError)
-          fail(dashError instanceof Error ? dashError.message : t('player.playbackFailed'))
+          fail(dashError instanceof Error ? dashError.message : translateRef.current('player.playbackFailed'))
         }
         return
       }
@@ -1245,7 +1220,7 @@ export function VideoPlayer({
           }
           console.warn('fatal HLS playback error:', data)
           recordPlayerDebug(runtime.engine.prefs, 'hls-error', { type: data.type, details: data.details })
-          fail(t('player.playbackFailed'))
+          fail(translateRef.current('player.playbackFailed'))
         })
         hls.loadSource(url)
         hls.attachMedia(video)
@@ -1254,7 +1229,7 @@ export function VideoPlayer({
 
       const canPlayNativeHls = !!video.canPlayType('application/vnd.apple.mpegurl') || !!video.canPlayType('application/x-mpegURL')
       if (source.kind === 'hls' && !canPlayNativeHls) {
-        fail(t('player.hlsUnsupported'))
+        fail(translateRef.current('player.hlsUnsupported'))
         return
       }
       video.src = url
@@ -1273,7 +1248,7 @@ export function VideoPlayer({
       video.removeAttribute('src')
       video.load()
     }
-  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, t, runtime.engine.prefs, episode.id])
+  }, [localUrl, selectedStream, selectedStreamIndex, sourceRevision, prefsLoaded, positionLoaded, streams, runtime.engine.prefs, episode.id])
 
   useEffect(() => {
     window.clearTimeout(hideTimerRef.current)
@@ -1357,7 +1332,7 @@ export function VideoPlayer({
     if (typeof MediaMetadata !== 'undefined') {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: media.title,
-        artist: episode.title ?? t('common.episode', { number: episode.number }),
+        artist: episode.title ?? translateRef.current('common.episode', { number: episode.number }),
         artwork: artwork ? [{ src: artwork }] : []
       })
     }
@@ -1373,7 +1348,7 @@ export function VideoPlayer({
       }
       navigator.mediaSession.metadata = null
     }
-  }, [media, episode, t])
+  }, [media, episode])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
