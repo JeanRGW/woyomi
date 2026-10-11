@@ -332,7 +332,13 @@ export interface AppRuntime {
 let runtimePromise: Promise<AppRuntime> | undefined
 
 export function getRuntime(): Promise<AppRuntime> {
-  if (!runtimePromise) runtimePromise = initRuntime()
+  if (!runtimePromise) {
+    runtimePromise = initRuntime().catch((error: unknown) => {
+      // Never cache a failed init: callers surface the error and can retry.
+      runtimePromise = undefined
+      throw error
+    })
+  }
   return runtimePromise
 }
 

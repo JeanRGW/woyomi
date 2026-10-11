@@ -28,6 +28,7 @@ const en = {
     'common.testing': 'Testing…',
     'common.close': 'Close',
     'common.reload': 'Reload',
+    'common.retry': 'Retry',
     'common.cancel': 'Cancel',
     'common.errorTitle': 'Something went wrong',
     'common.seen': 'seen',

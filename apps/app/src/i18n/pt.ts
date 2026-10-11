@@ -23,6 +23,7 @@ export const pt: Messages = {
   'common.testing': 'Testando…',
   'common.close': 'Fechar',
   'common.reload': 'Recarregar',
+  'common.retry': 'Tentar novamente',
   'common.cancel': 'Cancelar',
   'common.errorTitle': 'Algo deu errado',
   'common.seen': 'visto',
