@@ -11,10 +11,13 @@ name = "woyomi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# Pinned exact while the vendor/tauri-runtime-wry patch below exists: the
+# vendored runtime must not silently desync from a floating tauri release.
+# See vendor/VENDOR.md.
+tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
