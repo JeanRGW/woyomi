@@ -73,8 +73,8 @@ export class DownloadManager {
         await this.save({ ...record, ...resetVideo, state: 'queued', totalBytes: undefined })
       }
     }
-    // Best-effort startup sweep of .part leftovers and orphaned download
-    // directories (crash or removal race left them behind).
+    // Best-effort startup sweep of .part leftovers in known directories.
+    // Unknown directories are preserved in case the store read is incomplete.
     await this.invoke('cleanup_downloads', { args: { keepFileIds: records.map((record) => record.fileId) } }).catch(() => undefined)
     this.kick()
   }
@@ -182,9 +182,17 @@ export class DownloadManager {
       await active.started.catch(() => undefined)
       await this.waitUntilStopped(active)
     }
+    try {
+      await this.invoke('remove_download_files', { args: { fileId: record.fileId } })
+    } catch (error) {
+      // Keep the record discoverable for another remove/retry if native
+      // cancellation timed out or the filesystem rejected deletion.
+      this.removedFileIds.delete(record.fileId)
+      await this.save({ ...record, state: 'failed', error: errorMessage(error) })
+      throw error
+    }
     await this.store.remove(id)
     this.notify()
-    await this.invoke('remove_download_files', { args: { fileId: record.fileId } })
   }
 
   async localChapterContent(episodeId: string): Promise<ChapterContent | undefined> {

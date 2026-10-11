@@ -42,6 +42,37 @@ describe('sync api', () => {
     expect(res.status).toBe(401)
   })
 
+  it.each(['bearer', 'BEARER', 'bEaReR'])('accepts the %s auth scheme', async (scheme) => {
+    const res = await server.request('/api/sync/bob', { headers: { authorization: `${scheme} ${TOKEN}` } })
+    expect(res.status).toBe(200)
+  })
+
+  it('caps multibyte request bodies by bytes without content-length', async () => {
+    const body = JSON.stringify({ padding: '界'.repeat(400_000) })
+    expect(body.length).toBeLessThan(1024 * 1024)
+    const res = await server.request('/api/sync/bob', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body
+    })
+    expect(res.status).toBe(413)
+  })
+
+  it('stops reading a streamed body once the byte limit is exceeded', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(600_000)) },
+      cancel
+    })
+    const request = new Request('http://localhost/api/sync/bob', {
+      method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body,
+      duplex: 'half'
+    } as RequestInit)
+    const res = await server.request(request)
+    expect(res.status).toBe(413)
+    expect(cancel).toHaveBeenCalled()
+  })
+
   it('round-trips library json with auth', async () => {
     const put = await server.request(`/api/sync/bob`, {
       method: 'PUT',
@@ -137,11 +168,11 @@ describe('sync api', () => {
 })
 
 describe('mergeLibraries', () => {
-  it('unions seenEpisodeIds across devices', () => {
+  it('keeps the newest progress snapshot across devices', () => {
     const prev = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 1 }] })
     const inc = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 2 }] })
     const merged = mergeLibraries(prev, inc)
-    expect(merged.progress).toEqual([{ mediaId: 's/1', seenEpisodeIds: ['e1', 'e2'], updatedAt: 2 }])
+    expect(merged.progress).toEqual([{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 2 }])
   })
 
   it('keeps the entry with the newer updatedAt', () => {

@@ -107,7 +107,7 @@ function safeTokenEqual(expected: string, provided: string | undefined): boolean
 }
 
 function bearerToken(header: string | undefined): string | undefined {
-  const match = /^Bearer (.+)$/.exec(header ?? '')
+  const match = /^Bearer (.+)$/i.exec(header ?? '')
   return match?.[1]
 }
 
@@ -171,8 +171,25 @@ function forwardResponseHeaders(res: Response): Record<string, string> {
 async function readJsonBody(c: Context): Promise<{ value: unknown } | { tooLarge: true } | undefined> {
   const declared = Number(c.req.header('content-length') ?? '0')
   if (Number.isFinite(declared) && declared > MAX_REQUEST_JSON_BYTES) return { tooLarge: true }
-  const text = await c.req.text()
-  if (text.length > MAX_REQUEST_JSON_BYTES) return { tooLarge: true }
+  const reader = c.req.raw.body?.getReader()
+  if (!reader) return undefined
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > MAX_REQUEST_JSON_BYTES) {
+        await reader.cancel()
+        return { tooLarge: true }
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const text = Buffer.concat(chunks, bytes).toString('utf8')
   try {
     return { value: JSON.parse(text) }
   } catch {

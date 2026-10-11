@@ -20,6 +20,17 @@ const implementations: Array<[string, () => LibraryStore]> = [
 
 for (const [name, make] of implementations) {
   describe(name, () => {
+    it('adopts newer unread changes without restoring stale seen ids', async () => {
+      const store = make()
+      const snapshot = (seenEpisodeIds: string[], updatedAt: number) => JSON.stringify({
+        progress: [{ mediaId: 's/1', seenEpisodeIds, updatedAt }]
+      })
+      await store.importJson(snapshot(['e1', 'e2'], 100))
+      await store.importJson(snapshot(['e2'], 200))
+      expect((await store.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e2'])
+      await store.importJson(snapshot(['e1', 'e2'], 100))
+      expect((await store.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e2'])
+    })
     it('adds, updates and removes library entries with tombstones', async () => {
       const store = make()
       await store.add(media('s/1'), 'reading')

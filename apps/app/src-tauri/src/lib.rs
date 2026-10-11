@@ -3,7 +3,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, AtomicUsize, Mutex as StdMutex, OnceLock, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{oneshot, watch, Mutex};
@@ -115,13 +116,29 @@ async fn fetch_url(
         }
         raw.extend_from_slice(&chunk);
     }
-    let body = String::from_utf8_lossy(&raw).into_owned();
+    // Decode the bounded body through reqwest to preserve charset and BOM handling.
+    let body = decode_fetch_body(raw, resp.headers().get(reqwest::header::CONTENT_TYPE)).await?;
 
     Ok(FetchResult {
         status,
         headers,
         body,
     })
+}
+
+async fn decode_fetch_body(
+    raw: Vec<u8>,
+    content_type: Option<&reqwest::header::HeaderValue>,
+) -> Result<String, String> {
+    let mut bounded = http::Response::builder();
+    if let Some(content_type) = content_type {
+        bounded = bounded.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+    let bounded = bounded.body(raw).map_err(|e| format!("decode body: {e}"))?;
+    reqwest::Response::from(bounded)
+        .text()
+        .await
+        .map_err(|e| format!("decode body: {e}"))
 }
 
 /// Framing/host headers a plugin must not control: they corrupt the request or
@@ -1010,6 +1027,13 @@ async fn remove_download_files(
     }
     {
         let mut jobs = state.jobs.lock().await;
+        // A timeout does not prove the disk is quiet. Keep the job and files
+        // rather than racing a task still writing (JS guards cannot stop it).
+        if jobs.iter().any(|(key, job)| {
+            key.0 == args.file_id && job.status.state == DownloadState::Downloading
+        }) {
+            return Err("download cancellation timed out; files were preserved".to_string());
+        }
         jobs.retain(|key, _| key.0 != args.file_id);
     }
     let directory = downloads_root(&app)?.join(args.file_id);
@@ -1020,8 +1044,9 @@ async fn remove_download_files(
     }
 }
 
-/// Startup sweep: drop `.part` leftovers inside kept download directories and
-/// delete directories whose record no longer exists (crash or removal race).
+/// Startup sweep: drop `.part` leftovers inside known download directories.
+/// Unknown directories are preserved: an incomplete DB read is not proof that
+/// their offline data is orphaned.
 #[tauri::command]
 async fn cleanup_downloads(
     webview: tauri::WebviewWindow,
@@ -1030,6 +1055,10 @@ async fn cleanup_downloads(
 ) -> Result<(), String> {
     require_main_webview(&webview)?;
     let root = downloads_root(&app)?;
+    cleanup_downloads_at(&root, &args.keep_file_ids).await
+}
+
+async fn cleanup_downloads_at(root: &Path, keep_file_ids: &[String]) -> Result<(), String> {
     let mut entries = match tokio::fs::read_dir(&root).await {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1045,10 +1074,7 @@ async fn cleanup_downloads(
         if !path.is_dir() {
             continue;
         }
-        if !args.keep_file_ids.iter().any(|id| *id == name) {
-            if let Err(error) = tokio::fs::remove_dir_all(&path).await {
-                eprintln!("downloads: remove orphaned directory: {error}");
-            }
+        if !keep_file_ids.iter().any(|id| *id == name) {
             continue;
         }
         // Kept record: only stale .part files inside are garbage.
@@ -1781,6 +1807,41 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn decodes_bounded_fetch_bodies_with_charset_and_bom() {
+        let content_type = reqwest::header::HeaderValue::from_static("text/html; charset=windows-1252");
+        assert_eq!(
+            super::decode_fetch_body(vec![b'c', b'a', b'f', 0xe9], Some(&content_type)).await.unwrap(),
+            "café"
+        );
+        assert_eq!(
+            super::decode_fetch_body(vec![0xef, 0xbb, 0xbf, b'a'], None).await.unwrap(),
+            "a"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_unknown_downloads_with_empty_or_partial_keep_lists() {
+        let root = std::env::temp_dir().join(format!(
+            "woyomi-cleanup-{}", super::generate_proxy_token().unwrap()
+        ));
+        for name in ["known", "unknown"] {
+            let directory = root.join(name);
+            tokio::fs::create_dir_all(&directory).await.unwrap();
+            tokio::fs::write(directory.join("0"), b"offline").await.unwrap();
+            tokio::fs::write(directory.join("1.part"), b"partial").await.unwrap();
+        }
+        super::cleanup_downloads_at(&root, &[]).await.unwrap();
+        assert!(root.join("unknown/0").exists());
+        assert!(root.join("known/1.part").exists());
+        super::cleanup_downloads_at(&root, &["known".to_string()]).await.unwrap();
+        assert!(root.join("known/0").exists());
+        assert!(!root.join("known/1.part").exists());
+        assert!(root.join("unknown/0").exists());
+        assert!(root.join("unknown/1.part").exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
     use super::{
         allowed_content_type, dom_selector_script, dom_snapshot_script, parse_range, request_authorized,
         token_eq, validate_cover_hash, validate_file_id, DomRenderer, RangeOutcome,

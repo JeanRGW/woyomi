@@ -75,13 +75,18 @@ describe('mergeSyncPayload', () => {
     expect(merged.entries.map((e) => e.media.id)).toEqual(['s/1'])
   })
 
-  it('unions seen episode ids for progress rows', () => {
+  it('keeps the newest progress snapshot in either merge order', () => {
     const merged = mergeSyncPayload(
       payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 10 }] }),
       payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 20 }] })
     )
-    expect(merged.progress[0]?.seenEpisodeIds.sort()).toEqual(['e1', 'e2'])
+    expect(merged.progress[0]?.seenEpisodeIds).toEqual(['e2'])
     expect(merged.progress[0]?.updatedAt).toBe(20)
+    const reversed = mergeSyncPayload(
+      payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 20 }] }),
+      payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 10 }] })
+    )
+    expect(reversed.progress).toEqual(merged.progress)
   })
 
   it('applies progress tombstones only when newer than the row', () => {

@@ -67,4 +67,4 @@ jobs:
           curl -sSfL https://crates.io/api/v1/crates/tauri-runtime-wry/2.11.4/download -o /tmp/upstream.crate
           mkdir -p /tmp/upstream
           tar -xzf /tmp/upstream.crate -C /tmp/upstream
-          diff -ru /tmp/upstream/tauri-runtime-wry-2.11.4 apps/app/src-tauri/vendor/tauri-runtime-wry --exclude Cargo.toml
+          diff -ru /tmp/upstream/tauri-runtime-wry-2.11.4 apps/app/src-tauri/vendor/tauri-runtime-wry --exclude Cargo.toml --exclude Cargo.lock --exclude .cargo_vcs_info.json

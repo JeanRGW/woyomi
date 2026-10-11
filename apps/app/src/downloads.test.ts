@@ -86,6 +86,18 @@ async function waitForState(store: DownloadStore, id: string, state: DownloadSta
 }
 
 describe('DownloadManager', () => {
+  it('preserves the record when native file removal fails', async () => {
+    const { store } = memoryStore()
+    const { engine } = engineMock({ type: 'text', html: '<p>saved</p>' })
+    const invoke = vi.fn(async (): Promise<unknown> => { throw new Error('cancellation timed out') })
+    const manager = new DownloadManager(engine, store, invoke)
+    const record = await manager.enqueueReader(media, episode)
+    await expect(manager.remove(record.id)).rejects.toThrow('cancellation timed out')
+    expect(await store.get(record.id)).toMatchObject({ fileId: record.fileId, state: 'failed' })
+    invoke.mockResolvedValueOnce(undefined)
+    await manager.remove(record.id)
+    expect(await store.get(record.id)).toBeUndefined()
+  })
   it('re-queues a failed download for retry and completes it', async () => {
     const failed: DownloadRecord = {
       id: episode.id,

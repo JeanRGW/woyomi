@@ -107,6 +107,17 @@ describe('SqliteStore', () => {
     expect((await store.get('s/1'))?.status).toBe('completed')
   })
 
+  it('preserves newer unread changes when importing progress', async () => {
+    const snapshot = (seenEpisodeIds: string[], updatedAt: number) => JSON.stringify({
+      progress: [{ mediaId: 's/1', seenEpisodeIds, updatedAt }]
+    })
+    await store.importJson(snapshot(['e1', 'e2'], 100))
+    await store.importJson(snapshot(['e2'], 200))
+    expect((await store.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e2'])
+    await store.importJson(snapshot(['e1', 'e2'], 100))
+    expect((await store.getProgress('s/1'))?.seenEpisodeIds).toEqual(['e2'])
+  })
+
   it('adopts newer incoming rows and merges tombstones', async () => {
     await store.add(media('s/1'), 'reading')
     await store.add(media('s/2'), 'reading')

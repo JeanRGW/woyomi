@@ -61,19 +61,19 @@ function normalize(p: SyncPayload): Required<Pick<SyncPayload, 'entries' | 'prog
 /**
  * Merge two full payloads with last-write-wins per record: a tombstone (deletion)
  * beats a live row only when it is strictly newer, and a newer live row
- * resurrects over an older tombstone. Progress rows merge additively (union of
- * seen episode ids, newest `updatedAt`).
+ * resurrects over an older tombstone. Progress uses the newest snapshot so
+ * marking an episode unread is not undone by an older seen-id list.
  *
  * This is the single merge implementation shared by the sync server and every
  * `LibraryStore.importJson`, so all devices apply identical semantics.
  */
 export function mergeSyncPayload(prev: SyncPayload, inc: SyncPayload): SyncPayload {
-  const p = normalize(prev)
-  const i = normalize(inc)
-  const prevEntries = new Map(p.entries.map((e) => [e.media.id, e]))
-  const incEntries = new Map(i.entries.map((e) => [e.media.id, e]))
-  const incEntryTombs = new Map(i.tombstones.entries.map((t) => [t.id, t.deletedAt]))
-  const entryTombs = new Map(p.tombstones.entries.map((t) => [t.id, t.deletedAt]))
+  const previous = normalize(prev)
+  const incoming = normalize(inc)
+  const prevEntries = new Map(previous.entries.map((e) => [e.media.id, e]))
+  const incEntries = new Map(incoming.entries.map((e) => [e.media.id, e]))
+  const incEntryTombs = new Map(incoming.tombstones.entries.map((t) => [t.id, t.deletedAt]))
+  const entryTombs = new Map(previous.tombstones.entries.map((t) => [t.id, t.deletedAt]))
 
   const entries: LibraryEntry[] = []
   for (const id of new Set([...prevEntries.keys(), ...incEntries.keys(), ...incEntryTombs.keys()])) {
@@ -93,28 +93,22 @@ export function mergeSyncPayload(prev: SyncPayload, inc: SyncPayload): SyncPaylo
   }
 
   const progressMap = new Map<string, ProgressEntry>()
-  for (const row of [...p.progress, ...i.progress]) {
+  for (const row of [...previous.progress, ...incoming.progress]) {
     const existing = progressMap.get(row.mediaId)
-    if (existing) {
-      progressMap.set(row.mediaId, {
-        mediaId: row.mediaId,
-        seenEpisodeIds: [...new Set([...existing.seenEpisodeIds, ...row.seenEpisodeIds])],
-        updatedAt: Math.max(progressTs(existing), progressTs(row))
-      })
-    } else progressMap.set(row.mediaId, row)
+    if (!existing || progressTs(row) > progressTs(existing)) progressMap.set(row.mediaId, row)
   }
-  const progressTombs = mergeTombstoneLists(p.tombstones.progress, i.tombstones.progress)
+  const progressTombs = mergeTombstoneLists(previous.tombstones.progress, incoming.tombstones.progress)
   for (const t of progressTombs) {
     const row = progressMap.get(t.id)
     if (row && progressTs(row) <= t.deletedAt) progressMap.delete(t.id)
   }
 
   const historyMap = new Map<string, HistoryEntry>()
-  for (const row of [...p.history, ...i.history]) {
+  for (const row of [...previous.history, ...incoming.history]) {
     const existing = historyMap.get(row.episode.id)
     if (!existing || historyTs(row) > historyTs(existing)) historyMap.set(row.episode.id, row)
   }
-  const historyTombs = mergeTombstoneLists(p.tombstones.history, i.tombstones.history)
+  const historyTombs = mergeTombstoneLists(previous.tombstones.history, incoming.tombstones.history)
   for (const t of historyTombs) {
     const row = historyMap.get(t.id)
     if (row && historyTs(row) <= t.deletedAt) historyMap.delete(t.id)

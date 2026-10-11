@@ -1,8 +1,9 @@
 # Vendored crate: tauri-runtime-wry
 
 **Upstream:** crates.io `tauri-runtime-wry` **2.11.4** (verbatim copy of the
-published crate; the file `Cargo.toml` is the registry-normalized form with one
-local change described below).
+published crate, excluding the packaged `Cargo.lock` and `.cargo_vcs_info.json`;
+the file `Cargo.toml` is the registry-normalized form with one local change
+described below).
 
 ## Why this tree exists
 
@@ -41,11 +42,12 @@ It is wired in via the workspace-wide `[patch.crates-io]` in
 ```sh
 cargo download tauri-runtime-wry==2.11.4   # or fetch the .crate from crates.io
 diff -ru tauri-runtime-wry-2.11.4/ vendor/tauri-runtime-wry/ \
-  --exclude Cargo.toml
+  --exclude Cargo.toml --exclude Cargo.lock --exclude .cargo_vcs_info.json
 ```
 
-The only expected diff is `Cargo.toml` (the wry split above). CI runs this check
-in the `vendor-drift` job.
+The only source modification is `Cargo.toml` (the wry split above). The packaged
+lockfile and VCS metadata are intentionally omitted. CI excludes those three
+files but compares every source file in the `vendor-drift` job.
 
 ## Removal checklist
 
