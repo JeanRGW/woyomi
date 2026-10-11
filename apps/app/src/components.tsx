@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type ButtonHTMLAttributes, type InputHTMLAt
 import type { Media } from '@woyomi/core'
 import type { DownloadState } from './downloads'
 import { navigate } from './App'
+import { goBackOrLibrary } from './hooks'
 import { Icon, type IconName } from './icons'
 import { useT } from './i18n'
 import { mediaStatusLabelKey, mediaTypeLabelKey } from './i18n/messages'
@@ -126,7 +127,7 @@ export function BackButton() {
   const t = useT()
   return (
     <button
-      onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'library' }))}
+      onClick={goBackOrLibrary}
       className="mb-4 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-surface/80 px-3.5 text-sm font-semibold text-muted backdrop-blur transition-colors hover:bg-surface-2 hover:text-fg"
     >
       <Icon name="back" size={17} />

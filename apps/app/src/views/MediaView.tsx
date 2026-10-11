@@ -5,6 +5,7 @@ import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus, type 
 import { isTauri, proxiedHref, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
+import { formatEpisodeLabel } from '../format'
 import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { useToast } from '../toast'
@@ -112,6 +113,8 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     return manager.subscribe(() => void refresh())
   }, [runtime.downloads, sourceId, mediaId])
 
+  const downloadsByEpisode = useMemo(() => new Map(downloads.map((record) => [record.id, record])), [downloads])
+
   const descriptionHtml = useMemo(
     () => (media?.synopsis ? sanitizeHtml(marked.parse(media.synopsis, { async: false })) : ''),
     [media?.synopsis]
@@ -163,9 +166,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       if (!isVideoType(media.type)) {
         await manager.enqueueReader(media, episode)
         await runtime.cacheMediaPage(media, episodes)
-        const chapterName = `${t('common.chapter', { number: episode.number })}${
-          episode.title ? t('common.title', { title: episode.title }) : ''
-        }`
+        const chapterName = formatEpisodeLabel(t, episode, 'chapter')
         showToast(t('downloads.queuedToast', { name: chapterName }), {
           icon: 'download',
           tone: 'ok',
@@ -210,9 +211,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       await runtime.downloads.enqueueVideo(media, qualityEpisode, quality)
       await runtime.engine.prefs.set('__app', 'downloads.videoQuality', quality)
       await runtime.cacheMediaPage(media, episodes)
-      const epName = `${t('common.episode', { number: qualityEpisode.number })}${
-        qualityEpisode.title ? t('common.title', { title: qualityEpisode.title }) : ''
-      }`
+      const epName = formatEpisodeLabel(t, qualityEpisode, 'episode')
       showToast(t('downloads.queuedToast', { name: epName }), {
         icon: 'download',
         tone: 'ok',
@@ -427,7 +426,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               active={seen.has(ep.id)}
               onOpen={() => openEpisode(ep)}
               onToggleSeen={() => toggleSeen(ep)}
-              downloadState={downloads.find((record) => record.id === ep.id)?.state}
+              downloadState={downloadsByEpisode.get(ep.id)?.state}
               busy={busyEpisodeId === ep.id}
               onDownload={runtime.downloads ? () => void downloadEpisode(ep) : undefined}
             />

@@ -11,6 +11,7 @@ import Hls, {
 import type { Episode, Media, PreferencesApi, StreamSource } from '@woyomi/core'
 import { imageSrc, playableStreamUrl, rewriteDashManifest, rewriteHlsPlaylist, type AppRuntime } from '../../runtime'
 import { useT } from '../../i18n'
+import { formatEpisodeLabel } from '../../format'
 import {
   PlayerControls,
   type PlayerControlsActions,
@@ -1921,9 +1922,7 @@ export function VideoPlayer({
   const canSeek = seekEnd > seekStart
   const liveTarget = hlsRef.current?.liveSyncPosition ?? seekEnd
   const behindLive = isLive && canSeek && liveTarget - displayTime > 5
-  const episodeLabel = `${t('common.episode', { number: episode.number })}${episode.season != null ? t('common.season', { season: episode.season }) : ''}${
-    episode.title ? t('common.title', { title: episode.title }) : ''
-  }`
+  const episodeLabel = formatEpisodeLabel(t, episode, 'episode')
   const video = videoRef.current
   const controlsState: PlayerControlsState = {
     visible: controlsVisible,

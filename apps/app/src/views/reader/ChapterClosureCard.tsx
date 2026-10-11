@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Episode } from '@woyomi/core'
 import { useT } from '../../i18n'
+import { formatEpisodeLabel } from '../../format'
 import { Btn } from '../../components'
 import { Icon } from '../../icons'
 
@@ -85,17 +86,8 @@ export function ChapterClosureCard({
     setSecondsLeft(null)
   }
 
-  const chapterTitle = chapter
-    ? `${t('common.chapter', { number: chapter.number })}${chapter.season != null ? t('common.season', { season: chapter.season }) : ''}${
-        chapter.title ? t('common.title', { title: chapter.title }) : ''
-      }`
-    : ''
-
-  const nextTitle = nextEpisode
-    ? `${t('common.chapter', { number: nextEpisode.number })}${nextEpisode.season != null ? t('common.season', { season: nextEpisode.season }) : ''}${
-        nextEpisode.title ? t('common.title', { title: nextEpisode.title }) : ''
-      }`
-    : ''
+  const chapterTitle = chapter ? formatEpisodeLabel(t, chapter, 'chapter') : ''
+  const nextTitle = nextEpisode ? formatEpisodeLabel(t, nextEpisode, 'chapter') : ''
 
   return (
     <div

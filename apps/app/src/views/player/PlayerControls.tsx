@@ -2,6 +2,7 @@ import type { Episode } from '@woyomi/core'
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { Toggle } from '../../components'
 import { useT } from '../../i18n'
+import { formatEpisodeLabel } from '../../format'
 import { Icon, type IconName } from '../../icons'
 import type { PlayerFit } from './player-prefs'
 import { formatTime } from './player-state'
@@ -240,9 +241,7 @@ function EpisodePanel({ state, actions }: { state: PlayerControlsState; actions:
                 } disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent`}
               >
                 <span className="min-w-0 flex-1 truncate">
-                  {t('common.episode', { number: episode.number })}
-                  {episode.season != null ? t('common.season', { season: episode.season }) : ''}
-                  {episode.title ? t('common.title', { title: episode.title }) : ''}
+                  {formatEpisodeLabel(t, episode, 'episode')}
                 </span>
                 {downloaded && <Icon name="download" size={15} className={current ? 'text-white' : 'text-accent'} />}
               </button>

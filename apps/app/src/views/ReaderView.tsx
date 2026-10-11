@@ -4,6 +4,7 @@ import { imageSrc, type AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { recordOpen } from '../hooks'
 import { useT } from '../i18n'
+import { formatEpisodeLabel } from '../format'
 import { BackButton, Banner, Page } from '../components'
 import { findAdjacent, restorePage, viewLabel, type PageSeekRequest, type PageView } from './reader/reader-nav'
 import {
@@ -282,11 +283,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const isImages = content.type === 'pages'
   const empty = isImages ? total === 0 : !content.html.trim()
   const chapter = episodes.find((e) => e.id === episodeId)
-  const chapterLabel = chapter
-    ? `${t('common.chapter', { number: chapter.number })}${chapter.season != null ? t('common.season', { season: chapter.season }) : ''}${
-        chapter.title ? t('common.title', { title: chapter.title }) : ''
-      }`
-    : ''
+  const chapterLabel = chapter ? formatEpisodeLabel(t, chapter, 'chapter') : ''
   const continuousView = { start: view.start, count: 1 as const, readingStart: view.start, readingEnd: view.start }
   const labelView = prefs.mode === 'paged' ? view : continuousView
   // strip mode is always vertical; pages mode is rtl/ltr (stored value may be
