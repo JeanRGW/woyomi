@@ -48,6 +48,11 @@ export const SearchResultsSchema = z.object({
   items: z.array(MediaSchema)
 })
 
+export const HomeSectionSchema = z.object({
+  id: z.string(),
+  title: z.string()
+})
+
 export const HistoryEntrySchema = z.object({
   media: MediaSchema,
   episode: EpisodeSchema,

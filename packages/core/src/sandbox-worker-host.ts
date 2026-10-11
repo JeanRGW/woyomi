@@ -1,5 +1,12 @@
 import type { FetchResult, PluginRegistration, SourceContext } from './types.js'
-import { deserializeError, serializeError, type MainToWorker, type SandboxOp, type WorkerToMain } from './sandbox.js'
+import {
+  deserializeError,
+  serializeError,
+  SANDBOX_CALL_TIMEOUT_MS,
+  type MainToWorker,
+  type SandboxOp,
+  type WorkerToMain
+} from './sandbox.js'
 
 const REGISTER_KEY = '__media_plugin_register'
 
@@ -30,12 +37,28 @@ export function runPluginWorkerHost(deps: PluginWorkerHostDeps = {}): void {
 
   let registration: PluginRegistration | undefined
   let nextCid = 1
-  const pending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>()
+  const pending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout> }>()
 
   function rpc(sourceId: string, op: SandboxOp, args: unknown[]): Promise<unknown> {
     const cid = nextCid++
     return new Promise((resolve, reject) => {
-      pending.set(cid, { resolve, reject })
+      // Reap unanswered requests: if the main thread never replies (crash,
+      // terminated app), the entry would leak and the plugin call hang.
+      const timer = setTimeout(() => {
+        pending.delete(cid)
+        reject(new Error(`ctx ${op} timed out`))
+      }, SANDBOX_CALL_TIMEOUT_MS)
+      pending.set(cid, {
+        resolve: (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+        timer
+      })
       post({ type: 'req', cid, sourceId, op, args })
     })
   }
@@ -95,6 +118,7 @@ export function runPluginWorkerHost(deps: PluginWorkerHostDeps = {}): void {
       const call = pending.get(msg.cid)
       if (!call) return
       pending.delete(msg.cid)
+      clearTimeout(call.timer)
       if (msg.ok) call.resolve(msg.value)
       else call.reject(deserializeError(msg.error))
       return
@@ -104,6 +128,11 @@ export function runPluginWorkerHost(deps: PluginWorkerHostDeps = {}): void {
       const { cid, sourceId, method, args } = msg
       void (async () => {
         try {
+          // Plugin code shares this worker and can forge MainToWorker messages:
+          // only Source API methods may ever be invoked here.
+          if (!(SOURCE_METHODS as readonly string[]).includes(method)) {
+            throw new Error(`source method not allowed: ${method}`)
+          }
           const source = registration?.sources.find((s) => s.id === sourceId)
           if (!source) throw new Error(`unknown source: ${sourceId}`)
           const fn = (source as unknown as Record<string, unknown>)[method]
