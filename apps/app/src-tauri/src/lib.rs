@@ -93,7 +93,13 @@ async fn fetch_url(
         return Err(format!("unsupported method: {}", args.method));
     }
 
-    let client = &state.client;
+    // `redirect: "manual"` serves the request through the no-follow client so
+    // the plugin sees the 3xx hop (and its `set-cookie`) itself.
+    let client = if args.redirect.as_deref() == Some("manual") {
+        &state.no_redirect_client
+    } else {
+        &state.client
+    };
     let mut req = client
         .request(
             reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?,
@@ -110,9 +116,6 @@ async fn fetch_url(
     }
     if let Some(b) = &args.body {
         req = req.body(b.clone());
-    }
-    if args.redirect.as_deref() == Some("manual") {
-        req = req.redirect_policy(reqwest::redirect::Policy::none());
     }
 
     let mut resp = req
@@ -686,6 +689,8 @@ type DownloadKey = (String, u32);
 
 pub struct AppState {
     pub client: reqwest::Client,
+    /// Same transport that never follows redirects, for `redirect: "manual"`.
+    no_redirect_client: reqwest::Client,
     download_client: reqwest::Client,
     jobs: Arc<Mutex<HashMap<DownloadKey, DownloadJob>>>,
     dom_renderer: Arc<DomRenderer>,
@@ -1802,6 +1807,12 @@ pub fn run() {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("failed to build http client"),
+            no_redirect_client: reqwest::Client::builder()
+                .user_agent("woyomi/0.1 (+native)")
+                .timeout(std::time::Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("failed to build no-redirect http client"),
             download_client: reqwest::Client::builder()
                 .user_agent("woyomi/0.1 (+native)")
                 .connect_timeout(std::time::Duration::from_secs(15))
