@@ -35,6 +35,10 @@ pub struct FetchArgs {
     pub dom: bool,
     #[serde(default)]
     pub wait_for: Option<String>,
+    /// "manual" returns redirect responses instead of following them (the
+    /// plugin handles the hop, e.g. to read `set-cookie` from a 3xx).
+    #[serde(default)]
+    pub redirect: Option<String>,
 }
 
 fn default_method() -> String {
@@ -47,6 +51,21 @@ pub struct FetchResult {
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: String,
+}
+
+/// Duplicate response headers (most importantly `set-cookie`) are joined with
+/// '\n' so callers receive every value; this is the documented `FetchResult`
+/// contract (packages/core FetchInit.redirect).
+fn push_response_header(headers: &mut HashMap<String, String>, key: &str, value: &str) {
+    match headers.get_mut(key) {
+        Some(existing) => {
+            existing.push('\n');
+            existing.push_str(value);
+        }
+        None => {
+            headers.insert(key.to_string(), value.to_string());
+        }
+    }
 }
 
 /// CORS-free fetch for plugins. Runs server-side in the native shell, so source
@@ -92,6 +111,9 @@ async fn fetch_url(
     if let Some(b) = &args.body {
         req = req.body(b.clone());
     }
+    if args.redirect.as_deref() == Some("manual") {
+        req = req.redirect_policy(reqwest::redirect::Policy::none());
+    }
 
     let mut resp = req
         .send()
@@ -104,7 +126,7 @@ async fn fetch_url(
     let mut headers = HashMap::new();
     for (k, v) in resp.headers() {
         if let Ok(hv) = v.to_str() {
-            headers.insert(k.to_string(), hv.to_string());
+            push_response_header(&mut headers, &k.to_string(), hv);
         }
     }
     // Cap the body: `resp.text()` is unbounded and a hostile endpoint could
@@ -1843,9 +1865,20 @@ mod tests {
     }
 
     use super::{
-        allowed_content_type, dom_selector_script, dom_snapshot_script, parse_range, request_authorized,
-        token_eq, validate_cover_hash, validate_file_id, DomRenderer, RangeOutcome,
+        allowed_content_type, dom_selector_script, dom_snapshot_script, parse_range, push_response_header,
+        request_authorized, token_eq, validate_cover_hash, validate_file_id, DomRenderer, RangeOutcome,
     };
+
+    #[test]
+    fn joins_duplicate_response_headers() {
+        let mut headers = std::collections::HashMap::new();
+        push_response_header(&mut headers, "set-cookie", "a=1; Path=/");
+        push_response_header(&mut headers, "set-cookie", "b=2; Path=/");
+        push_response_header(&mut headers, "content-type", "text/plain");
+        push_response_header(&mut headers, "content-type", "text/plain");
+        assert_eq!(headers.get("set-cookie").map(String::as_str), Some("a=1; Path=/\nb=2; Path=/"));
+        assert_eq!(headers.get("content-type").map(String::as_str), Some("text/plain\ntext/plain"));
+    }
 
     #[test]
     fn serializes_dom_wait_selector_safely() {

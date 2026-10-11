@@ -253,7 +253,8 @@ export function createFetchProvider(): FetchFn {
           headers: init?.headers ?? {},
           body: init?.body,
           dom: init?.mode === 'dom',
-          waitFor: init?.waitFor
+          waitFor: init?.waitFor,
+          redirect: init?.redirect
         }
       })
       // The Rust error string and response shape both cross an untyped IPC
@@ -274,6 +275,7 @@ export function createFetchProvider(): FetchFn {
         method: init?.method ?? 'GET',
         headers: init?.headers,
         body: init?.body,
+        ...(init?.redirect ? { redirect: init.redirect } : {}),
         signal: AbortSignal.timeout(15_000) // ponytail: single choke point; engine needs no per-call timeout
       })
       const body = await res.text()

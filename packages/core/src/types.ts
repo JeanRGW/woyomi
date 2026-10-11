@@ -87,6 +87,13 @@ export interface FetchInit {
   mode?: 'text' | 'dom'
   /** CSS selector to wait for when rendering a DOM page. */
   waitFor?: string
+  /**
+   * 'manual' returns redirect responses (3xx) instead of following them, so a
+   * plugin can read hop headers such as `set-cookie`. Duplicate response
+   * headers arrive joined with '\n' in `FetchResult.headers`. Browser runtimes
+   * report an opaque redirect (status 0) — cookie flows are native-only.
+   */
+  redirect?: 'follow' | 'manual'
 }
 
 export interface FetchResult {
