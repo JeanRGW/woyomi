@@ -280,7 +280,7 @@ export function StoreView({ runtime }: { runtime: AppRuntime }) {
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <strong className="text-sm font-bold">{p.name}</strong>
                     <span className="text-xs text-faint">
-                      v{p.version}
+                      {t('common.version', { version: p.version })}
                       {p.lang.length ? ` · ${p.lang.join(', ')}` : ''}
                     </span>
                   </div>

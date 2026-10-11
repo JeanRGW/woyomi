@@ -316,8 +316,10 @@ export function CoverArt({ media, coverUrl, className = '' }: { media: Media; co
 
 export function MediaCard({ media, className = '' }: { media: Media; className?: string }) {
   const t = useT()
-  const [srcId, mediaId] = media.id.split('/')
-  const open = () => navigate({ name: 'media', sourceId: srcId!, mediaId: mediaId! })
+  const slash = media.id.indexOf('/')
+  const srcId = slash === -1 ? '' : media.id.slice(0, slash)
+  const mediaId = slash === -1 ? media.id : media.id.slice(slash + 1)
+  const open = () => navigate({ name: 'media', sourceId: srcId, mediaId })
   return (
     <div
       className={`group cursor-pointer ${className}`}
