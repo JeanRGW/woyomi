@@ -1,4 +1,4 @@
-import type { LibraryStore } from '@woyomi/core'
+import type { LibraryStore, LibraryStoreWriteMethod } from '@woyomi/core'
 
 export interface SyncConfig {
   server: string
@@ -15,11 +15,9 @@ function syncUrl(config: SyncConfig): string {
 }
 
 function syncInit(config: SyncConfig, init: RequestInit = {}): RequestInit {
-  return {
-    ...init,
-    headers: { ...init.headers, ...(config.token.trim() ? { authorization: `Bearer ${config.token.trim()}` } : {}) },
-    signal: init.signal ?? AbortSignal.timeout(15_000)
-  }
+  const headers: Record<string, string> = { ...Object.fromEntries(new Headers(init.headers)) }
+  if (config.token.trim()) headers.authorization = `Bearer ${config.token.trim()}`
+  return { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15_000) }
 }
 
 function throwHttp(res: Response, verb: string): never {
@@ -44,21 +42,39 @@ export async function pullSync(store: LibraryStore, config: SyncConfig): Promise
 }
 
 /** Manual mutations that should be synced; NOT importJson (sync adopts via that). */
-const WRITE_METHODS = ['add', 'updateStatus', 'remove', 'setSeen', 'setSeenMany', 'unsetSeen', 'unsetSeenMany', 'addHistory', 'removeHistory']
+const WRITE_METHODS: Record<LibraryStoreWriteMethod, true> = {
+  add: true,
+  updateStatus: true,
+  remove: true,
+  setSeen: true,
+  setSeenMany: true,
+  unsetSeen: true,
+  unsetSeenMany: true,
+  addHistory: true,
+  removeHistory: true
+}
 
 /**
- * Wrap a store so every local library mutation marks it dirty, which the
- * auto-sync loop turns into a push. Reads and importJson pass through: reads
- * have nothing to sync, and importJson is what push/pull use to adopt the
- * server result — wrapping it would push↔adopt eternally.
+ * Wrap a store so every successful local library mutation marks it dirty, which
+ * the auto-sync loop turns into a push. Failed writes do not schedule a push,
+ * and reads and importJson pass through: reads have nothing to sync, and
+ * importJson is what push/pull use to adopt the server result — wrapping it
+ * would push↔adopt eternally. The `Record` above fails to compile when a new
+ * `LibraryStoreWriteMethod` is added without updating this list.
  */
 export function makeSyncingStore(store: LibraryStore, markDirty: () => void): LibraryStore {
   return new Proxy(store, {
     get(target, prop, receiver) {
       const method = Reflect.get(target, prop, receiver)
-      if (typeof prop === 'string' && WRITE_METHODS.includes(prop)) {
+      if (typeof prop === 'string' && prop in WRITE_METHODS) {
         return ((...args: never[]) => {
           const result = (method as (...a: never[]) => unknown).apply(target, args)
+          if (result instanceof Promise) {
+            return result.then((value) => {
+              markDirty()
+              return value
+            })
+          }
           markDirty()
           return result
         }) as never

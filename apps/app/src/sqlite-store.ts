@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql'
 import type { CachedMediaPage, MediaPageCache, PluginStore, PluginStoredBundle, PreferencesApi, PreferenceValue } from '@woyomi/core'
 import type { LibraryEntry, LibraryStatus, Media, Episode, HistoryEntry, ProgressEntry, SyncEdits, SyncPayload } from '@woyomi/core'
+import { mergeSyncPayload, parseSyncPayload } from '@woyomi/core'
 import type { LibraryStore } from '@woyomi/core'
 import type { DownloadRecord, DownloadStore } from './downloads'
 
@@ -143,25 +144,34 @@ export class SqliteStore implements LibraryStore {
   }
 
   async exportJson(): Promise<string> {
-    return JSON.stringify({
+    return JSON.stringify(await this.readPayload())
+  }
+
+  async importJson(json: string): Promise<void> {
+    const incoming = parseSyncPayload(json)
+    const current = await this.readPayload()
+    const merged = mergeSyncPayload(current, incoming)
+    const db = await this.db()
+    const mergedEntries = new Set(merged.entries.map((e) => e.media.id))
+    const mergedProgress = new Set(merged.progress.map((p) => p.mediaId))
+    const mergedHistory = new Set(merged.history.map((h) => h.episode.id))
+    for (const e of merged.entries) await db.execute('INSERT OR REPLACE INTO library (id, meta) VALUES ($1, $2)', [e.media.id, JSON.stringify(e)])
+    for (const e of current.entries) if (!mergedEntries.has(e.media.id)) await db.execute('DELETE FROM library WHERE id = $1', [e.media.id])
+    for (const p of merged.progress) await db.execute('INSERT OR REPLACE INTO progress (media_id, seen) VALUES ($1, $2)', [p.mediaId, JSON.stringify(p)])
+    for (const p of current.progress) if (!mergedProgress.has(p.mediaId)) await db.execute('DELETE FROM progress WHERE media_id = $1', [p.mediaId])
+    for (const h of merged.history) await db.execute('INSERT OR REPLACE INTO history (episode_id, row) VALUES ($1, $2)', [h.episode.id, JSON.stringify(h)])
+    for (const h of current.history) if (!mergedHistory.has(h.episode.id)) await db.execute('DELETE FROM history WHERE episode_id = $1', [h.episode.id])
+    await this.setTombstones(merged.tombstones)
+  }
+
+  private async readPayload(): Promise<SyncPayload> {
+    return {
       version: 1,
       entries: await this.list(),
       progress: await this.listProgress(),
       history: await this.listHistory(),
       tombstones: await this.readTombstones()
-    })
-  }
-
-  async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as SyncPayload
-    const db = await this.db()
-    for (const e of data.entries ?? []) await db.execute('INSERT OR REPLACE INTO library (id, meta) VALUES ($1, $2)', [e.media.id, JSON.stringify(e)])
-    for (const p of data.progress ?? []) await db.execute('INSERT OR REPLACE INTO progress (media_id, seen) VALUES ($1, $2)', [p.mediaId, JSON.stringify(p)])
-    for (const h of data.history ?? []) {
-      const entry: HistoryEntry = { media: h.media, episode: h.episode, openedAt: h.openedAt }
-      await db.execute('INSERT OR REPLACE INTO history (episode_id, row) VALUES ($1, $2)', [h.episode.id, JSON.stringify(entry)])
     }
-    await this.setTombstones(data.tombstones)
   }
 
   private async listProgress(): Promise<ProgressEntry[]> {

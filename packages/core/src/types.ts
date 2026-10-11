@@ -273,5 +273,22 @@ export interface LibraryStore {
   /** episodeId is globally unique, so mediaId is not needed. */
   removeHistory(episodeId: string): Promise<void>
   exportJson(): Promise<string>
+  /**
+   * Adopt an external payload (sync response or backup file): merges with local
+   * state via `mergeSyncPayload` (last-write-wins per record; tombstones beat
+   * only older rows). Never discards newer local data. Throws on invalid payloads.
+   */
   importJson(json: string): Promise<void>
 }
+
+/** Names of the `LibraryStore` methods that mutate local data (used to wrap stores for sync dirty-tracking). */
+export type LibraryStoreWriteMethod =
+  | 'add'
+  | 'updateStatus'
+  | 'remove'
+  | 'setSeen'
+  | 'setSeenMany'
+  | 'unsetSeen'
+  | 'unsetSeenMany'
+  | 'addHistory'
+  | 'removeHistory'

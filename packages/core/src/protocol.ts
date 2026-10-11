@@ -54,6 +54,40 @@ export const HistoryEntrySchema = z.object({
   openedAt: z.number()
 })
 
+export const LibraryEntrySchema = z.object({
+  media: MediaSchema,
+  status: LibraryStatusSchema,
+  addedAt: z.number(),
+  updatedAt: z.number().optional()
+})
+
+export const ProgressEntrySchema = z.object({
+  mediaId: z.string(),
+  seenEpisodeIds: z.array(z.string()),
+  updatedAt: z.number()
+})
+
+export const SyncTombstoneSchema = z.object({ id: z.string(), deletedAt: z.number() })
+
+export const SyncEditsSchema = z.object({
+  entries: z.array(SyncTombstoneSchema).default([]),
+  progress: z.array(SyncTombstoneSchema).default([]),
+  history: z.array(SyncTombstoneSchema).default([])
+})
+
+/**
+ * Shape of the library payload exchanged with the sync server and backup
+ * files. Missing collections default to empty and `version` to 1 so older
+ * payloads stay loadable; unknown fields are stripped.
+ */
+export const SyncPayloadSchema = z.object({
+  version: z.number().default(1),
+  entries: z.array(LibraryEntrySchema).default([]),
+  progress: z.array(ProgressEntrySchema).default([]),
+  history: z.array(HistoryEntrySchema).default([]),
+  tombstones: SyncEditsSchema.default({ entries: [], progress: [], history: [] })
+})
+
 export const SourcePrefSchema = z
   .object({
     key: z.string(),

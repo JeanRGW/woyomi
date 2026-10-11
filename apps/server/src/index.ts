@@ -4,7 +4,7 @@ import { cors } from 'hono/cors'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import type { HistoryEntry, LibraryEntry, ProgressEntry, SyncPayload } from '@woyomi/core'
+import { mergeSyncPayload, type SyncPayload } from '@woyomi/core'
 
 /**
  * Optional self-hosted backend for the web build.
@@ -322,91 +322,13 @@ const EMPTY_PAYLOAD: SyncPayload = {
   tombstones: { entries: [], progress: [], history: [] }
 }
 
-/** last-change time of a record: live rows use updatedAt/openedAt, tombstones use deletedAt. */
-function lastChange(r: { updatedAt?: number; openedAt?: number; deletedAt?: number } | undefined): number {
-  return r?.updatedAt ?? r?.openedAt ?? r?.deletedAt ?? 0
-}
-
 /**
  * Order-independent, idempotent merge of two library snapshots (the stored one
- * and a client's full export). Converges for concurrent edits on different
- * records and resolves same-id conflicts by last change:
- *  - entries   keep whichever of [live | tombstone] changed last
- *  - progress  union seenEpisodeIds when both live, updatedAt = max
- *  - history   keep the row with the larger openedAt (or a newer tombstone)
- * Tombstone sets union; a tombstone whose id later comes back live is dropped.
- * ponytail: no clock-skew handling (single-owner personal sync) and tombstones
- * are never GC'd. Both are add-when-measured upgrades.
+ * and a client's full export). Single implementation lives in @woyomi/core so
+ * every client applies identical semantics. Exported under the historical name
+ * for tests and callers.
  */
-export function mergeLibraries(prev: SyncPayload, inc: SyncPayload): SyncPayload {
-  const prevEntries = new Map((prev.entries ?? []).map((e) => [e.media.id, e]))
-  const incEntries = new Map((inc.entries ?? []).map((e) => [e.media.id, e]))
-  const tsIn = new Map((inc.tombstones?.entries ?? []).map((t) => [t.id, t]))
-  const tombOut = new Map((prev.tombstones?.entries ?? []).map((t) => [t.id, t.deletedAt]))
-
-  const entries: LibraryEntry[] = []
-  for (const id of new Set([...prevEntries.keys(), ...incEntries.keys(), ...tsIn.keys()])) {
-    const p = prevEntries.get(id)
-    const i = incEntries.get(id)
-    const t = tsIn.get(id)
-    const tombAt = tombOut.get(id)
-    const liveTs = Math.max(lastChange(p), lastChange(i))
-    const deadTs = Math.max(t?.deletedAt ?? 0, tombAt ?? 0)
-    if (deadTs > liveTs) {
-      tombOut.set(id, deadTs)
-      continue
-    }
-    const winner = i && (!p || lastChange(i) > lastChange(p)) ? i : p
-    if (winner) {
-      entries.push(winner)
-      tombOut.delete(id)
-    }
-  }
-  const entryTombs = [...tombOut.entries()].map(([id, deletedAt]) => ({ id, deletedAt }))
-
-  const progressMap = new Map<string, ProgressEntry>()
-  for (const row of [...(prev.progress ?? []), ...(inc.progress ?? [])]) {
-    const existing = progressMap.get(row.mediaId)
-    if (existing) {
-      progressMap.set(row.mediaId, {
-        mediaId: row.mediaId,
-        seenEpisodeIds: [...new Set([...existing.seenEpisodeIds, ...row.seenEpisodeIds])],
-        updatedAt: Math.max(existing.updatedAt, row.updatedAt)
-      })
-    } else progressMap.set(row.mediaId, row)
-  }
-  const progressTomb = new Map<string, number>([...(prev.tombstones?.progress ?? []), ...(inc.tombstones?.progress ?? [])].map((t) => [t.id, t.deletedAt]))
-  for (const [id, deletedAt] of progressTomb) {
-    const row = progressMap.get(id)
-    if (row && row.updatedAt <= deletedAt) progressMap.delete(id)
-  }
-  const progress = [...progressMap.values()]
-
-  const historyMap = new Map<string, HistoryEntry>()
-  for (const row of [...(prev.history ?? []), ...(inc.history ?? [])]) {
-    if (!row.episode) continue
-    const existing = historyMap.get(row.episode.id)
-    if (!existing || row.openedAt > existing.openedAt) historyMap.set(row.episode.id, row)
-  }
-  const historyTomb = new Map<string, number>([...(prev.tombstones?.history ?? []), ...(inc.tombstones?.history ?? [])].map((t) => [t.id, t.deletedAt]))
-  for (const [id, deletedAt] of historyTomb) {
-    const row = historyMap.get(id)
-    if (row && row.openedAt <= deletedAt) historyMap.delete(id)
-  }
-  const history = [...historyMap.values()]
-
-  return {
-    version: 1,
-    entries,
-    progress,
-    history,
-    tombstones: {
-      entries: entryTombs,
-      progress: [...progressTomb].filter(([id]) => !progressMap.has(id)).map(([id, deletedAt]) => ({ id, deletedAt })),
-      history: [...historyTomb].filter(([id]) => !historyMap.has(id)).map(([id, deletedAt]) => ({ id, deletedAt }))
-    }
-  }
-}
+export const mergeLibraries = mergeSyncPayload
 
 app.get('/api/sync/:user', async (c) => {
   if (!authed(c)) return c.json({ error: 'unauthorized' }, 401)

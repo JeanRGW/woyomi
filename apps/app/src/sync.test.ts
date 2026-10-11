@@ -106,6 +106,16 @@ describe('makeSyncingStore', () => {
     expect(markDirty).toHaveBeenCalledTimes(2)
   })
 
+  it('does not mark dirty when a write rejects', async () => {
+    const markDirty = vi.fn()
+    const failing = store()
+    vi.mocked(failing.remove).mockRejectedValue(new Error('write failed'))
+    const proxy = makeSyncingStore(failing, markDirty)
+
+    await expect(proxy.remove('m')).rejects.toThrow('write failed')
+    expect(markDirty).not.toHaveBeenCalled()
+  })
+
   it('delegates to the underlying store and preserves `this`', async () => {
     const markDirty = vi.fn()
     const proxied = makeSyncingStore(store(), markDirty)

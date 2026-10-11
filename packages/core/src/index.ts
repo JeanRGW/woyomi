@@ -32,3 +32,4 @@ export {
   IndexedDbMediaPageCache
 } from './store.js'
 export { sha256Hex } from './sha.js'
+export { mergeSyncPayload, parseSyncPayload } from './sync-merge.js'
