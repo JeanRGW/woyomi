@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
+import { sanitizeHtml } from '../sanitize'
 import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus, type Media } from '@woyomi/core'
 import { isTauri, proxiedHref, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
@@ -99,7 +100,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   }, [runtime.downloads, sourceId, mediaId])
 
   const descriptionHtml = useMemo(
-    () => (media?.synopsis ? marked.parse(media.synopsis, { async: false }) : ''),
+    () => (media?.synopsis ? sanitizeHtml(marked.parse(media.synopsis, { async: false })) : ''),
     [media?.synopsis]
   )
 
