@@ -63,23 +63,36 @@ async fn fetch_url(
         return render_dom(&app, &state.dom_renderer, args).await;
     }
 
+    // Plugin code is untrusted: constrain where and how it can fetch.
+    let target = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid url: {e}"))?;
+    if !matches!(target.scheme(), "http" | "https") {
+        return Err("url must use http or https".to_string());
+    }
+    let method = args.method.to_ascii_uppercase();
+    if !matches!(method.as_str(), "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE") {
+        return Err(format!("unsupported method: {}", args.method));
+    }
+
     let client = &state.client;
     let mut req = client
         .request(
-            reqwest::Method::from_bytes(args.method.as_bytes()).map_err(|e| e.to_string())?,
-            &args.url,
+            reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?,
+            target,
         )
         .header("user-agent", "woyomi/0.1 (+native)")
         .header("accept", "*/*");
 
     for (k, v) in &args.headers {
+        if STRIPPED_FETCH_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+            continue;
+        }
         req = req.header(k, v);
     }
     if let Some(b) = &args.body {
         req = req.body(b.clone());
     }
 
-    let resp = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let mut resp = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
     let status = resp.status().as_u16();
     let mut headers = HashMap::new();
     for (k, v) in resp.headers() {
@@ -87,18 +100,40 @@ async fn fetch_url(
             headers.insert(k.to_string(), hv.to_string());
         }
     }
-    let body = resp.text().await.map_err(|e| format!("read body: {e}"))?;
-
-    if status >= 500 {
-        // keep the plugin error path simple; still deliver status
+    // Cap the body: `resp.text()` is unbounded and a hostile endpoint could
+    // OOM the app.
+    let mut raw: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("read body: {e}"))? {
+        if raw.len() + chunk.len() > FETCH_MAX_BODY_BYTES {
+            return Err(format!("response body exceeds {FETCH_MAX_BODY_BYTES} bytes"));
+        }
+        raw.extend_from_slice(&chunk);
     }
-    let _ = app;
+    let body = String::from_utf8_lossy(&raw).into_owned();
+
     Ok(FetchResult {
         status,
         headers,
         body,
     })
 }
+
+/// Framing/host headers a plugin must not control: they corrupt the request or
+/// impersonate the upstream. Content credentials (cookie/authorization) pass
+/// through — authenticated scraping is the plugin's own concern.
+const STRIPPED_FETCH_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "connection",
+    "transfer-encoding",
+    "te",
+    "keep-alive",
+    "upgrade",
+    "proxy-authorization",
+    "proxy-connection",
+];
+
+const FETCH_MAX_BODY_BYTES: usize = 12 * 1024 * 1024;
 
 #[cfg(desktop)]
 const DOM_RENDERER_LABEL: &str = "dom-renderer";
