@@ -15,10 +15,14 @@ export async function fetchJson<T>(
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`GET ${url} -> HTTP ${res.status}`)
   }
-  return JSON.parse(res.body) as T
+  try {
+    return JSON.parse(res.body) as T
+  } catch {
+    throw new Error(`GET ${url} -> response is not valid JSON`)
+  }
 }
 
-/** Helper for plugins that scrape HTML: fetch + return parsed Document. */
+/** Helper for plugins that scrape HTML: fetch and return the raw body. */
 export async function fetchHtml(fetch: FetchFn, url: string): Promise<string> {
   const res: FetchResult = await fetch(url, { headers: { accept: 'text/html,*/*' } })
   if (res.status < 200 || res.status >= 300) {

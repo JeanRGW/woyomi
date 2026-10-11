@@ -15,6 +15,7 @@ import type {
   SyncEdits,
   SyncPayload
 } from './types.js'
+import { mergeSyncPayload, parseSyncPayload } from './sync-merge.js'
 
 /** In-memory store used for tests and non-persistent scenarios. */
 export class MemoryStore implements LibraryStore {
@@ -96,7 +97,21 @@ export class MemoryStore implements LibraryStore {
   }
 
   async exportJson(): Promise<string> {
-    return JSON.stringify({
+    return JSON.stringify(this.snapshot())
+  }
+
+  async importJson(json: string): Promise<void> {
+    const merged = mergeSyncPayload(this.snapshot(), parseSyncPayload(json))
+    this.entries = new Map(merged.entries.map((e) => [e.media.id, e]))
+    this.progress = new Map(merged.progress.map((p) => [p.mediaId, p]))
+    this.history = new Map(merged.history.map((h) => [h.episode.id, h]))
+    this.tombEntries = new Map(merged.tombstones.entries.map((t) => [t.id, t.deletedAt]))
+    this.tombProgress = new Map(merged.tombstones.progress.map((t) => [t.id, t.deletedAt]))
+    this.tombHistory = new Map(merged.tombstones.history.map((t) => [t.id, t.deletedAt]))
+  }
+
+  private snapshot(): SyncPayload {
+    return {
       version: 1,
       entries: [...this.entries.values()],
       progress: [...this.progress.values()],
@@ -106,25 +121,6 @@ export class MemoryStore implements LibraryStore {
         progress: [...this.tombProgress].map(([id, deletedAt]) => ({ id, deletedAt })),
         history: [...this.tombHistory].map(([id, deletedAt]) => ({ id, deletedAt }))
       }
-    })
-  }
-
-  async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as SyncPayload
-    if (data.entries) for (const e of data.entries) this.entries.set(e.media.id, e)
-    if (data.progress) for (const p of data.progress) this.progress.set(p.mediaId, p)
-    if (data.history) for (const h of data.history) this.history.set(h.episode.id, h)
-    for (const t of data.tombstones?.entries ?? []) {
-      this.entries.delete(t.id)
-      this.tombEntries.set(t.id, t.deletedAt)
-    }
-    for (const t of data.tombstones?.progress ?? []) {
-      this.progress.delete(t.id)
-      this.tombProgress.set(t.id, t.deletedAt)
-    }
-    for (const t of data.tombstones?.history ?? []) {
-      this.history.delete(t.id)
-      this.tombHistory.set(t.id, t.deletedAt)
     }
   }
 }
@@ -196,7 +192,15 @@ export class IndexedDbStore implements LibraryStore {
       this.dbPromise = new Promise((resolve, reject) => {
         const req = indexDBOpen(this.dbName, IndexedDbStore.VERSION)
         req.onerror = () => reject(req.error)
-        req.onsuccess = () => resolve(req.result)
+        req.onsuccess = () => {
+          // Another tab may bump the version and invalidate this handle;
+          // drop the cached promise so the next call reconnects.
+          req.result.onversionchange = () => {
+            req.result.close()
+            this.dbPromise = undefined
+          }
+          resolve(req.result)
+        }
         req.onupgradeneeded = () => {
           const db = req.result
           if (!db.objectStoreNames.contains('library')) db.createObjectStore('library', { keyPath: 'id' })
@@ -209,6 +213,19 @@ export class IndexedDbStore implements LibraryStore {
       })
     }
     return this.dbPromise
+  }
+
+  /**
+   * Serializes mutations: several methods are read-modify-write across
+   * transactions (meta + tombstones), and interleaved concurrent writes would
+   * lose updates.
+   */
+  private writeLock: Promise<unknown> = Promise.resolve()
+
+  private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.writeLock.then(fn, fn)
+    this.writeLock = next.catch(() => undefined)
+    return next
   }
 
   /** Reuses this store's open IndexedDB handle; shares the library DB file. */
@@ -227,16 +244,18 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async add(media: Media, status: LibraryStatus): Promise<void> {
-    const db = await this.db()
-    const existing = await this.get(media.id)
-    const meta: LibraryEntry = { ...existing, media, status, addedAt: existing?.addedAt ?? Date.now(), updatedAt: Date.now() }
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('library', 'readwrite')
-      tx.objectStore('library').put({ ...media, meta })
-      tx.oncomplete = () => resolve(null)
-      tx.onerror = () => reject(tx.error)
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      const existing = await this.get(media.id)
+      const meta: LibraryEntry = { ...existing, media, status, addedAt: existing?.addedAt ?? Date.now(), updatedAt: Date.now() }
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('library', 'readwrite')
+        tx.objectStore('library').put({ ...media, meta })
+        tx.oncomplete = () => resolve(null)
+        tx.onerror = () => reject(tx.error)
+      })
+      await this.clearTombstone('entries', media.id)
     })
-    await this.clearTombstone('entries', media.id)
   }
 
   async updateStatus(mediaId: string, status: LibraryStatus): Promise<void> {
@@ -244,10 +263,12 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async remove(mediaId: string): Promise<void> {
-    const db = await this.db()
-    // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
-    await request(db.transaction('library', 'readwrite').objectStore('library').delete(mediaId)).then(() => undefined)
-    await this.putTombstone('entries', mediaId)
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      // Removing from the library leaves progress/history intact (Aniyomi/Mihon behavior).
+      await request(db.transaction('library', 'readwrite').objectStore('library').delete(mediaId)).then(() => undefined)
+      await this.putTombstone('entries', mediaId)
+    })
   }
 
   async get(mediaId: string): Promise<LibraryEntry | undefined> {
@@ -266,13 +287,15 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async setSeenMany(mediaId: string, episodeIds: string[]): Promise<void> {
-    const db = await this.db()
-    const existing = await this.getProgress(mediaId)
-    const seen = new Set(existing?.seenEpisodeIds ?? [])
-    for (const id of episodeIds) seen.add(id)
-    const row: ProgressEntry = { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() }
-    await request(db.transaction('progress', 'readwrite').objectStore('progress').put(row)).then(() => undefined)
-    await this.clearTombstone('progress', mediaId)
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      const existing = await this.getProgress(mediaId)
+      const seen = new Set(existing?.seenEpisodeIds ?? [])
+      for (const id of episodeIds) seen.add(id)
+      const row: ProgressEntry = { mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() }
+      await request(db.transaction('progress', 'readwrite').objectStore('progress').put(row)).then(() => undefined)
+      await this.clearTombstone('progress', mediaId)
+    })
   }
 
   async unsetSeen(mediaId: string, episodeId: string): Promise<void> {
@@ -280,16 +303,18 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async unsetSeenMany(mediaId: string, episodeIds: string[]): Promise<void> {
-    const db = await this.db()
-    const existing = await this.getProgress(mediaId)
-    if (!existing) return
-    const seen = new Set(existing.seenEpisodeIds)
-    for (const id of episodeIds) seen.delete(id)
-    const store = db.transaction('progress', 'readwrite').objectStore('progress')
-    if (seen.size === 0) {
-      await request(store.delete(mediaId)).then(() => undefined)
-      await this.putTombstone('progress', mediaId)
-    } else await request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      const existing = await this.getProgress(mediaId)
+      if (!existing) return
+      const seen = new Set(existing.seenEpisodeIds)
+      for (const id of episodeIds) seen.delete(id)
+      const store = db.transaction('progress', 'readwrite').objectStore('progress')
+      if (seen.size === 0) {
+        await request(store.delete(mediaId)).then(() => undefined)
+        await this.putTombstone('progress', mediaId)
+      } else await request(store.put({ mediaId, seenEpisodeIds: [...seen], updatedAt: Date.now() })).then(() => undefined)
+    })
   }
 
   async getProgress(mediaId: string): Promise<ProgressEntry | undefined> {
@@ -297,11 +322,18 @@ export class IndexedDbStore implements LibraryStore {
     return request<ProgressEntry | undefined>(db.transaction('progress', 'readonly').objectStore('progress').get(mediaId))
   }
 
-  async addHistory(media: Media, episode: Episode): Promise<void> {
+  private async listProgress(): Promise<ProgressEntry[]> {
     const db = await this.db()
-    const row = { key: episode.id, media, episode, openedAt: Date.now() }
-    await request(db.transaction('history', 'readwrite').objectStore('history').put(row)).then(() => undefined)
-    await this.clearTombstone('history', episode.id)
+    return request<ProgressEntry[]>(db.transaction('progress', 'readonly').objectStore('progress').getAll())
+  }
+
+  async addHistory(media: Media, episode: Episode): Promise<void> {
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      const row = { key: episode.id, media, episode, openedAt: Date.now() }
+      await request(db.transaction('history', 'readwrite').objectStore('history').put(row)).then(() => undefined)
+      await this.clearTombstone('history', episode.id)
+    })
   }
 
   async listHistory(): Promise<HistoryEntry[]> {
@@ -313,44 +345,62 @@ export class IndexedDbStore implements LibraryStore {
   }
 
   async removeHistory(episodeId: string): Promise<void> {
-    const db = await this.db()
-    await request(db.transaction('history', 'readwrite').objectStore('history').delete(episodeId)).then(() => undefined)
-    await this.putTombstone('history', episodeId)
+    return this.withWriteLock(async () => {
+      const db = await this.db()
+      await request(db.transaction('history', 'readwrite').objectStore('history').delete(episodeId)).then(() => undefined)
+      await this.putTombstone('history', episodeId)
+    })
   }
 
   async exportJson(): Promise<string> {
-    const entries = await this.list()
-    const progress: ProgressEntry[] = []
-    for (const e of entries) {
-      const p = await this.getProgress(e.media.id)
-      if (p) progress.push(p)
-    }
-    const tombstones = await this.readTombstones()
-    return JSON.stringify({ version: 1, entries, progress, history: await this.listHistory(), tombstones })
+    return JSON.stringify(await this.snapshot())
   }
 
   async importJson(json: string): Promise<void> {
-    const data = JSON.parse(json) as SyncPayload
-    const db = await this.db()
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
-      const ls = tx.objectStore('library')
-      const ps = tx.objectStore('progress')
-      const hs = tx.objectStore('history')
-      for (const e of data.entries ?? []) ls.put({ ...e.media, meta: e })
-      for (const p of data.progress ?? []) ps.put(p)
-      for (const h of data.history ?? []) hs.put({ key: h.episode.id, ...h })
-      tx.oncomplete = () => resolve(null)
-      tx.onerror = () => reject(tx.error)
+    return this.withWriteLock(async () => {
+      const incoming = parseSyncPayload(json)
+      const current = await this.snapshot()
+      const merged = mergeSyncPayload(current, incoming)
+      const db = await this.db()
+      const mergedEntries = new Set(merged.entries.map((e) => e.media.id))
+      const mergedProgress = new Set(merged.progress.map((p) => p.mediaId))
+      const mergedHistory = new Set(merged.history.map((h) => h.episode.id))
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['library', 'progress', 'history'], 'readwrite')
+        const ls = tx.objectStore('library')
+        const ps = tx.objectStore('progress')
+        const hs = tx.objectStore('history')
+        for (const e of current.entries) if (!mergedEntries.has(e.media.id)) ls.delete(e.media.id)
+        for (const p of current.progress) if (!mergedProgress.has(p.mediaId)) ps.delete(p.mediaId)
+        for (const h of current.history) if (!mergedHistory.has(h.episode.id)) hs.delete(h.episode.id)
+        for (const e of merged.entries) ls.put({ ...e.media, meta: e })
+        for (const p of merged.progress) ps.put(p)
+        for (const h of merged.history) hs.put({ key: h.episode.id, ...h })
+        tx.oncomplete = () => resolve(null)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      })
+      await this.setTombstones(merged.tombstones)
     })
-    await this.setTombstones(data.tombstones)
+  }
+
+  private async snapshot(): Promise<SyncPayload> {
+    return {
+      version: 1,
+      entries: await this.list(),
+      progress: await this.listProgress(),
+      history: await this.listHistory(),
+      tombstones: await this.readTombstones()
+    }
   }
 
   private async updateMeta(mediaId: string, updater: (meta: LibraryEntry) => LibraryEntry): Promise<void> {
-    const meta = await this.get(mediaId)
-    if (!meta) return
-    const db = await this.db()
-    return request(db.transaction('library', 'readwrite').objectStore('library').put({ ...meta.media, meta: updater(meta) })).then(() => undefined)
+    return this.withWriteLock(async () => {
+      const meta = await this.get(mediaId)
+      if (!meta) return
+      const db = await this.db()
+      return request(db.transaction('library', 'readwrite').objectStore('library').put({ ...meta.media, meta: updater(meta) })).then(() => undefined)
+    })
   }
 
   // Tombstones persist in the `preferences` object store under a reserved key

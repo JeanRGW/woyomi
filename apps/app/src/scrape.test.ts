@@ -108,6 +108,14 @@ describe('isNetworkError / annotation policy', () => {
     expect(isNetworkError(new Error('private targets are not allowed'))).toBe(false)
     expect(isNetworkError(new Error('upstream response too large'))).toBe(false)
   })
+
+  it('classifies native fetch_url failures by their stable prefixes', () => {
+    expect(isNetworkError(new Error('fetch failed: error sending request'))).toBe(true)
+    expect(isNetworkError(new Error('read body: connection reset'))).toBe(true)
+    expect(isNetworkError(new Error('url must use http or https'))).toBe(false)
+    expect(isNetworkError(new Error('response body exceeds 12582912 bytes'))).toBe(false)
+    expect(isNetworkError('fetch failed: timeout')).toBe(true)
+  })
 })
 
 describe('annotateFetchError', () => {

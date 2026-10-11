@@ -36,9 +36,17 @@ export function shouldProxy(config: ScrapeConfig, url: string): boolean {
   return target.origin !== proxy.origin
 }
 
-/** True for genuine network failures (fetch rejected); false for server responses. */
+/**
+ * True for genuine network failures (the request itself never completed); false
+ * for server responses and domain errors. Recognizes both failure shapes:
+ * browser `fetch` rejects with a TypeError, while the native `fetch_url`
+ * command rejects with stable `fetch failed:`/`read body:` prefixes (see the
+ * matching Rust error strings in src-tauri/src/lib.rs).
+ */
 export function isNetworkError(error: unknown): boolean {
-  return error instanceof TypeError
+  if (error instanceof TypeError) return true
+  const message = error instanceof Error ? error.message : String(error)
+  return message.startsWith('fetch failed:') || message.startsWith('read body:')
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Episode, Media, StreamSource } from '@woyomi/core'
 import { navigate } from '../App'
-import { recordOpen } from '../hooks'
+import { goBackOrLibrary, recordOpen } from '../hooks'
 import { useT } from '../i18n'
 import { type AppRuntime } from '../runtime'
 import { findAdjacent } from './reader/reader-nav'
@@ -41,7 +41,9 @@ export function PlayerView({ runtime, sourceId, mediaId, episodeId }: { runtime:
 function PlayerSession({ runtime, sourceId, mediaId, episodeId }: { runtime: AppRuntime; sourceId: string; mediaId: string; episodeId: string }) {
   const t = useT()
   const translateRef = useRef(t)
-  translateRef.current = t
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
   const [session, setSession] = useState<PlayerSessionData>()
   const [error, setError] = useState('')
   const [loadRevision, setLoadRevision] = useState(0)
@@ -146,7 +148,7 @@ function PlayerSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
     }
   }, [runtime, sourceId, mediaId, episodeId, loadRevision])
 
-  const goBack = () => (window.history.length > 1 ? window.history.back() : navigate({ name: 'library' }))
+  const goBack = goBackOrLibrary
 
   if (error) {
     return (

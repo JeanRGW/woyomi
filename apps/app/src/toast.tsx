@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './icons'
+import { useT } from './i18n'
 
 export interface ToastOptions {
   action?: {
@@ -63,13 +64,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
+  const t = useT()
   if (toasts.length === 0) return null
 
   return (
     <aside
-      aria-label="Notifications"
+      aria-label={t('toast.notifications')}
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-16 z-50 flex flex-col items-center gap-2 p-4 md:bottom-6 md:right-6 md:left-auto md:items-end"
+      className="pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 p-4 md:right-6 md:left-auto md:items-end"
       style={{ bottom: 'calc(var(--sab) + 4.5rem)' }}
     >
       {toasts.map((item) => (
@@ -80,6 +82,7 @@ function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss:
 }
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
+  const t = useT()
   useEffect(() => {
     if (!item.duration || item.duration <= 0) return
     const timer = window.setTimeout(onDismiss, item.duration)
@@ -122,7 +125,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
       <button
         type="button"
         onClick={onDismiss}
-        aria-label="Dismiss"
+        aria-label={t('toast.dismiss')}
         className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-fg"
       >
         <Icon name="x" size={13} />

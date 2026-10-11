@@ -11,21 +11,25 @@ name = "woyomi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# Pinned exact while the vendor/tauri-runtime-wry patch below exists: the
+# vendored runtime must not silently desync from a floating tauri release.
+# See vendor/VENDOR.md.
+tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "charset", "blocking"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
 sha2 = "0.10"
 http = "1"
 url = "2"
 tiny_http = "0.12"
+getrandom = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

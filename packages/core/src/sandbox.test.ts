@@ -8,7 +8,7 @@ import {
 import { API_VERSION } from '../src/version.js'
 
 /** A real-browser-free Worker stand-in: the host runs in-process over a message bus. */
-function makeFakeTransport(): SandboxTransport & { crash(): void } {
+function makeFakeTransport(): SandboxTransport & { crash(): void; send(m: unknown): void } {
   let toMain: ((m: unknown) => void) | undefined
   let toHost: ((m: unknown) => void) | undefined
   let errorCb: ((e: unknown) => void) | undefined
@@ -27,7 +27,8 @@ function makeFakeTransport(): SandboxTransport & { crash(): void } {
       errorCb = cb
     },
     terminate: () => {},
-    crash: () => errorCb?.(new Error('simulated worker crash'))
+    crash: () => errorCb?.(new Error('simulated worker crash')),
+    send: (m) => toMain?.(m)
   }
 }
 
@@ -249,5 +250,33 @@ describe('plugin sandbox', () => {
         createTransport: makeFakeTransport
       })
     ).rejects.toThrow()
+  })
+
+  it('rejects plugin results that do not match the protocol schema', async () => {
+    const code = `
+globalThis.__media_plugin_register({
+  manifest: { id: 'bad', name: 'Bad', version: '1.0.0', apiVersion: ${API_VERSION}, mediaTypes: ['manga'], entry: 'bad.plugin.js', sourceIds: ['bad'] },
+  sources: [{ id: 'bad', name: 'Bad', mediaTypes: ['manga'], async getMedia() { return { nope: true } } }]
+})
+`
+    const sandbox = await loadPluginSandbox({ code, ctx: makeCtx(), createTransport: makeFakeTransport })
+    await expect(sandbox.sources[0]!.getMedia(null as never, '1')).rejects.toThrow('invalid media')
+  })
+
+  it('refuses to invoke non-API methods on a source', async () => {
+    const { sandbox } = await loadSandbox()
+    await expect(sandbox.invoke('test', 'constructor', [])).rejects.toThrow('not allowed')
+    await expect(sandbox.invoke('test', 'toString', [])).rejects.toThrow('not allowed')
+  })
+
+  it('treats a malformed worker message as a crash and recovers on the next call', async () => {
+    const transports: Array<SandboxTransport & { crash(): void; send(m: unknown): void }> = []
+    const { sandbox } = await loadSandbox(transports)
+
+    transports[0]!.send({ type: 'result', cid: 'not-a-number', ok: true })
+
+    const r = await sandbox.sources[0]!.getMedia(null as never, '7')
+    expect(r.title).toBe('d')
+    expect(transports).toHaveLength(2)
   })
 })

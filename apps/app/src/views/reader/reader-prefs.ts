@@ -61,31 +61,44 @@ export const NOVEL_FONT_FAMILIES: Record<NovelFontFamily, string> = {
 /** Reserved plugin id for app-level prefs (same as landing.sources). */
 const APP_PREFS = '__app'
 
-export async function loadReaderPrefs(prefs: PreferencesApi, titleKey?: string): Promise<ReaderPrefs> {
-  const out = { ...DEFAULT_READER_PREFS }
+interface ReaderPrefLoad {
+  prefs: ReaderPrefs
+  /** Values before any per-title override; the override toggle restores these. */
+  global: ReaderPrefs
+  hasTitleOverride: boolean
+}
+
+async function loadReaderPrefsWithMeta(prefs: PreferencesApi, titleKey?: string): Promise<ReaderPrefLoad> {
+  const global = { ...DEFAULT_READER_PREFS }
   await Promise.all(
-    (Object.keys(out) as Array<keyof ReaderPrefs>).map(async (name) => {
+    (Object.keys(global) as Array<keyof ReaderPrefs>).map(async (name) => {
       const value = await prefs.get(APP_PREFS, `reader.${name}`)
-      if (value !== undefined) Object.assign(out, { [name]: value })
+      if (value !== undefined) Object.assign(global, { [name]: value })
     })
   )
   // device-aware strip-width default: portrait/mobile reads near full-bleed,
   // landscape/desktop gets a centered column
   if ((await prefs.get(APP_PREFS, 'reader.stripWidth')) === undefined) {
-    out.stripWidth = window.matchMedia('(orientation: portrait)').matches ? 95 : 40
+    global.stripWidth = window.matchMedia('(orientation: portrait)').matches ? 95 : 40
   }
 
+  const merged = { ...global }
+  let hasTitleOverride = false
   if (titleKey) {
-    const overrideEnabled = await prefs.get<boolean>(APP_PREFS, `reader.titleOverride.${titleKey}.enabled`)
-    if (overrideEnabled) {
+    const enabled = await prefs.get<boolean>(APP_PREFS, `reader.titleOverride.${titleKey}.enabled`)
+    if (enabled) {
+      hasTitleOverride = true
       const overrideMode = await prefs.get<ReaderMode>(APP_PREFS, `reader.titleOverride.${titleKey}.mode`)
       const overrideDirection = await prefs.get<ReadingDirection>(APP_PREFS, `reader.titleOverride.${titleKey}.direction`)
-      if (overrideMode !== undefined) out.mode = overrideMode
-      if (overrideDirection !== undefined) out.direction = overrideDirection
+      if (overrideMode !== undefined) merged.mode = overrideMode
+      if (overrideDirection !== undefined) merged.direction = overrideDirection
     }
   }
+  return { prefs: merged, global, hasTitleOverride }
+}
 
-  return out
+export async function loadReaderPrefs(prefs: PreferencesApi, titleKey?: string): Promise<ReaderPrefs> {
+  return (await loadReaderPrefsWithMeta(prefs, titleKey)).prefs
 }
 
 export interface UseReaderPrefsReturn {
@@ -104,38 +117,13 @@ export function useReaderPrefs(prefs: PreferencesApi, titleKey?: string): UseRea
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
-      const globalValues = { ...DEFAULT_READER_PREFS }
-      await Promise.all(
-        (Object.keys(globalValues) as Array<keyof ReaderPrefs>).map(async (name) => {
-          const value = await prefs.get(APP_PREFS, `reader.${name}`)
-          if (value !== undefined) Object.assign(globalValues, { [name]: value })
-        })
-      )
-      if ((await prefs.get(APP_PREFS, 'reader.stripWidth')) === undefined) {
-        globalValues.stripWidth = window.matchMedia('(orientation: portrait)').matches ? 95 : 40
-      }
-      globalPrefsRef.current = { ...globalValues }
-
-      let isOverride = false
-      const merged = { ...globalValues }
-
-      if (titleKey) {
-        const enabled = await prefs.get<boolean>(APP_PREFS, `reader.titleOverride.${titleKey}.enabled`)
-        if (enabled) {
-          isOverride = true
-          const titleMode = await prefs.get<ReaderMode>(APP_PREFS, `reader.titleOverride.${titleKey}.mode`)
-          const titleDirection = await prefs.get<ReadingDirection>(APP_PREFS, `reader.titleOverride.${titleKey}.direction`)
-          if (titleMode !== undefined) merged.mode = titleMode
-          if (titleDirection !== undefined) merged.direction = titleDirection
-        }
-      }
-
+    void loadReaderPrefsWithMeta(prefs, titleKey).then(({ prefs: merged, global, hasTitleOverride }) => {
       if (cancelled) return
+      globalPrefsRef.current = global
       setValues(merged)
-      setHasTitleOverride(isOverride)
+      setHasTitleOverride(hasTitleOverride)
       setLoaded(true)
-    })()
+    })
 
     return () => {
       cancelled = true

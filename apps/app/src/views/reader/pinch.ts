@@ -33,7 +33,9 @@ export function useTouchGestures<T extends HTMLElement>(
 ): { moved: React.RefObject<boolean> } {
   const moved = useRef(false)
   const handlersRef = useRef(handlers)
-  handlersRef.current = handlers
+  useEffect(() => {
+    handlersRef.current = handlers
+  })
 
   useEffect(() => {
     const el = dom.current

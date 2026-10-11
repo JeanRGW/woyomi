@@ -1,4 +1,5 @@
 import { useT } from '../../i18n'
+import { goBackOrLibrary } from '../../hooks'
 import { Icon } from '../../icons'
 import type { ReaderMode } from './reader-nav'
 
@@ -76,7 +77,7 @@ export function ReaderChrome({
           <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.min(1, Math.max(0, progress)) * 100}%` }} />
         </div>
         <div className={`flex items-center gap-1 bg-ink/85 px-2 py-1.5 backdrop-blur ${visible ? 'pointer-events-auto' : 'pointer-events-none'}`}>
-          <ChromeBtn label={t('common.back')} onClick={() => history.back()} disabled={!visible}>
+          <ChromeBtn label={t('common.back')} onClick={goBackOrLibrary} disabled={!visible}>
             <Icon name="back" size={19} />
           </ChromeBtn>
           <div className="min-w-0 flex-1 px-1">

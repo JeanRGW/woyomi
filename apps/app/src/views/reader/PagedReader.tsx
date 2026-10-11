@@ -81,7 +81,9 @@ export function PagedReader({
   const containerRef = useRef<HTMLDivElement>(null)
   const tapTimer = useRef<number | undefined>(undefined)
   const zoomRef = useRef(zoom)
-  zoomRef.current = zoom
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
   const gestureStartZoom = useRef(1)
   const flingRaf = useRef<number | null>(null)
   const pendingZoomScroll = useRef<{ left: number; top: number } | null>(null)

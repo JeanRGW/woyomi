@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { Episode, Media } from '@woyomi/core'
+import { navigate } from './App'
 import type { AppRuntime } from './runtime'
+
+/** History back with a library fallback when there is no in-app history. */
+export function goBackOrLibrary(): void {
+  if (window.history.length > 1) window.history.back()
+  else navigate({ name: 'library' })
+}
 
 /** Reactive matchMedia; false during SSR-less first render until the effect runs. */
 export function useMediaQuery(query: string): boolean {

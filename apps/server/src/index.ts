@@ -1,10 +1,11 @@
 import 'dotenv/config'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { join, resolve, sep } from 'node:path'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
-import type { HistoryEntry, LibraryEntry, ProgressEntry, SyncPayload } from '@woyomi/core'
+import { mergeSyncPayload, SyncPayloadSchema, type SyncPayload } from '@woyomi/core'
 
 /**
  * Optional self-hosted backend for the web build.
@@ -33,6 +34,7 @@ const scrapeToken = () => process.env.SCRAPE_TOKEN
 const SCRAPE_MAX_BYTES = 5 * 1024 * 1024
 const SCRAPE_TIMEOUT_MS = 15_000
 const MAX_REDIRECTS = 5
+const MAX_REQUEST_JSON_BYTES = 1024 * 1024
 
 const app = new Hono()
 
@@ -73,8 +75,9 @@ app.get('/repo', async (c) => {
 app.get('/repo/:file', async (c) => {
   const file = c.req.param('file')
   for (const dir of await repoDirs()) {
-    const p = join(dir, file)
-    if (p.startsWith(resolve(dir))) {
+    const root = resolve(dir)
+    const p = resolve(root, file)
+    if (p.startsWith(root + sep)) {
       try {
         const body = await readFile(p, 'utf8')
         const contentType = file.endsWith('.js') ? 'application/javascript' : file.endsWith('.json') ? 'application/json' : 'text/plain'
@@ -90,10 +93,109 @@ app.get('/repo/:file', async (c) => {
 
 const ScrapeBody = z.object({
   url: z.string().url(),
-  method: z.string().default('GET'),
+  method: z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']).default('GET'),
   headers: z.record(z.string()).default({}),
   body: z.string().optional()
 })
+
+/** Constant-time token comparison (hashing both sides equalizes lengths first). */
+function safeTokenEqual(expected: string, provided: string | undefined): boolean {
+  if (provided === undefined || provided.length === 0) return false
+  const a = createHash('sha256').update(expected).digest()
+  const b = createHash('sha256').update(provided).digest()
+  return timingSafeEqual(a, b)
+}
+
+function bearerToken(header: string | undefined): string | undefined {
+  const match = /^Bearer (.+)$/i.exec(header ?? '')
+  return match?.[1]
+}
+
+/**
+ * Scrape/stream gate: compares SCRAPE_TOKEN against the Authorization header,
+ * or (for `<video>`/`<img>` which cannot send headers) the `?token=` query
+ * param. ponytail: token-in-query is a log smell; fine for a personal
+ * self-hosted box. Comparisons are constant-time.
+ */
+function scrapeAuthorized(c: Context): boolean {
+  const token = scrapeToken()
+  if (!token) return true
+  return safeTokenEqual(token, bearerToken(c.req.header('authorization'))) || safeTokenEqual(token, c.req.query('token'))
+}
+
+/**
+ * Request headers that must never be forwarded upstream: they would corrupt
+ * the request framing, impersonate the upstream host, or leak the proxy's own
+ * credentials. Applied case-insensitively.
+ */
+const STRIPPED_REQUEST_HEADERS = new Set([
+  'host',
+  'content-length',
+  'authorization',
+  'connection',
+  'transfer-encoding',
+  'te',
+  'keep-alive',
+  'upgrade',
+  'proxy-authorization',
+  'proxy-connection'
+])
+
+/** Response headers that must never be echoed back to the caller. */
+const STRIPPED_RESPONSE_HEADERS = new Set(['transfer-encoding', 'connection', 'set-cookie', 'set-cookie2'])
+
+function forwardRequestHeaders(headers: Record<string, string>): Record<string, string> {
+  const up: Record<string, string> = { 'user-agent': 'woyomi/0.1 (+web)' }
+  for (const [k, v] of Object.entries(headers)) {
+    const lk = k.toLowerCase()
+    if (STRIPPED_REQUEST_HEADERS.has(lk)) continue
+    if (typeof v !== 'string') continue
+    up[lk] = v
+  }
+  return up
+}
+
+function forwardResponseHeaders(res: Response): Record<string, string> {
+  const out: Record<string, string> = {}
+  res.headers.forEach((v, k) => {
+    if (!STRIPPED_RESPONSE_HEADERS.has(k.toLowerCase())) out[k] = v
+  })
+  return out
+}
+
+/**
+ * Read a JSON body with a size cap. Returns `tooLarge` for oversized bodies
+ * and `undefined` for malformed JSON so handlers can answer 400/413 instead
+ * of crashing with an unhandled parse error.
+ */
+async function readJsonBody(c: Context): Promise<{ value: unknown } | { tooLarge: true } | undefined> {
+  const declared = Number(c.req.header('content-length') ?? '0')
+  if (Number.isFinite(declared) && declared > MAX_REQUEST_JSON_BYTES) return { tooLarge: true }
+  const reader = c.req.raw.body?.getReader()
+  if (!reader) return undefined
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > MAX_REQUEST_JSON_BYTES) {
+        await reader.cancel()
+        return { tooLarge: true }
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const text = Buffer.concat(chunks, bytes).toString('utf8')
+  try {
+    return { value: JSON.parse(text) }
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Reject loopback/private/link-local targets so the proxy can't be used to
@@ -183,45 +285,39 @@ export function isPrivateTarget(url: URL): boolean {
 
 app.post('/api/scrape', async (c) => {
   if (!scrapeEnabled()) return c.json({ error: 'scrape proxy disabled' }, 403)
-  const token = scrapeToken()
-  if (token && c.req.header('authorization') !== `Bearer ${token}`) {
-    return c.json({ error: 'unauthorized' }, 401)
-  }
+  if (!scrapeAuthorized(c)) return c.json({ error: 'unauthorized' }, 401)
 
-  const parsed = ScrapeBody.safeParse(await c.req.json())
+  const body = await readJsonBody(c)
+  if (body === undefined) return c.json({ error: 'malformed JSON body' }, 400)
+  if ('tooLarge' in body) return c.json({ error: 'request body too large' }, 413)
+
+  const parsed = ScrapeBody.safeParse(body.value)
   if (!parsed.success) return c.json({ error: parsed.error.message }, 400)
 
-  const { url, method, headers, body } = parsed.data
+  const { url, method, headers, body: upBody } = parsed.data
   const target = new URL(url)
   if (target.protocol !== 'https:' && target.protocol !== 'http:') {
     return c.json({ error: 'only http(s) targets are allowed' }, 400)
   }
   if (isPrivateTarget(target)) return c.json({ error: 'private targets are not allowed' }, 400)
 
-  // Strip hop-by-hop/forbidden headers that would corrupt the upstream
-  // request: content-length is set by fetch for the body, host identifies the
-  // upstream, and authorization must stay the proxy's (if any), not a caller's.
-  const upHeaders: Record<string, string> = { 'user-agent': 'woyomi/0.1 (+web)' }
-  for (const [k, v] of Object.entries(headers)) {
-    const lk = k.toLowerCase()
-    if (lk === 'content-length' || lk === 'host' || lk === 'authorization') continue
-    upHeaders[k] = v
-  }
+  // Strip hop-by-hop/forbidden headers that would corrupt the upstream request
+  // (see STRIPPED_REQUEST_HEADERS); content-length is set by fetch for the body.
+  const upHeaders = forwardRequestHeaders(headers)
 
   let res: Response
   try {
     res = await fetchPublic(url, {
       method,
       headers: upHeaders,
-      body,
+      body: upBody,
       signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
     })
   } catch (error) {
     if (error instanceof ResponseTooLargeError) return c.json({ error: error.message }, 413)
     return c.json({ error: 'upstream request failed or timed out' }, 502)
   }
-  const outHeaders: Record<string, string> = {}
-  res.headers.forEach((v, k) => (outHeaders[k] = v))
+  const outHeaders = forwardResponseHeaders(res)
   let text: string
   try {
     text = await readCappedBody(res)
@@ -242,15 +338,17 @@ app.post('/api/scrape', async (c) => {
  */
 app.get('/api/stream', async (c) => {
   if (!scrapeEnabled()) return c.json({ error: 'scrape proxy disabled' }, 403)
-  const token = scrapeToken()
-  if (token && c.req.query('token') !== token) {
-    return c.json({ error: 'unauthorized' }, 401)
-  }
+  if (!scrapeAuthorized(c)) return c.json({ error: 'unauthorized' }, 401)
 
   const target = c.req.query('url')
   const headersJson = c.req.query('headers')
   if (!target) return c.json({ error: 'missing url param' }, 400)
-  const parsedTarget = new URL(target)
+  let parsedTarget: URL
+  try {
+    parsedTarget = new URL(target)
+  } catch {
+    return c.json({ error: 'bad url param' }, 400)
+  }
   if (parsedTarget.protocol !== 'https:' && parsedTarget.protocol !== 'http:') {
     return c.json({ error: 'only http(s) targets are allowed' }, 400)
   }
@@ -261,17 +359,14 @@ app.get('/api/stream', async (c) => {
     try {
       const parsed = JSON.parse(headersJson)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        headers = parsed as Record<string, string>
+        headers = Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === 'string')) as Record<string, string>
       }
     } catch {
       return c.json({ error: 'bad headers param' }, 400)
     }
   }
 
-  const upHeaders: Record<string, string> = { 'user-agent': 'woyomi/0.1 (+web)', ...headers }
-  delete upHeaders['content-length']
-  delete upHeaders['host']
-  delete upHeaders['authorization']
+  const upHeaders = forwardRequestHeaders(headers)
 
   const range = c.req.header('range')
 
@@ -287,32 +382,15 @@ app.get('/api/stream', async (c) => {
     return c.json({ error: 'upstream request failed or timed out' }, 502)
   }
 
-  const outHeaders: Record<string, string> = {}
-  res.headers.forEach((v, k) => {
-    const lk = k.toLowerCase()
-    if (!['transfer-encoding', 'connection'].includes(lk)) outHeaders[k] = v
-  })
+  const outHeaders = forwardResponseHeaders(res)
   if (!res.body) return c.json({ error: 'upstream returned no body' }, 502)
   return c.body(res.body as ReadableStream, res.status as never, outHeaders as Record<string, string>)
 })
 
 function authed(c: { req: { header: (k: string) => string | undefined } }): boolean {
   const token = process.env.SYNC_TOKEN?.trim()
-  return token !== undefined && token.length > 0 && c.req.header('authorization') === `Bearer ${token}`
+  return token !== undefined && token.length > 0 && safeTokenEqual(token, bearerToken(c.req.header('authorization')))
 }
-
-const SyncBody = z.object({
-  entries: z.array(z.any()),
-  progress: z.array(z.any()),
-  history: z.array(z.any()).optional(),
-  tombstones: z
-    .object({
-      entries: z.array(z.any()).optional(),
-      progress: z.array(z.any()).optional(),
-      history: z.array(z.any()).optional()
-    })
-    .optional()
-})
 
 const EMPTY_PAYLOAD: SyncPayload = {
   version: 1,
@@ -322,116 +400,72 @@ const EMPTY_PAYLOAD: SyncPayload = {
   tombstones: { entries: [], progress: [], history: [] }
 }
 
-/** last-change time of a record: live rows use updatedAt/openedAt, tombstones use deletedAt. */
-function lastChange(r: { updatedAt?: number; openedAt?: number; deletedAt?: number } | undefined): number {
-  return r?.updatedAt ?? r?.openedAt ?? r?.deletedAt ?? 0
+/**
+ * Read a user's stored payload, validating its shape. A missing file is an
+ * empty payload; a corrupt file is quarantined (renamed, not overwritten) and
+ * logged so the next write cannot silently destroy it.
+ */
+async function readStoredPayload(user: string): Promise<SyncPayload> {
+  const file = syncFile(user)
+  try {
+    const raw = await readFile(file, 'utf8')
+    const parsed = SyncPayloadSchema.safeParse(JSON.parse(raw))
+    if (parsed.success) return parsed.data
+    console.warn(`woyomi server: invalid payload shape in ${file}; quarantining`)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY_PAYLOAD
+    console.warn(`woyomi server: unreadable sync file ${file}; quarantining`)
+  }
+  await rename(file, `${file}.corrupt-${Date.now()}`).catch(() => undefined)
+  return EMPTY_PAYLOAD
+}
+
+/** Write the payload atomically (tmp + rename) so a crash can't leave a half-written file. */
+async function writeStoredPayload(user: string, payload: SyncPayload): Promise<void> {
+  const file = syncFile(user)
+  await mkdir(dataDir(), { recursive: true })
+  const tmp = `${file}.tmp-${Date.now()}`
+  await writeFile(tmp, JSON.stringify(payload))
+  await rename(tmp, file)
+}
+
+// Per-user in-process lock: concurrent PUTs serialize instead of losing updates
+// (read-modify-write must not interleave). ponytail: single-process only.
+const userLocks = new Map<string, Promise<void>>()
+function withUserLock<T>(user: string, fn: () => Promise<T>): Promise<T> {
+  const prev = userLocks.get(user) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  userLocks.set(user, next.then(() => undefined, () => undefined))
+  return next
 }
 
 /**
  * Order-independent, idempotent merge of two library snapshots (the stored one
- * and a client's full export). Converges for concurrent edits on different
- * records and resolves same-id conflicts by last change:
- *  - entries   keep whichever of [live | tombstone] changed last
- *  - progress  union seenEpisodeIds when both live, updatedAt = max
- *  - history   keep the row with the larger openedAt (or a newer tombstone)
- * Tombstone sets union; a tombstone whose id later comes back live is dropped.
- * ponytail: no clock-skew handling (single-owner personal sync) and tombstones
- * are never GC'd. Both are add-when-measured upgrades.
+ * and a client's full export). Single implementation lives in @woyomi/core so
+ * every client applies identical semantics. Exported under the historical name
+ * for tests and callers.
  */
-export function mergeLibraries(prev: SyncPayload, inc: SyncPayload): SyncPayload {
-  const prevEntries = new Map((prev.entries ?? []).map((e) => [e.media.id, e]))
-  const incEntries = new Map((inc.entries ?? []).map((e) => [e.media.id, e]))
-  const tsIn = new Map((inc.tombstones?.entries ?? []).map((t) => [t.id, t]))
-  const tombOut = new Map((prev.tombstones?.entries ?? []).map((t) => [t.id, t.deletedAt]))
-
-  const entries: LibraryEntry[] = []
-  for (const id of new Set([...prevEntries.keys(), ...incEntries.keys(), ...tsIn.keys()])) {
-    const p = prevEntries.get(id)
-    const i = incEntries.get(id)
-    const t = tsIn.get(id)
-    const tombAt = tombOut.get(id)
-    const liveTs = Math.max(lastChange(p), lastChange(i))
-    const deadTs = Math.max(t?.deletedAt ?? 0, tombAt ?? 0)
-    if (deadTs > liveTs) {
-      tombOut.set(id, deadTs)
-      continue
-    }
-    const winner = i && (!p || lastChange(i) > lastChange(p)) ? i : p
-    if (winner) {
-      entries.push(winner)
-      tombOut.delete(id)
-    }
-  }
-  const entryTombs = [...tombOut.entries()].map(([id, deletedAt]) => ({ id, deletedAt }))
-
-  const progressMap = new Map<string, ProgressEntry>()
-  for (const row of [...(prev.progress ?? []), ...(inc.progress ?? [])]) {
-    const existing = progressMap.get(row.mediaId)
-    if (existing) {
-      progressMap.set(row.mediaId, {
-        mediaId: row.mediaId,
-        seenEpisodeIds: [...new Set([...existing.seenEpisodeIds, ...row.seenEpisodeIds])],
-        updatedAt: Math.max(existing.updatedAt, row.updatedAt)
-      })
-    } else progressMap.set(row.mediaId, row)
-  }
-  const progressTomb = new Map<string, number>([...(prev.tombstones?.progress ?? []), ...(inc.tombstones?.progress ?? [])].map((t) => [t.id, t.deletedAt]))
-  for (const [id, deletedAt] of progressTomb) {
-    const row = progressMap.get(id)
-    if (row && row.updatedAt <= deletedAt) progressMap.delete(id)
-  }
-  const progress = [...progressMap.values()]
-
-  const historyMap = new Map<string, HistoryEntry>()
-  for (const row of [...(prev.history ?? []), ...(inc.history ?? [])]) {
-    if (!row.episode) continue
-    const existing = historyMap.get(row.episode.id)
-    if (!existing || row.openedAt > existing.openedAt) historyMap.set(row.episode.id, row)
-  }
-  const historyTomb = new Map<string, number>([...(prev.tombstones?.history ?? []), ...(inc.tombstones?.history ?? [])].map((t) => [t.id, t.deletedAt]))
-  for (const [id, deletedAt] of historyTomb) {
-    const row = historyMap.get(id)
-    if (row && row.openedAt <= deletedAt) historyMap.delete(id)
-  }
-  const history = [...historyMap.values()]
-
-  return {
-    version: 1,
-    entries,
-    progress,
-    history,
-    tombstones: {
-      entries: entryTombs,
-      progress: [...progressTomb].filter(([id]) => !progressMap.has(id)).map(([id, deletedAt]) => ({ id, deletedAt })),
-      history: [...historyTomb].filter(([id]) => !historyMap.has(id)).map(([id, deletedAt]) => ({ id, deletedAt }))
-    }
-  }
-}
+export const mergeLibraries = mergeSyncPayload
 
 app.get('/api/sync/:user', async (c) => {
   if (!authed(c)) return c.json({ error: 'unauthorized' }, 401)
-  const user = c.req.param('user')
-  try {
-    return c.json(JSON.parse(await readFile(syncFile(user), 'utf8')))
-  } catch {
-    return c.json(EMPTY_PAYLOAD)
-  }
+  return c.json(await readStoredPayload(c.req.param('user')))
 })
 
 app.put('/api/sync/:user', async (c) => {
   if (!authed(c)) return c.json({ error: 'unauthorized' }, 401)
   const user = c.req.param('user')
-  const parsed = SyncBody.safeParse(await c.req.json())
+  const body = await readJsonBody(c)
+  if (body === undefined) return c.json({ error: 'malformed JSON body' }, 400)
+  if ('tooLarge' in body) return c.json({ error: 'request body too large' }, 413)
+  const parsed = SyncPayloadSchema.safeParse(body.value)
   if (!parsed.success) return c.json({ error: parsed.error.message }, 400)
-  let stored: SyncPayload
-  try {
-    stored = JSON.parse(await readFile(syncFile(user), 'utf8')) as SyncPayload
-  } catch {
-    stored = EMPTY_PAYLOAD
-  }
-  const merged = mergeLibraries(stored, parsed.data as unknown as SyncPayload)
-  await mkdir(dataDir(), { recursive: true })
-  await writeFile(syncFile(user), JSON.stringify(merged))
+  const merged = await withUserLock(user, async () => {
+    const stored = await readStoredPayload(user)
+    const result = mergeSyncPayload(stored, parsed.data)
+    await writeStoredPayload(user, result)
+    return result
+  })
   return c.json(merged)
 })
 

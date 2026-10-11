@@ -93,7 +93,7 @@ export function ContinuousReader({
   // readiness later completes, the corrected re-scroll effect re-positions.
   useEffect(() => {
     if (restored || targetPage <= 0) return
-    const t = window.setTimeout(() => {
+    const timerId = window.setTimeout(() => {
       if (userInteractedRef.current) {
         setRestored(true)
         return
@@ -106,7 +106,7 @@ export function ContinuousReader({
         setRestored(true)
       }
     }, 2000)
-    return () => window.clearTimeout(t)
+    return () => window.clearTimeout(timerId)
   }, [restored, targetPage, readyCount])
 
   // correct a coarse fallback restore once the prefix heights land

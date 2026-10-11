@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
+import { sanitizeHtml } from '../sanitize'
 import { isVideoType, type Episode, type LibraryEntry, type LibraryStatus, type Media } from '@woyomi/core'
 import { isTauri, proxiedHref, type AppRuntime } from '../runtime'
 import type { DownloadRecord } from '../downloads'
 import { navigate } from '../App'
+import { formatEpisodeLabel } from '../format'
 import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { useToast } from '../toast'
@@ -38,14 +40,20 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   const [error, setError] = useState('')
   const [coverOverride, setCoverOverride] = useState<string>()
   const [offlineSnapshot, setOfflineSnapshot] = useState(false)
+  const loadSeqRef = useRef(0)
 
   const load = useCallback(async () => {
+    // Bumped per run (and on unmount) so a stale getMedia result can never
+    // overwrite the state of a newer page.
+    const seq = ++loadSeqRef.current
+    const alive = () => loadSeqRef.current === seq
     setMedia(null)
     setError('')
     setCoverOverride(undefined)
     setOfflineSnapshot(false)
     try {
       const [m, eps] = await Promise.all([runtime.engine.getMedia(sourceId, mediaId), runtime.engine.getEpisodes(sourceId, mediaId)])
+      if (!alive()) return
       setMedia(m)
       setEpisodes(eps)
       let existingEntry = await runtime.store.get(m.id)
@@ -55,23 +63,27 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
         await runtime.store.add(m, existingEntry.status)
         existingEntry = await runtime.store.get(m.id)
       }
+      if (!alive()) return
       setEntry(existingEntry)
       const prog = await runtime.store.getProgress(m.id)
+      if (!alive()) return
       setSeen(new Set(prog?.seenEpisodeIds ?? []))
       void runtime.cacheMediaPage(m, eps)
     } catch (e) {
       const cached = await runtime.mediaCache.get(`${sourceId}/${mediaId}`)
+      if (!alive()) return
       if (cached) {
         setMedia(cached.media)
         setEpisodes(cached.episodes)
         setOfflineSnapshot(true)
         setEntry(await runtime.store.get(cached.media.id))
         const prog = await runtime.store.getProgress(cached.media.id)
+        if (!alive()) return
         setSeen(new Set(prog?.seenEpisodeIds ?? []))
         if (cached.coverHash && isTauri()) {
           try {
             const base = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
-            setCoverOverride(`${base}/covers/${cached.coverHash}`)
+            if (alive()) setCoverOverride(`${base}/covers/${cached.coverHash}`)
           } catch (error) {
             console.warn('cached cover unavailable; falling back to its remote URL:', error)
           }
@@ -86,7 +98,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   }, [runtime, sourceId, mediaId])
 
   useEffect(() => {
-    load()
+    void load()
+    return () => {
+      loadSeqRef.current += 1
+    }
   }, [load])
 
   useEffect(() => {
@@ -98,8 +113,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
     return manager.subscribe(() => void refresh())
   }, [runtime.downloads, sourceId, mediaId])
 
+  const downloadsByEpisode = useMemo(() => new Map(downloads.map((record) => [record.id, record])), [downloads])
+
   const descriptionHtml = useMemo(
-    () => (media?.synopsis ? marked.parse(media.synopsis, { async: false }) : ''),
+    () => (media?.synopsis ? sanitizeHtml(marked.parse(media.synopsis, { async: false })) : ''),
     [media?.synopsis]
   )
 
@@ -133,9 +150,10 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   }
 
   async function toggleSeen(ep: Episode) {
-    const method = seen.has(ep.id) ? 'unsetSeen' : 'setSeen'
-    await runtime.store[method](media!.id, ep.id)
-    const prog = await runtime.store.getProgress(media!.id)
+    if (!media) return
+    if (seen.has(ep.id)) await runtime.store.unsetSeen(media.id, ep.id)
+    else await runtime.store.setSeen(media.id, ep.id)
+    const prog = await runtime.store.getProgress(media.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }
 
@@ -148,9 +166,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       if (!isVideoType(media.type)) {
         await manager.enqueueReader(media, episode)
         await runtime.cacheMediaPage(media, episodes)
-        const chapterName = `${t('common.chapter', { number: episode.number })}${
-          episode.title ? t('common.title', { title: episode.title }) : ''
-        }`
+        const chapterName = formatEpisodeLabel(t, episode, 'chapter')
         showToast(t('downloads.queuedToast', { name: chapterName }), {
           icon: 'download',
           tone: 'ok',
@@ -195,9 +211,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
       await runtime.downloads.enqueueVideo(media, qualityEpisode, quality)
       await runtime.engine.prefs.set('__app', 'downloads.videoQuality', quality)
       await runtime.cacheMediaPage(media, episodes)
-      const epName = `${t('common.episode', { number: qualityEpisode.number })}${
-        qualityEpisode.title ? t('common.title', { title: qualityEpisode.title }) : ''
-      }`
+      const epName = formatEpisodeLabel(t, qualityEpisode, 'episode')
       showToast(t('downloads.queuedToast', { name: epName }), {
         icon: 'download',
         tone: 'ok',
@@ -217,20 +231,22 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
   }
 
   async function markAllSeen() {
+    if (!media) return
     await runtime.store.setSeenMany(
-      media!.id,
+      media.id,
       episodes.map((e) => e.id)
     )
-    const prog = await runtime.store.getProgress(media!.id)
+    const prog = await runtime.store.getProgress(media.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }
 
   async function markAllUnseen() {
+    if (!media) return
     await runtime.store.unsetSeenMany(
-      media!.id,
+      media.id,
       episodes.map((e) => e.id)
     )
-    const prog = await runtime.store.getProgress(media!.id)
+    const prog = await runtime.store.getProgress(media.id)
     setSeen(new Set(prog?.seenEpisodeIds ?? []))
   }
 
@@ -410,7 +426,7 @@ export function MediaView({ runtime, sourceId, mediaId }: { runtime: AppRuntime;
               active={seen.has(ep.id)}
               onOpen={() => openEpisode(ep)}
               onToggleSeen={() => toggleSeen(ep)}
-              downloadState={downloads.find((record) => record.id === ep.id)?.state}
+              downloadState={downloadsByEpisode.get(ep.id)?.state}
               busy={busyEpisodeId === ep.id}
               onDownload={runtime.downloads ? () => void downloadEpisode(ep) : undefined}
             />

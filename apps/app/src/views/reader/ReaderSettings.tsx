@@ -14,7 +14,9 @@ function Sheet({ title, onClose, side, children }: { title: string; onClose: () 
   const returnFocusRef = useRef<HTMLElement | null>(
     typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
   )
-  onCloseRef.current = onClose
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     const panel = panelRef.current

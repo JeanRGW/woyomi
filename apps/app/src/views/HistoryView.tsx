@@ -6,6 +6,7 @@ import { useLocale, useT } from '../i18n'
 import { useToast } from '../toast'
 import { Btn, HistoryRowSkeleton, Page, PageHeader, SectionHeading, TYPE_ICONS } from '../components'
 import { Icon } from '../icons'
+import { formatEpisodeLabel } from '../format'
 
 interface HistoryGroup {
   key: string
@@ -137,8 +138,7 @@ export function HistoryView({ runtime }: { runtime: AppRuntime }) {
                       <div className="min-w-0">
                         <div className="truncate text-sm font-bold">{h.media.title}</div>
                         <div className="truncate text-xs font-medium text-muted">
-                          {t(isVideoType(h.media.type) ? 'common.episode' : 'common.chapter', { number: h.episode.number })}
-                          {h.episode.title ? t('common.title', { title: h.episode.title }) : ''}
+                          {formatEpisodeLabel(t, h.episode, isVideoType(h.media.type) ? 'episode' : 'chapter')}
                         </div>
                         <div className="mt-0.5 text-[11px] text-faint">{formatOpened(h.openedAt, locale)}</div>
                       </div>

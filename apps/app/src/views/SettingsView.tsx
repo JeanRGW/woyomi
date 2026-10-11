@@ -130,7 +130,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <strong className="text-sm font-bold">{p.registration.manifest.name}</strong>
                 <span className="text-xs text-faint">
-                  v{p.registration.manifest.version} · {p.origin}
+                  {t('common.version', { version: p.registration.manifest.version })} · {p.origin}
                 </span>
               </div>
               {p.registration.manifest.description && <div className="truncate text-xs text-muted">{p.registration.manifest.description}</div>}
@@ -186,7 +186,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
             <div className="flex flex-col gap-2">
               <TextInput
                 type="url"
-                placeholder="https://your-server.example"
+                placeholder={t('settings.serverPlaceholder')}
                 value={proxyUrlInput}
                 onChange={(e) => setProxyUrlInput(e.target.value)}
                 aria-label={t('settings.proxyUrl')}
@@ -220,7 +220,7 @@ export function SettingsView({ runtime }: { runtime: AppRuntime }) {
         <div className="flex flex-col gap-2">
           <TextInput
             type="url"
-            placeholder="https://your-server.example"
+            placeholder={t('settings.serverPlaceholder')}
             value={syncConfig.server}
             onChange={(e) => setSyncConfig((current) => ({ ...current, server: e.target.value }))}
             aria-label={t('settings.syncServer')}

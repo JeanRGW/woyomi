@@ -23,6 +23,7 @@ export const pt: Messages = {
   'common.testing': 'Testando…',
   'common.close': 'Fechar',
   'common.reload': 'Recarregar',
+  'common.retry': 'Tentar novamente',
   'common.cancel': 'Cancelar',
   'common.errorTitle': 'Algo deu errado',
   'common.seen': 'visto',
@@ -33,6 +34,9 @@ export const pt: Messages = {
   'common.chapter': 'Capítulo {number}',
   'common.season': ' · T{season}',
   'common.title': ' — {title}',
+  'common.version': 'v{version}',
+  'toast.notifications': 'Notificações',
+  'toast.dismiss': 'Dispensar',
 
   // media types
   'type.manga': 'mangá',
@@ -168,6 +172,7 @@ export const pt: Messages = {
 
   // settings
   'settings.plugins': 'Plugins',
+  'settings.serverPlaceholder': 'https://your-server.example',
   'settings.uninstall': 'Desinstalar',
   'settings.enable': 'Ativar {name}',
   'settings.disable': 'Desativar {name}',

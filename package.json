@@ -13,9 +13,13 @@
     "test": "turbo run test",
     "dev": "pnpm --filter @woyomi/app dev",
     "typecheck": "turbo run typecheck",
+    "lint": "eslint packages apps/server/src && pnpm --filter @woyomi/app lint",
     "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
-    "turbo": "^2.3.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "turbo": "^2.3.0",
+    "typescript-eslint": "^8.66.0"
   }
 }

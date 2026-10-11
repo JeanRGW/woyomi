@@ -1,5 +1,6 @@
 import {
   Engine,
+  FetchResultSchema,
   IndexedDbStore,
   PluginRegistry,
   TTLCache,
@@ -245,7 +246,7 @@ export function createFetchProvider(): FetchFn {
   const invoke = window.__TAURI_INTERNALS__?.invoke
   if (invoke) {
     return async (url: string, init?: FetchInit): Promise<FetchResult> => {
-      const res = (await invoke('fetch_url', {
+      const raw: unknown = await invoke('fetch_url', {
         args: {
           url,
           method: init?.method ?? 'GET',
@@ -254,8 +255,12 @@ export function createFetchProvider(): FetchFn {
           dom: init?.mode === 'dom',
           waitFor: init?.waitFor
         }
-      })) as FetchResult
-      return res
+      })
+      // The Rust error string and response shape both cross an untyped IPC
+      // boundary; validate before trusting it.
+      const parsed = FetchResultSchema.safeParse(raw)
+      if (!parsed.success) throw new Error(typeof raw === 'string' ? raw : 'fetch_url returned an invalid response')
+      return parsed.data
     }
   }
 
@@ -332,7 +337,13 @@ export interface AppRuntime {
 let runtimePromise: Promise<AppRuntime> | undefined
 
 export function getRuntime(): Promise<AppRuntime> {
-  if (!runtimePromise) runtimePromise = initRuntime()
+  if (!runtimePromise) {
+    runtimePromise = initRuntime().catch((error: unknown) => {
+      // Never cache a failed init: callers surface the error and can retry.
+      runtimePromise = undefined
+      throw error
+    })
+  }
   return runtimePromise
 }
 
@@ -342,7 +353,8 @@ async function initRuntime(): Promise<AppRuntime> {
     // The Rust stream proxy port is constant per process (OnceLock), so
     // resolve it once here to keep proxiedHref()/imageSrc() synchronous.
     try {
-      nativeStreamBase = (await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')) as string
+      const base: unknown = await window.__TAURI_INTERNALS__!.invoke('stream_proxy_base')
+      nativeStreamBase = typeof base === 'string' ? base : ''
     } catch (error) {
       nativeStreamBase = ''
       console.warn('stream proxy unavailable; header-gated media will use raw URLs:', error)
@@ -384,7 +396,13 @@ async function initRuntime(): Promise<AppRuntime> {
   const autoSync = startAutoSync({ getConfig: syncConfig, getStore: () => store, isEnabled: autoSyncEnabled })
   store = makeSyncingStore(store, autoSync.markDirty)
 
-  const installed = new Map<string, string>()
+  let installed = new Map<string, string>()
+  /** Replace (never mutate) the map so React consumers see a new identity on change. */
+  function replaceInstalled(mutate: (map: Map<string, string>) => void): void {
+    const next = new Map(installed)
+    mutate(next)
+    installed = next
+  }
   const sandboxes = new Map<string, PluginSandbox>()
   const cache = new TTLCache()
 
@@ -448,7 +466,7 @@ async function initRuntime(): Promise<AppRuntime> {
         return
       }
       registerPlugin(sandbox, 'external')
-      installed.set(plugin.id, plugin.manifest.version)
+      replaceInstalled((m) => m.set(plugin.id, plugin.manifest.version))
     } catch (e) {
       sandbox?.terminate()
       // A plugin whose code no longer matches its stored manifest is dropped
@@ -546,12 +564,14 @@ async function initRuntime(): Promise<AppRuntime> {
     mediaCache,
     cacheMediaPage,
     cleanupMediaPage,
-    installed,
+    get installed() {
+      return installed
+    },
     setInstalled(id, version) {
-      installed.set(id, version)
+      replaceInstalled((m) => m.set(id, version))
     },
     uninstall(id) {
-      installed.delete(id)
+      replaceInstalled((m) => m.delete(id))
       registry.unregister(id)
       engine.unregisterPlugin(id)
       sandboxes.get(id)?.terminate()
@@ -603,7 +623,13 @@ async function initRuntime(): Promise<AppRuntime> {
         if (plugin.manifestUrl) {
           const mf = await provider(plugin.manifestUrl)
           if (mf.status < 200 || mf.status >= 300) throw new Error(`manifest ${plugin.manifestUrl} -> HTTP ${mf.status}`)
-          const sidecar = validateManifest(JSON.parse(mf.body))
+          let sidecarJson: unknown
+          try {
+            sidecarJson = JSON.parse(mf.body)
+          } catch {
+            throw new Error(`sidecar manifest for ${plugin.id} is not valid JSON`)
+          }
+          const sidecar = validateManifest(sidecarJson)
           if (
             sidecar.id !== manifest.id ||
             sidecar.version !== manifest.version ||
@@ -617,7 +643,7 @@ async function initRuntime(): Promise<AppRuntime> {
         engine.unregisterPlugin(plugin.id)
         sandboxes.get(plugin.id)?.terminate()
         registerPlugin(sandbox, 'external')
-        installed.set(plugin.id, plugin.version)
+        replaceInstalled((m) => m.set(plugin.id, plugin.version))
 
         await plugins.save({ id: plugin.id, code, sha256: actual, manifest })
       } catch (e) {

@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Episode } from '@woyomi/core'
+import { sanitizeHtml } from '../../sanitize'
 import { useMediaQuery } from '../../hooks'
 import type { ReaderPrefs } from './reader-prefs'
 import { NOVEL_FONT_FAMILIES, NOVEL_FOREGROUNDS } from './reader-prefs'
@@ -52,6 +53,8 @@ export function NovelReader({
   const lastTypographyKeyRef = useRef(typographyKey)
 
   const [currentProgress, setCurrentProgress] = useState(initialProgress ?? 0)
+
+  const safeHtml = useMemo(() => sanitizeHtml(html), [html])
 
   useEffect(() => {
     restoredRef.current = false
@@ -286,7 +289,7 @@ export function NovelReader({
       onClick={handleClick}
       onScroll={handleScroll}
     >
-      <article ref={articleRef} className="novel-body mx-auto px-4 py-12" dangerouslySetInnerHTML={{ __html: html }} />
+      <article ref={articleRef} className="novel-body mx-auto px-4 py-12" dangerouslySetInnerHTML={{ __html: safeHtml }} />
       <div className="mx-auto max-w-2xl px-4 pb-16" onClick={(e) => e.stopPropagation()}>
         <ChapterClosureCard
           chapter={chapter}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getRuntime, isTauri, type AppRuntime } from './runtime'
 import { BrowseView } from './views/BrowseView'
 import { HistoryView } from './views/HistoryView'
@@ -27,7 +27,7 @@ export type Route =
   | { name: 'settings' }
   | { name: 'plugin-settings' }
 
-function parseHash(hash: string): Route {
+export function parseHash(hash: string): Route {
   const [path, ...rest] = hash.replace(/^#\/?/, '').split('/')
   switch (path) {
     case 'media':
@@ -96,11 +96,20 @@ export function App() {
   const t = useT()
   const setLocale = useSetLocale()
   const [runtime, setRuntime] = useState<AppRuntime | null>(null)
+  const [initError, setInitError] = useState<string | null>(null)
   const [route, setRoute] = useState<Route>(parseHash(window.location.hash))
 
-  useEffect(() => {
-    getRuntime().then(setRuntime)
+  const loadRuntime = useCallback(() => {
+    setInitError(null)
+    getRuntime().then(
+      (value) => setRuntime(value),
+      (error: unknown) => setInitError(error instanceof Error ? error.message : String(error))
+    )
   }, [])
+
+  useEffect(() => {
+    loadRuntime()
+  }, [loadRuntime])
 
   // Re-apply a stored language once the runtime (and its prefs) is available.
   useEffect(() => {
@@ -121,7 +130,17 @@ export function App() {
       <div className="grid h-full place-items-center bg-ink">
         <div className="flex flex-col items-center gap-3">
           <img src={logoUrl} alt="woyomi" className="h-10" />
-          <p className="text-sm text-muted">{t('common.loadingEngine')}</p>
+          {initError === null ? (
+            <p className="text-sm text-muted">{t('common.loadingEngine')}</p>
+          ) : (
+            <>
+              <p className="text-sm text-muted">{t('common.errorTitle')}</p>
+              <p className="max-w-sm text-xs text-muted">{initError}</p>
+              <button type="button" onClick={loadRuntime} className="rounded-lg bg-surface px-4 py-2 text-sm">
+                {t('common.retry')}
+              </button>
+            </>
+          )}
         </div>
       </div>
     )

@@ -28,6 +28,7 @@ const en = {
     'common.testing': 'Testing…',
     'common.close': 'Close',
     'common.reload': 'Reload',
+    'common.retry': 'Retry',
     'common.cancel': 'Cancel',
     'common.errorTitle': 'Something went wrong',
     'common.seen': 'seen',
@@ -38,6 +39,9 @@ const en = {
     'common.chapter': 'Chapter {number}',
     'common.season': ' · S{season}',
     'common.title': ' — {title}',
+    'common.version': 'v{version}',
+    'toast.notifications': 'Notifications',
+    'toast.dismiss': 'Dismiss',
 
     // media types
     'type.manga': 'manga',
@@ -173,6 +177,7 @@ const en = {
 
     // settings
     'settings.plugins': 'Plugins',
+    'settings.serverPlaceholder': 'https://your-server.example',
     'settings.uninstall': 'Uninstall',
     'settings.enable': 'Enable {name}',
     'settings.disable': 'Disable {name}',

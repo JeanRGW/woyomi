@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
@@ -63,23 +64,42 @@ async fn fetch_url(
         return render_dom(&app, &state.dom_renderer, args).await;
     }
 
+    // Plugin code is untrusted: constrain where and how it can fetch.
+    let target = reqwest::Url::parse(&args.url).map_err(|e| format!("invalid url: {e}"))?;
+    if !matches!(target.scheme(), "http" | "https") {
+        return Err("url must use http or https".to_string());
+    }
+    let method = args.method.to_ascii_uppercase();
+    if !matches!(method.as_str(), "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE") {
+        return Err(format!("unsupported method: {}", args.method));
+    }
+
     let client = &state.client;
     let mut req = client
         .request(
-            reqwest::Method::from_bytes(args.method.as_bytes()).map_err(|e| e.to_string())?,
-            &args.url,
+            reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?,
+            target,
         )
         .header("user-agent", "woyomi/0.1 (+native)")
         .header("accept", "*/*");
 
     for (k, v) in &args.headers {
+        if STRIPPED_FETCH_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+            continue;
+        }
         req = req.header(k, v);
     }
     if let Some(b) = &args.body {
         req = req.body(b.clone());
     }
 
-    let resp = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let mut resp = req
+        .send()
+        .await
+        // Error-message prefixes "fetch failed:"/"read body:" are a stable
+        // contract: the web app classifies network failures by them
+        // (apps/app/src/scrape.ts `isNetworkError`). Keep them on rename.
+        .map_err(|e| format!("fetch failed: {e}"))?;
     let status = resp.status().as_u16();
     let mut headers = HashMap::new();
     for (k, v) in resp.headers() {
@@ -87,18 +107,56 @@ async fn fetch_url(
             headers.insert(k.to_string(), hv.to_string());
         }
     }
-    let body = resp.text().await.map_err(|e| format!("read body: {e}"))?;
-
-    if status >= 500 {
-        // keep the plugin error path simple; still deliver status
+    // Cap the body: `resp.text()` is unbounded and a hostile endpoint could
+    // OOM the app.
+    let mut raw: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("read body: {e}"))? {
+        if raw.len() + chunk.len() > FETCH_MAX_BODY_BYTES {
+            return Err(format!("response body exceeds {FETCH_MAX_BODY_BYTES} bytes"));
+        }
+        raw.extend_from_slice(&chunk);
     }
-    let _ = app;
+    // Decode the bounded body through reqwest to preserve charset and BOM handling.
+    let body = decode_fetch_body(raw, resp.headers().get(reqwest::header::CONTENT_TYPE)).await?;
+
     Ok(FetchResult {
         status,
         headers,
         body,
     })
 }
+
+async fn decode_fetch_body(
+    raw: Vec<u8>,
+    content_type: Option<&reqwest::header::HeaderValue>,
+) -> Result<String, String> {
+    let mut bounded = http::Response::builder();
+    if let Some(content_type) = content_type {
+        bounded = bounded.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+    let bounded = bounded.body(raw).map_err(|e| format!("decode body: {e}"))?;
+    reqwest::Response::from(bounded)
+        .text()
+        .await
+        .map_err(|e| format!("decode body: {e}"))
+}
+
+/// Framing/host headers a plugin must not control: they corrupt the request or
+/// impersonate the upstream. Content credentials (cookie/authorization) pass
+/// through — authenticated scraping is the plugin's own concern.
+const STRIPPED_FETCH_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "connection",
+    "transfer-encoding",
+    "te",
+    "keep-alive",
+    "upgrade",
+    "proxy-authorization",
+    "proxy-connection",
+];
+
+const FETCH_MAX_BODY_BYTES: usize = 12 * 1024 * 1024;
 
 #[cfg(desktop)]
 const DOM_RENDERER_LABEL: &str = "dom-renderer";
@@ -551,6 +609,12 @@ struct RemoveDownloadFilesArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CleanupDownloadsArgs {
+    keep_file_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CacheCoverImageArgs {
     url: String,
     #[serde(default)]
@@ -752,6 +816,10 @@ async fn start_download_asset(
     {
         return Err("asset is already downloading".to_string());
     }
+    // Terminal entries are finished tasks (status is only set once the task
+    // stops writing), so they can be dropped before inserting the new job —
+    // otherwise the map grows by one entry per asset over a session.
+    job_map.retain(|_, job| job.status.state == DownloadState::Downloading);
     job_map.insert(
         key.clone(),
         DownloadJob {
@@ -780,7 +848,11 @@ async fn start_download_asset(
         )
         .await
         {
-            let _ = tokio::fs::remove_file(&part_path).await;
+            if let Err(error) = tokio::fs::remove_file(&part_path).await {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("downloads: clean up partial download: {error}");
+                }
+            }
             let mut jobs = jobs.lock().await;
             if let Some(job) = jobs.get_mut(&key) {
                 if *job.cancel.borrow() {
@@ -923,10 +995,47 @@ async fn cancel_download_asset(
 async fn remove_download_files(
     webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     args: RemoveDownloadFilesArgs,
 ) -> Result<(), String> {
     require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
+    // Cancel any in-flight asset for this file and wait for its task to stop
+    // writing before deleting: the task recreates directories and .part files
+    // as it runs, which would orphan files the app no longer tracks. Terminal
+    // job status is only set after the task's last write, so "not downloading"
+    // means the disk is quiet.
+    {
+        let mut jobs = state.jobs.lock().await;
+        for (key, job) in jobs.iter_mut() {
+            if key.0 == args.file_id && job.status.state == DownloadState::Downloading {
+                let _ = job.cancel.send(true);
+            }
+        }
+    }
+    for _ in 0..100 {
+        {
+            let jobs = state.jobs.lock().await;
+            let active = jobs
+                .iter()
+                .any(|(key, job)| key.0 == args.file_id && job.status.state == DownloadState::Downloading);
+            if !active {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    {
+        let mut jobs = state.jobs.lock().await;
+        // A timeout does not prove the disk is quiet. Keep the job and files
+        // rather than racing a task still writing (JS guards cannot stop it).
+        if jobs.iter().any(|(key, job)| {
+            key.0 == args.file_id && job.status.state == DownloadState::Downloading
+        }) {
+            return Err("download cancellation timed out; files were preserved".to_string());
+        }
+        jobs.retain(|key, _| key.0 != args.file_id);
+    }
     let directory = downloads_root(&app)?.join(args.file_id);
     match tokio::fs::remove_dir_all(directory).await {
         Ok(()) => Ok(()),
@@ -935,31 +1044,133 @@ async fn remove_download_files(
     }
 }
 
+/// Startup sweep: drop `.part` leftovers inside known download directories.
+/// Unknown directories are preserved: an incomplete DB read is not proof that
+/// their offline data is orphaned.
+#[tauri::command]
+async fn cleanup_downloads(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    args: CleanupDownloadsArgs,
+) -> Result<(), String> {
+    require_main_webview(&webview)?;
+    let root = downloads_root(&app)?;
+    cleanup_downloads_at(&root, &args.keep_file_ids).await
+}
+
+async fn cleanup_downloads_at(root: &Path, keep_file_ids: &[String]) -> Result<(), String> {
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("list downloads: {error}")),
+    };
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("list downloads: {e}"))?
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if !keep_file_ids.iter().any(|id| *id == name) {
+            continue;
+        }
+        // Kept record: only stale .part files inside are garbage.
+        let mut files = match tokio::fs::read_dir(&path).await {
+            Ok(files) => files,
+            Err(error) => {
+                eprintln!("downloads: list download directory: {error}");
+                continue;
+            }
+        };
+        while let Some(file) = files.next_entry().await.transpose() {
+            let file = match file {
+                Ok(file) => file,
+                Err(error) => {
+                    eprintln!("downloads: list download directory: {error}");
+                    break;
+                }
+            };
+            if file.file_name().to_string_lossy().ends_with(".part") {
+                if let Err(error) = tokio::fs::remove_file(file.path()).await {
+                    eprintln!("downloads: remove stale partial download: {error}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Base URL of the localhost media-stream proxy. The player points the <video>
 /// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. a
-/// Referer) play; the proxy forwards Range for seeking.
+/// Referer) play; the proxy forwards Range for seeking. The base embeds the
+/// per-process auth token every proxy URL must carry.
 #[tauri::command]
 fn stream_proxy_base(
     webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     require_main_webview(&webview)?;
-    let port = stream_proxy_port(downloads_root(&app)?)?;
-    Ok(format!("http://127.0.0.1:{}", port))
+    let proxy = stream_proxy(downloads_root(&app)?)?;
+    Ok(format!("http://127.0.0.1:{}/t/{}", proxy.port, proxy.token))
+}
+
+struct StreamProxy {
+    port: u16,
+    token: String,
+}
+
+/// Random per-process secret: the proxy serves private downloads and open
+/// forwarding, so every request must prove it comes from the app itself.
+/// (A page in the capability-less dom-renderer webview can reach 127.0.0.1
+/// but never learns this token.)
+fn generate_proxy_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("proxy token: {e}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Constant-time byte comparison for the auth token.
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Every non-OPTIONS request must be `/t/<token>/<route>`.
+fn request_authorized(request_url: &str, token: &str) -> bool {
+    let path = request_url.split('?').next().unwrap_or("");
+    let mut segments = path.split('/');
+    segments.next(); // empty part before the leading '/'
+    let prefix = segments.next().unwrap_or("");
+    let supplied = segments.next().unwrap_or("");
+    let route = segments.next().unwrap_or("");
+    prefix == "t" && token_eq(supplied, token) && !route.is_empty()
 }
 
 /// Ephemeral localhost HTTP proxy that streams media with custom headers (e.g.
 /// a required Referer) and forwards Range so the <video> can seek.
 /// Bound to 127.0.0.1 on an ephemeral port; started on first use. Startup
 /// errors stay recoverable so the app can still use raw media URLs.
-fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
-    static PORT: OnceLock<StdMutex<Option<u16>>> = OnceLock::new();
-    let port = PORT.get_or_init(|| StdMutex::new(None));
-    let mut current = port
+fn stream_proxy(downloads_root: PathBuf) -> Result<StreamProxy, String> {
+    static PROXY: OnceLock<StdMutex<Option<StreamProxy>>> = OnceLock::new();
+    let proxy = PROXY.get_or_init(|| StdMutex::new(None));
+    let mut current = proxy
         .lock()
-        .map_err(|_| "stream proxy port lock poisoned".to_string())?;
-    if let Some(port) = *current {
-        return Ok(port);
+        .map_err(|_| "stream proxy lock poisoned".to_string())?;
+    if let Some(proxy) = current.as_ref() {
+        return Ok(StreamProxy {
+            port: proxy.port,
+            token: proxy.token.clone(),
+        });
     }
 
     let server =
@@ -969,6 +1180,7 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
         .to_ip()
         .ok_or_else(|| "stream proxy address is not an IP address".to_string())?
         .port();
+    let token = generate_proxy_token()?;
     // No total timeout on the proxy — a 122MB stream must not be aborted
     // mid-download like the 15s fetch_url client would. The async client's
     // per-read timeout instead drops connections that go silent (a stalled
@@ -983,12 +1195,29 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
         .read_timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("build stream proxy client: {e}"))?;
+    let serve_token = token.clone();
     let _stream_proxy = std::thread::Builder::new()
         .name("woyomi-stream-proxy".to_string())
-        .spawn(move || serve_streams(server, downloads_root, Arc::new(runtime), client))
+        .spawn(move || serve_streams(server, downloads_root, Arc::new(runtime), client, serve_token))
         .map_err(|e| format!("start stream proxy: {e}"))?;
-    *current = Some(port);
-    Ok(port)
+    *current = Some(StreamProxy {
+        port,
+        token: token.clone(),
+    });
+    Ok(StreamProxy { port, token })
+}
+
+/// Upper bound on concurrent proxy request threads: an unbounded spawn-per-
+/// request lets a local caller exhaust memory via many large buffering bodies.
+static ACTIVE_PROXY_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+const MAX_PROXY_REQUESTS: usize = 16;
+
+struct ActiveProxyRequest;
+
+impl Drop for ActiveProxyRequest {
+    fn drop(&mut self) {
+        ACTIVE_PROXY_REQUESTS.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn serve_streams(
@@ -996,20 +1225,41 @@ fn serve_streams(
     downloads_root: PathBuf,
     runtime: Arc<tokio::runtime::Runtime>,
     client: reqwest::Client,
+    token: String,
 ) {
     for request in server.incoming_requests() {
         let client = client.clone();
         let runtime = runtime.clone();
         let downloads_root = downloads_root.clone();
+        let token = token.clone();
+        if ACTIVE_PROXY_REQUESTS.fetch_add(1, Ordering::SeqCst) >= MAX_PROXY_REQUESTS {
+            ACTIVE_PROXY_REQUESTS.fetch_sub(1, Ordering::SeqCst);
+            let _ = request.respond(tiny_http::Response::empty(503));
+            continue;
+        }
         let _ = std::thread::spawn(move || {
+            let _active = ActiveProxyRequest;
             let result = if matches!(request.method(), tiny_http::Method::Options) {
                 respond_stream_preflight(request)
-            } else if request.url().starts_with("/offline/") {
-                serve_offline(&downloads_root, request)
-            } else if request.url().starts_with("/covers/") {
-                serve_cover(&downloads_root, request)
+            } else if !matches!(
+                request.method(),
+                tiny_http::Method::Get | tiny_http::Method::Head
+            ) {
+                request
+                    .respond(tiny_http::Response::empty(405))
+                    .map_err(|e| format!("respond: {e}"))
+            } else if !request_authorized(request.url(), &token) {
+                request
+                    .respond(tiny_http::Response::empty(401))
+                    .map_err(|e| format!("respond: {e}"))
+            } else if request.url().starts_with(&format!("/t/{token}/offline/")) {
+                serve_offline(&downloads_root, &token, request)
+            } else if request.url().starts_with(&format!("/t/{token}/covers/")) {
+                serve_cover(&downloads_root, &token, request)
+            } else if request.url().starts_with(&format!("/t/{token}/stream")) {
+                proxy_one(runtime, &client, &token, request)
             } else {
-                proxy_one(runtime, &client, request)
+                respond_empty(request, 404)
             };
             if let Err(error) = result {
                 eprintln!("stream proxy: {error}");
@@ -1018,7 +1268,7 @@ fn serve_streams(
     }
 }
 
-fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
+fn serve_cover(downloads_root: &Path, token: &str, request: tiny_http::Request) -> Result<(), String> {
     if !matches!(
         request.method(),
         tiny_http::Method::Get | tiny_http::Method::Head
@@ -1035,6 +1285,9 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         Some(segments) => segments,
         None => return respond_empty(request, 404),
     };
+    if segments.next() != Some("t") || segments.next() != Some(token) {
+        return respond_empty(request, 401);
+    }
     if segments.next() != Some("covers") {
         return respond_empty(request, 404);
     }
@@ -1081,15 +1334,33 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         .map_err(|e| format!("respond: {e}"))
 }
 
+/// Only content-fetch headers may be forwarded upstream. Framing/host headers
+/// would corrupt the request or impersonate the upstream; authorization must
+/// never leave the app. Plugins legitimately need Referer/Cookie/User-Agent
+/// for hotlink-protected media.
+const ALLOWED_PROXY_HEADERS: &[&str] = &[
+    "referer",
+    "cookie",
+    "user-agent",
+    "accept",
+    "accept-language",
+    "origin",
+];
+
 fn proxy_one(
     runtime: Arc<tokio::runtime::Runtime>,
     client: &reqwest::Client,
+    token: &str,
     request: tiny_http::Request,
 ) -> Result<(), String> {
     // tiny_http gives the path+query (relative); parse against a dummy base so
     // the query string (url + headers) is reachable.
     let parsed = url::Url::parse(&format!("http://127.0.0.1{}", request.url()))
         .map_err(|e| format!("bad request url: {e}"))?;
+    let expected_path = format!("/t/{token}/stream");
+    if parsed.path() != expected_path.as_str() {
+        return respond_empty(request, 404);
+    }
     let target = parsed
         .query_pairs()
         .find(|(k, _)| k == "url")
@@ -1105,6 +1376,9 @@ fn proxy_one(
 
     let mut builder = client.get(&target);
     for (k, v) in headers {
+        if !ALLOWED_PROXY_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+            continue;
+        }
         builder = builder.header(k, v);
     }
     // Forward Range so seeking works on the proxy URL.
@@ -1256,7 +1530,11 @@ fn respond_stream_failure(request: tiny_http::Request) -> Result<(), String> {
         .map_err(|e| format!("respond: {e}"))
 }
 
-fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
+fn serve_offline(
+    downloads_root: &Path,
+    token: &str,
+    request: tiny_http::Request,
+) -> Result<(), String> {
     if !matches!(
         request.method(),
         tiny_http::Method::Get | tiny_http::Method::Head
@@ -1274,6 +1552,9 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         Some(segments) => segments,
         None => return respond_empty(request, 404),
     };
+    if segments.next() != Some("t") || segments.next() != Some(token) {
+        return respond_empty(request, 401);
+    }
     if segments.next() != Some("offline") {
         return respond_empty(request, 404);
     }
@@ -1309,8 +1590,17 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         .map(|header| header.value.as_str());
     let (status, start, end) = match range_header {
         Some(value) => match parse_range(value, file_len) {
-            Some((start, end)) => (206, start, end),
-            None => return respond_range_not_satisfiable(request, file_len),
+            RangeOutcome::Satisfiable(start, end) => (206, start, end),
+            RangeOutcome::Unsatisfiable => return respond_range_not_satisfiable(request, file_len),
+            // Malformed or multi-range requests are ignored per RFC 7233
+            // (players probe with both and mishandle a 416 here).
+            RangeOutcome::Ignore => {
+                if file_len > 0 {
+                    (200, 0, file_len - 1)
+                } else {
+                    (200, 0, 0)
+                }
+            }
         },
         None if file_len > 0 => (200, 0, file_len - 1),
         None => (200, 0, 0),
@@ -1325,12 +1615,7 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         .query_pairs()
         .find(|(key, _)| key == "type")
         .map(|(_, value)| value.into_owned())
-        .filter(|value| {
-            !value.is_empty()
-                && value.is_ascii()
-                && !value.bytes().any(|byte| byte.is_ascii_control())
-                && value.contains('/')
-        })
+        .filter(|value| allowed_content_type(value))
         .unwrap_or_else(|| "application/octet-stream".to_string());
     let mut headers = vec![
         response_header("Content-Type", &content_type)?,
@@ -1393,33 +1678,91 @@ fn respond_range_not_satisfiable(request: tiny_http::Request, file_len: u64) -> 
         .map_err(|e| format!("respond: {e}"))
 }
 
-fn parse_range(value: &str, file_len: u64) -> Option<(u64, u64)> {
-    let (unit, range) = value.split_once('=')?;
+#[derive(Debug, PartialEq, Eq)]
+enum RangeOutcome {
+    Satisfiable(u64, u64),
+    /// Well-formed but beyond EOF: answer 416.
+    Unsatisfiable,
+    /// Malformed or multi-range: ignore the header and serve 200 (RFC 7233).
+    Ignore,
+}
+
+fn parse_range(value: &str, file_len: u64) -> RangeOutcome {
+    let Some((unit, range)) = value.split_once('=') else {
+        return RangeOutcome::Ignore;
+    };
     if !unit.eq_ignore_ascii_case("bytes") {
-        return None;
+        return RangeOutcome::Ignore;
     }
-    if file_len == 0 || range.contains(',') {
-        return None;
+    if range.contains(',') {
+        return RangeOutcome::Ignore;
     }
-    let (start, end) = range.split_once('-')?;
+    let Some((start, end)) = range.split_once('-') else {
+        return RangeOutcome::Ignore;
+    };
     if start.is_empty() {
-        let suffix = end.parse::<u64>().ok()?;
-        if suffix == 0 {
-            return None;
+        let Ok(suffix) = end.parse::<u64>() else {
+            return RangeOutcome::Ignore;
+        };
+        if suffix == 0 || file_len == 0 {
+            return RangeOutcome::Unsatisfiable;
         }
-        return Some((file_len.saturating_sub(suffix), file_len - 1));
+        return RangeOutcome::Satisfiable(file_len.saturating_sub(suffix), file_len - 1);
     }
 
-    let start = start.parse::<u64>().ok()?;
-    if start >= file_len {
-        return None;
+    let Ok(start) = start.parse::<u64>() else {
+        return RangeOutcome::Ignore;
+    };
+    if file_len == 0 || start >= file_len {
+        return RangeOutcome::Unsatisfiable;
     }
     let end = if end.is_empty() {
         file_len - 1
     } else {
-        end.parse::<u64>().ok()?.min(file_len - 1)
+        let Ok(end) = end.parse::<u64>() else {
+            return RangeOutcome::Ignore;
+        };
+        end.min(file_len - 1)
     };
-    (start <= end).then_some((start, end))
+    if start <= end {
+        RangeOutcome::Satisfiable(start, end)
+    } else {
+        RangeOutcome::Ignore
+    }
+}
+
+/// Content types the offline file server will serve verbatim. Anything else
+/// falls back to `application/octet-stream`: active document types (html, xhtml,
+/// svg, xml, script, pdf) must never be served from the localhost origin, while
+/// every media/manifest type the player and reader use stays allowed.
+fn allowed_content_type(value: &str) -> bool {
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+        return false;
+    }
+    let mime = value
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if mime.is_empty() || !mime.contains('/') {
+        return false;
+    }
+    if let Some(kind) = mime.strip_prefix("image/") {
+        return kind != "svg+xml";
+    }
+    if mime.starts_with("video/") || mime.starts_with("audio/") {
+        return true;
+    }
+    matches!(
+        mime.as_str(),
+        "text/plain"
+            | "text/vtt"
+            | "application/octet-stream"
+            | "application/x-mpegurl"
+            | "application/vnd.apple.mpegurl"
+            | "application/dash+xml"
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1453,6 +1796,7 @@ pub fn run() {
             download_asset_status,
             cancel_download_asset,
             remove_download_files,
+            cleanup_downloads,
             stream_proxy_base,
             cache_cover_image,
             remove_cached_cover
@@ -1463,9 +1807,44 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn decodes_bounded_fetch_bodies_with_charset_and_bom() {
+        let content_type = reqwest::header::HeaderValue::from_static("text/html; charset=windows-1252");
+        assert_eq!(
+            super::decode_fetch_body(vec![b'c', b'a', b'f', 0xe9], Some(&content_type)).await.unwrap(),
+            "café"
+        );
+        assert_eq!(
+            super::decode_fetch_body(vec![0xef, 0xbb, 0xbf, b'a'], None).await.unwrap(),
+            "a"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_unknown_downloads_with_empty_or_partial_keep_lists() {
+        let root = std::env::temp_dir().join(format!(
+            "woyomi-cleanup-{}", super::generate_proxy_token().unwrap()
+        ));
+        for name in ["known", "unknown"] {
+            let directory = root.join(name);
+            tokio::fs::create_dir_all(&directory).await.unwrap();
+            tokio::fs::write(directory.join("0"), b"offline").await.unwrap();
+            tokio::fs::write(directory.join("1.part"), b"partial").await.unwrap();
+        }
+        super::cleanup_downloads_at(&root, &[]).await.unwrap();
+        assert!(root.join("unknown/0").exists());
+        assert!(root.join("known/1.part").exists());
+        super::cleanup_downloads_at(&root, &["known".to_string()]).await.unwrap();
+        assert!(root.join("known/0").exists());
+        assert!(!root.join("known/1.part").exists());
+        assert!(root.join("unknown/0").exists());
+        assert!(root.join("unknown/1.part").exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
     use super::{
-        dom_selector_script, dom_snapshot_script, parse_range, validate_cover_hash,
-        validate_file_id, DomRenderer,
+        allowed_content_type, dom_selector_script, dom_snapshot_script, parse_range, request_authorized,
+        token_eq, validate_cover_hash, validate_file_id, DomRenderer, RangeOutcome,
     };
 
     #[test]
@@ -1504,24 +1883,65 @@ mod tests {
 
     #[test]
     fn parses_single_byte_ranges() {
-        assert_eq!(parse_range("bytes=2-5", 10), Some((2, 5)));
-        assert_eq!(parse_range("BYTES=2-5", 10), Some((2, 5)));
-        assert_eq!(parse_range("bytes=7-", 10), Some((7, 9)));
-        assert_eq!(parse_range("bytes=-3", 10), Some((7, 9)));
-        assert_eq!(parse_range("bytes=-20", 10), Some((0, 9)));
-        assert_eq!(parse_range("bytes=2-20", 10), Some((2, 9)));
+        assert_eq!(parse_range("bytes=2-5", 10), RangeOutcome::Satisfiable(2, 5));
+        assert_eq!(parse_range("BYTES=2-5", 10), RangeOutcome::Satisfiable(2, 5));
+        assert_eq!(parse_range("bytes=7-", 10), RangeOutcome::Satisfiable(7, 9));
+        assert_eq!(parse_range("bytes=-3", 10), RangeOutcome::Satisfiable(7, 9));
+        assert_eq!(parse_range("bytes=-20", 10), RangeOutcome::Satisfiable(0, 9));
+        assert_eq!(parse_range("bytes=2-20", 10), RangeOutcome::Satisfiable(2, 9));
 
-        for invalid in [
-            "items=0-1",
-            "bytes=",
-            "bytes=1",
-            "bytes=5-2",
-            "bytes=10-",
-            "bytes=-0",
-            "bytes=0-1,3-4",
-        ] {
-            assert_eq!(parse_range(invalid, 10), None, "{invalid}");
+        // Malformed and multi-range probes are ignored (serve 200) per RFC 7233.
+        for ignored in ["items=0-1", "bytes=", "bytes=1", "bytes=5-2", "bytes=0-1,3-4", "bytes=x-y"] {
+            assert_eq!(parse_range(ignored, 10), RangeOutcome::Ignore, "{ignored}");
         }
-        assert_eq!(parse_range("bytes=0-", 0), None);
+        // Well-formed but beyond EOF is the only 416 case.
+        for unsatisfiable in ["bytes=10-", "bytes=-0"] {
+            assert_eq!(parse_range(unsatisfiable, 10), RangeOutcome::Unsatisfiable, "{unsatisfiable}");
+        }
+        assert_eq!(parse_range("bytes=0-", 0), RangeOutcome::Unsatisfiable);
+    }
+
+    #[test]
+    fn authorizes_only_matching_proxy_tokens() {
+        assert!(request_authorized("/t/abc123/stream?url=x", "abc123"));
+        assert!(request_authorized("/t/abc123/offline/f/0?type=image%2Fpng", "abc123"));
+        assert!(!request_authorized("/t/wrong/stream?url=x", "abc123"));
+        assert!(!request_authorized("/stream?url=x", "abc123"));
+        assert!(!request_authorized("/t/abc123", "abc123"));
+        assert!(!request_authorized("", "abc123"));
+        assert!(token_eq("abc123", "abc123"));
+        assert!(!token_eq("abc123", "abc124"));
+        assert!(!token_eq("abc123", "abc12"));
+    }
+
+    #[test]
+    fn gates_offline_content_types() {
+        for allowed in [
+            "image/jpeg",
+            "image/png; charset=binary",
+            "video/mp4",
+            "audio/mpeg",
+            "text/plain",
+            "text/vtt",
+            "application/octet-stream",
+            "application/vnd.apple.mpegurl",
+            "application/dash+xml",
+        ] {
+            assert!(allowed_content_type(allowed), "{allowed}");
+        }
+        for blocked in [
+            "text/html",
+            "application/xhtml+xml",
+            "image/svg+xml",
+            "text/xml",
+            "application/xml",
+            "application/pdf",
+            "text/javascript",
+            "",
+            "nonsense",
+            "text/html\u{7}x",
+        ] {
+            assert!(!allowed_content_type(blocked), "{blocked}");
+        }
     }
 }

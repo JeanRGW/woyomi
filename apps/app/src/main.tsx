@@ -8,12 +8,12 @@ import './styles.css'
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <I18nProvider>
+    <I18nProvider>
+      <ErrorBoundary>
         <ToastProvider>
           <App />
         </ToastProvider>
-      </I18nProvider>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </I18nProvider>
   </React.StrictMode>
 )

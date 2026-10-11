@@ -41,7 +41,7 @@ export function PluginSettingsView({ runtime }: { runtime: AppRuntime }) {
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <h2 className="text-base font-bold">{p.registration.manifest.name}</h2>
                 <span className="text-xs text-faint">
-                  v{p.registration.manifest.version} · {p.origin}
+                  {t('common.version', { version: p.registration.manifest.version })} · {p.origin}
                 </span>
               </div>
               {p.registration.manifest.description && <p className="mt-0.5 text-xs text-muted">{p.registration.manifest.description}</p>}

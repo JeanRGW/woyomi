@@ -4,7 +4,9 @@ import { navigate } from '../App'
 import { Btn, DownloadRowSkeleton, EmptyState, Page, PageHeader } from '../components'
 import type { DownloadRecord, DownloadState } from '../downloads'
 import { Icon } from '../icons'
+import { formatEpisodeLabel } from '../format'
 import { useLocale, useT } from '../i18n'
+import { useToast } from '../toast'
 import type { MessageKey } from '../i18n/messages'
 import type { AppRuntime } from '../runtime'
 
@@ -42,6 +44,7 @@ function downloadProgress(record: DownloadRecord): number {
 
 export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
+  const { showToast } = useToast()
   const locale = useLocale()
   const manager = runtime.downloads
   const [records, setRecords] = useState<DownloadRecord[]>([])
@@ -78,9 +81,7 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
           {records.map((record) => {
             const video = isVideoType(record.media.type)
             const progress = downloadProgress(record)
-            const episodeLabel = `${t(video ? 'common.episode' : 'common.chapter', { number: record.episode.number })}${
-              record.episode.season !== undefined ? t('common.season', { season: record.episode.season }) : ''
-            }${record.episode.title ? t('common.title', { title: record.episode.title }) : ''}`
+            const episodeLabel = formatEpisodeLabel(t, record.episode, video ? 'episode' : 'chapter')
             const bytes = `${formatBytes(record.downloadedBytes, locale)}${
               record.totalBytes !== undefined ? ` / ${formatBytes(record.totalBytes, locale)}` : ''
             }`
@@ -141,7 +142,11 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
                     <Btn
                       variant="soft"
                       className="size-10 px-0"
-                      onClick={() => void manager?.retry(record.id)}
+                      onClick={() => {
+                        void manager?.retry(record.id).catch((error: unknown) => {
+                          showToast(error instanceof Error ? error.message : String(error), { tone: 'error' })
+                        })
+                      }}
                       aria-label={t('downloads.retry')}
                       title={t('downloads.retry')}
                     >
@@ -151,9 +156,14 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
                   <Btn
                     variant="danger"
                     className="size-10 px-0"
-                      onClick={() =>
-                        void manager?.remove(record.id).then(() => runtime.cleanupMediaPage(record.media.id))
-                      }
+                      onClick={() => {
+                        void manager
+                          ?.remove(record.id)
+                          .then(() => runtime.cleanupMediaPage(record.media.id))
+                          .catch((error: unknown) => {
+                            showToast(error instanceof Error ? error.message : String(error), { tone: 'error' })
+                          })
+                      }}
                     disabled={!manager}
                     aria-label={t('downloads.remove')}
                     title={t('downloads.remove')}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
-import { accessSync, mkdtempSync, rmSync } from 'node:fs'
+import { accessSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { server, isPrivateTarget, mergeLibraries } from './index'
@@ -40,6 +40,37 @@ describe('sync api', () => {
   it('requires auth', async () => {
     const res = await server.request('/api/sync/bob')
     expect(res.status).toBe(401)
+  })
+
+  it.each(['bearer', 'BEARER', 'bEaReR'])('accepts the %s auth scheme', async (scheme) => {
+    const res = await server.request('/api/sync/bob', { headers: { authorization: `${scheme} ${TOKEN}` } })
+    expect(res.status).toBe(200)
+  })
+
+  it('caps multibyte request bodies by bytes without content-length', async () => {
+    const body = JSON.stringify({ padding: '界'.repeat(400_000) })
+    expect(body.length).toBeLessThan(1024 * 1024)
+    const res = await server.request('/api/sync/bob', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body
+    })
+    expect(res.status).toBe(413)
+  })
+
+  it('stops reading a streamed body once the byte limit is exceeded', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(600_000)) },
+      cancel
+    })
+    const request = new Request('http://localhost/api/sync/bob', {
+      method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body,
+      duplex: 'half'
+    } as RequestInit)
+    const res = await server.request(request)
+    expect(res.status).toBe(413)
+    expect(cancel).toHaveBeenCalled()
   })
 
   it('round-trips library json with auth', async () => {
@@ -90,14 +121,58 @@ describe('sync api', () => {
     expect(res.status).toBe(200)
     expect(() => accessSync(join(process.env.DATA_DIR!, '..', `${outsideName}.json`))).toThrow()
   })
+
+  it('answers 400 on malformed JSON bodies', async () => {
+    const res = await server.request('/api/sync/bob', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: '{oops'
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects sync payloads with malformed rows', async () => {
+    const res = await server.request('/api/sync/bob', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ entries: [{ media: { id: 1 } }] })
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('serializes concurrent PUTs without losing updates', async () => {
+    const put = (id: string) =>
+      server.request('/api/sync/bob', {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload({ entries: [entry(id, 'reading', 5)] }))
+      })
+    await Promise.all([put('s/1'), put('s/2'), put('s/3')])
+    const get = await server.request('/api/sync/bob', { headers: { authorization: `Bearer ${TOKEN}` } })
+    const data = (await get.json()) as SyncPayload
+    expect(data.entries.map((e) => e.media.id).sort()).toEqual(['s/1', 's/2', 's/3'])
+  })
+
+  it('quarantines corrupt stored state instead of overwriting it', async () => {
+    const dir = process.env.DATA_DIR!
+    const file = join(dir, `${encodeURIComponent('bob')}.json`)
+    writeFileSync(file, '{not json')
+
+    const get = await server.request('/api/sync/bob', { headers: { authorization: `Bearer ${TOKEN}` } })
+    expect(get.status).toBe(200)
+    expect(((await get.json()) as SyncPayload).entries).toEqual([])
+
+    expect(() => accessSync(file)).toThrow()
+    expect(readdirSync(dir).some((name) => name.startsWith('bob.json.corrupt-'))).toBe(true)
+  })
 })
 
 describe('mergeLibraries', () => {
-  it('unions seenEpisodeIds across devices', () => {
+  it('keeps the newest progress snapshot across devices', () => {
     const prev = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e1'], updatedAt: 1 }] })
     const inc = payload({ progress: [{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 2 }] })
     const merged = mergeLibraries(prev, inc)
-    expect(merged.progress).toEqual([{ mediaId: 's/1', seenEpisodeIds: ['e1', 'e2'], updatedAt: 2 }])
+    expect(merged.progress).toEqual([{ mediaId: 's/1', seenEpisodeIds: ['e2'], updatedAt: 2 }])
   })
 
   it('keeps the entry with the newer updatedAt', () => {
@@ -297,6 +372,27 @@ describe('scrape proxy guardrails', () => {
     expect(sent.authorization).toBeUndefined()
     expect(sent['x-plugin']).toBe('1')
   })
+
+  it('answers 400 on malformed scrape bodies', async () => {
+    const res = await server.request('/api/scrape', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{oops'
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('does not echo set-cookie from upstream responses', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('ok', { headers: { 'set-cookie': 'session=abc', 'x-keep': '1' } }))
+    const res = await server.request('/api/scrape', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/' })
+    })
+    const data = (await res.json()) as { headers: Record<string, string> }
+    expect(data.headers['set-cookie']).toBeUndefined()
+    expect(data.headers['x-keep']).toBe('1')
+  })
 })
 
 describe('stream proxy (/api/stream)', () => {
@@ -387,5 +483,19 @@ describe('stream proxy (/api/stream)', () => {
     ;(globalThis.fetch as Mock).mockResolvedValueOnce(new Response('x', { headers: { 'transfer-encoding': 'chunked' } }))
     const res = await server.request('/api/stream?url=https://v.example/e.m4v')
     expect(res.headers.get('transfer-encoding')).toBeNull()
+  })
+
+  it('strips forbidden request headers case-insensitively', async () => {
+    const fetchMock = vi.fn(async () => new Response('ok'))
+    globalThis.fetch = fetchMock
+    const headers = encodeURIComponent(JSON.stringify({ Host: 'evil.test', 'Content-Length': '999', Authorization: 'Bearer evil', Referer: 'https://site/' }))
+    const res = await server.request(`/api/stream?url=https://v.example/e.m4v&headers=${headers}`)
+    expect(res.status).toBe(200)
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit]
+    const sent = new Headers(init.headers)
+    expect(sent.get('host')).toBeNull()
+    expect(sent.get('content-length')).toBeNull()
+    expect(sent.get('authorization')).toBeNull()
+    expect(sent.get('referer')).toBe('https://site/')
   })
 })

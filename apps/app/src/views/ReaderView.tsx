@@ -4,6 +4,7 @@ import { imageSrc, type AppRuntime } from '../runtime'
 import { navigate } from '../App'
 import { recordOpen } from '../hooks'
 import { useT } from '../i18n'
+import { formatEpisodeLabel } from '../format'
 import { BackButton, Banner, Page } from '../components'
 import { findAdjacent, restorePage, viewLabel, type PageSeekRequest, type PageView } from './reader/reader-nav'
 import {
@@ -52,11 +53,10 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const lastSavedRef = useRef<number | null>(null)
   const lastSavedTextRef = useRef<number | null>(null)
   const seekRequestId = useRef(0)
-  // live mirror of `view` so unmount-time effects read the current page
+  // live mirror of `view`/`textProgress`/`total` so unmount-time effects read
+  // the current page (updated after render, never during render)
   const viewRef = useRef(view)
-  viewRef.current = view
   const textProgressRef = useRef(textProgress)
-  textProgressRef.current = textProgress
   const hasReportedView = useRef(false)
   const readerContentRef = useRef<HTMLDivElement>(null)
   const handleViewChange = useCallback((nextView: PageView) => {
@@ -67,7 +67,12 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
 
   const total = content?.type === 'pages' ? content.images.length : 0
   const totalRef = useRef(total)
-  totalRef.current = total
+
+  useEffect(() => {
+    viewRef.current = view
+    textProgressRef.current = textProgress
+    totalRef.current = total
+  })
 
   useWakeLock(prefsLoaded && prefs.keepAwake)
 
@@ -195,11 +200,11 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   // mid-chapter position is saved debounced (continuous scroll re-views pages)
   useEffect(() => {
     if (total === 0 || initialPage === null || finished) return
-    const t = window.setTimeout(() => {
+    const timerId = window.setTimeout(() => {
       lastSavedRef.current = view.readingStart
       saveReadPosition(runtime.engine.prefs, episodeId, view.readingStart)
     }, 400)
-    return () => window.clearTimeout(t)
+    return () => window.clearTimeout(timerId)
   }, [runtime, episodeId, view.readingStart, total, initialPage, finished])
 
   // flush a pending position on unmount (quick exit inside the debounce window)
@@ -278,11 +283,7 @@ function ReaderSession({ runtime, sourceId, mediaId, episodeId }: { runtime: App
   const isImages = content.type === 'pages'
   const empty = isImages ? total === 0 : !content.html.trim()
   const chapter = episodes.find((e) => e.id === episodeId)
-  const chapterLabel = chapter
-    ? `${t('common.chapter', { number: chapter.number })}${chapter.season != null ? t('common.season', { season: chapter.season }) : ''}${
-        chapter.title ? t('common.title', { title: chapter.title }) : ''
-      }`
-    : ''
+  const chapterLabel = chapter ? formatEpisodeLabel(t, chapter, 'chapter') : ''
   const continuousView = { start: view.start, count: 1 as const, readingStart: view.start, readingEnd: view.start }
   const labelView = prefs.mode === 'paged' ? view : continuousView
   // strip mode is always vertical; pages mode is rtl/ltr (stored value may be

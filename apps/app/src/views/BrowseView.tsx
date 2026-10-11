@@ -346,6 +346,24 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
     }
   }
 
+  /** Load the next page for one source; in "all" mode each source paginates independently. */
+  async function loadMoreSource(r: SourceResults) {
+    const q = query.trim()
+    if (!q || !r.hasNextPage) return
+    const token = ++reqToken.current
+    setLoading(true)
+    setError('')
+    try {
+      const res = await runtime.engine.search(r.sourceId, q, (r.page ?? 1) + 1)
+      if (reqToken.current !== token) return
+      setAllResults((prev) => prev.map((e) => (e.sourceId === r.sourceId ? { ...e, ...res, items: [...e.items, ...res.items] } : e)))
+    } catch (e) {
+      if (reqToken.current === token) setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (reqToken.current === token) setLoading(false)
+    }
+  }
+
   const hasResults = mode === 'all' ? allResults.length > 0 : (single?.items.length ?? 0) > 0
 
   return (
@@ -432,7 +450,7 @@ function SearchTab({ runtime, sources }: { runtime: AppRuntime; sources: Source[
               <MediaGrid>{r.items.map((m) => <MediaCard key={m.id} media={m} />)}</MediaGrid>
             )}
             {r.hasNextPage && (
-              <Btn variant="outline" className="mt-4 w-full" onClick={() => run((r.page ?? 1) + 1)} disabled={loading}>
+              <Btn variant="outline" className="mt-4 w-full" onClick={() => void loadMoreSource(r)} disabled={loading}>
                 {loading ? t('common.loading') : t('browse.loadMoreFrom', { name: r.sourceName })}
               </Btn>
             )}
