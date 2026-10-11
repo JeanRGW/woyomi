@@ -47,11 +47,15 @@ type ActiveAsset = {
 }
 
 const pollDelayMs = 300
+/** No byte progress for this long means the native asset is wedged; fail it so the queue can proceed. */
+const stallTimeoutMs = 60_000
+/** How long removed fileIds are remembered to guard against late async writes. */
+const removedRetentionMs = 10 * 60 * 1000
 
 export class DownloadManager {
   private listeners = new Set<() => void>()
   private pendingPages = new Map<string, { images: string[]; headers?: Record<string, string> }>()
-  private removedFileIds = new Set<string>()
+  private removedFileIds = new Map<string, number>()
   private processing = false
   private active: ActiveAsset | undefined
 
@@ -62,12 +66,16 @@ export class DownloadManager {
   ) {}
 
   async initialize(): Promise<void> {
-    for (const record of await this.store.list()) {
+    const records = await this.store.list()
+    for (const record of records) {
       if (record.state === 'downloading') {
         const resetVideo = record.kind === 'mp4' ? { downloadedBytes: 0 } : {}
         await this.save({ ...record, ...resetVideo, state: 'queued', totalBytes: undefined })
       }
     }
+    // Best-effort startup sweep of .part leftovers and orphaned download
+    // directories (crash or removal race left them behind).
+    await this.invoke('cleanup_downloads', { args: { keepFileIds: records.map((record) => record.fileId) } }).catch(() => undefined)
     this.kick()
   }
 
@@ -162,7 +170,7 @@ export class DownloadManager {
     const record = await this.store.get(id)
     if (!record) return
 
-    this.removedFileIds.add(record.fileId)
+    this.markRemoved(record.fileId)
     this.pendingPages.delete(record.fileId)
     const active = this.active
     if (active?.fileId === record.fileId) {
@@ -310,6 +318,8 @@ export class DownloadManager {
     this.active = { fileId: record.fileId, index, completedBytes, started }
     await started
 
+    let lastReportedBytes = -1
+    let lastProgressAt = Date.now()
     while (true) {
       await delay(pollDelayMs)
       if (this.isRemoved(record)) throw new Error('download removed')
@@ -323,6 +333,12 @@ export class DownloadManager {
       const downloadedBytes = completedBytes + status.downloadedBytes
       const totalBytes = status.totalBytes === undefined ? undefined : completedBytes + status.totalBytes
       if (status.state === 'downloading') {
+        if (status.downloadedBytes !== lastReportedBytes) {
+          lastReportedBytes = status.downloadedBytes
+          lastProgressAt = Date.now()
+        } else if (Date.now() - lastProgressAt > stallTimeoutMs) {
+          throw new Error('download stalled: no progress')
+        }
         record = await this.save({ ...record, downloadedBytes, totalBytes })
         continue
       }
@@ -369,7 +385,20 @@ export class DownloadManager {
   }
 
   private isRemoved(record: DownloadRecord): boolean {
+    this.pruneRemovedFileIds()
     return this.removedFileIds.has(record.fileId)
+  }
+
+  private markRemoved(fileId: string): void {
+    this.pruneRemovedFileIds()
+    this.removedFileIds.set(fileId, Date.now())
+  }
+
+  private pruneRemovedFileIds(): void {
+    const cutoff = Date.now() - removedRetentionMs
+    for (const [fileId, removedAt] of this.removedFileIds) {
+      if (removedAt < cutoff) this.removedFileIds.delete(fileId)
+    }
   }
 
   private notify(): void {

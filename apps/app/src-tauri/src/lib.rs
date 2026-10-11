@@ -551,6 +551,12 @@ struct RemoveDownloadFilesArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CleanupDownloadsArgs {
+    keep_file_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CacheCoverImageArgs {
     url: String,
     #[serde(default)]
@@ -752,6 +758,10 @@ async fn start_download_asset(
     {
         return Err("asset is already downloading".to_string());
     }
+    // Terminal entries are finished tasks (status is only set once the task
+    // stops writing), so they can be dropped before inserting the new job —
+    // otherwise the map grows by one entry per asset over a session.
+    job_map.retain(|_, job| job.status.state == DownloadState::Downloading);
     job_map.insert(
         key.clone(),
         DownloadJob {
@@ -780,7 +790,11 @@ async fn start_download_asset(
         )
         .await
         {
-            let _ = tokio::fs::remove_file(&part_path).await;
+            if let Err(error) = tokio::fs::remove_file(&part_path).await {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("downloads: clean up partial download: {error}");
+                }
+            }
             let mut jobs = jobs.lock().await;
             if let Some(job) = jobs.get_mut(&key) {
                 if *job.cancel.borrow() {
@@ -923,16 +937,103 @@ async fn cancel_download_asset(
 async fn remove_download_files(
     webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     args: RemoveDownloadFilesArgs,
 ) -> Result<(), String> {
     require_main_webview(&webview)?;
     validate_file_id(&args.file_id)?;
+    // Cancel any in-flight asset for this file and wait for its task to stop
+    // writing before deleting: the task recreates directories and .part files
+    // as it runs, which would orphan files the app no longer tracks. Terminal
+    // job status is only set after the task's last write, so "not downloading"
+    // means the disk is quiet.
+    {
+        let mut jobs = state.jobs.lock().await;
+        for (key, job) in jobs.iter_mut() {
+            if key.0 == args.file_id && job.status.state == DownloadState::Downloading {
+                let _ = job.cancel.send(true);
+            }
+        }
+    }
+    for _ in 0..100 {
+        {
+            let jobs = state.jobs.lock().await;
+            let active = jobs
+                .iter()
+                .any(|(key, job)| key.0 == args.file_id && job.status.state == DownloadState::Downloading);
+            if !active {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    {
+        let mut jobs = state.jobs.lock().await;
+        jobs.retain(|key, _| key.0 != args.file_id);
+    }
     let directory = downloads_root(&app)?.join(args.file_id);
     match tokio::fs::remove_dir_all(directory).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("remove download files: {error}")),
     }
+}
+
+/// Startup sweep: drop `.part` leftovers inside kept download directories and
+/// delete directories whose record no longer exists (crash or removal race).
+#[tauri::command]
+async fn cleanup_downloads(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    args: CleanupDownloadsArgs,
+) -> Result<(), String> {
+    require_main_webview(&webview)?;
+    let root = downloads_root(&app)?;
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("list downloads: {error}")),
+    };
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("list downloads: {e}"))?
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if !args.keep_file_ids.iter().any(|id| *id == name) {
+            if let Err(error) = tokio::fs::remove_dir_all(&path).await {
+                eprintln!("downloads: remove orphaned directory: {error}");
+            }
+            continue;
+        }
+        // Kept record: only stale .part files inside are garbage.
+        let mut files = match tokio::fs::read_dir(&path).await {
+            Ok(files) => files,
+            Err(error) => {
+                eprintln!("downloads: list download directory: {error}");
+                continue;
+            }
+        };
+        while let Some(file) = files.next_entry().await.transpose() {
+            let file = match file {
+                Ok(file) => file,
+                Err(error) => {
+                    eprintln!("downloads: list download directory: {error}");
+                    break;
+                }
+            };
+            if file.file_name().to_string_lossy().ends_with(".part") {
+                if let Err(error) = tokio::fs::remove_file(file.path()).await {
+                    eprintln!("downloads: remove stale partial download: {error}");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Base URL of the localhost media-stream proxy. The player points the <video>
@@ -1628,6 +1729,7 @@ pub fn run() {
             download_asset_status,
             cancel_download_asset,
             remove_download_files,
+            cleanup_downloads,
             stream_proxy_base,
             cache_cover_image,
             remove_cached_cover

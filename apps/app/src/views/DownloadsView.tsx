@@ -5,6 +5,7 @@ import { Btn, DownloadRowSkeleton, EmptyState, Page, PageHeader } from '../compo
 import type { DownloadRecord, DownloadState } from '../downloads'
 import { Icon } from '../icons'
 import { useLocale, useT } from '../i18n'
+import { useToast } from '../toast'
 import type { MessageKey } from '../i18n/messages'
 import type { AppRuntime } from '../runtime'
 
@@ -42,6 +43,7 @@ function downloadProgress(record: DownloadRecord): number {
 
 export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
   const t = useT()
+  const { showToast } = useToast()
   const locale = useLocale()
   const manager = runtime.downloads
   const [records, setRecords] = useState<DownloadRecord[]>([])
@@ -141,7 +143,11 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
                     <Btn
                       variant="soft"
                       className="size-10 px-0"
-                      onClick={() => void manager?.retry(record.id)}
+                      onClick={() => {
+                        void manager?.retry(record.id).catch((error: unknown) => {
+                          showToast(error instanceof Error ? error.message : String(error), { tone: 'error' })
+                        })
+                      }}
                       aria-label={t('downloads.retry')}
                       title={t('downloads.retry')}
                     >
@@ -151,9 +157,14 @@ export function DownloadsView({ runtime }: { runtime: AppRuntime }) {
                   <Btn
                     variant="danger"
                     className="size-10 px-0"
-                      onClick={() =>
-                        void manager?.remove(record.id).then(() => runtime.cleanupMediaPage(record.media.id))
-                      }
+                      onClick={() => {
+                        void manager
+                          ?.remove(record.id)
+                          .then(() => runtime.cleanupMediaPage(record.media.id))
+                          .catch((error: unknown) => {
+                            showToast(error instanceof Error ? error.message : String(error), { tone: 'error' })
+                          })
+                      }}
                     disabled={!manager}
                     aria-label={t('downloads.remove')}
                     title={t('downloads.remove')}
