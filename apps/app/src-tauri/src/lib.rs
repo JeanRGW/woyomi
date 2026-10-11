@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::{Arc, AtomicUsize, Mutex as StdMutex, OnceLock, Ordering};
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{oneshot, watch, Mutex};
@@ -937,29 +937,72 @@ async fn remove_download_files(
 
 /// Base URL of the localhost media-stream proxy. The player points the <video>
 /// at `{base}/stream?url=...&headers=...` so header-gated streams (e.g. a
-/// Referer) play; the proxy forwards Range for seeking.
+/// Referer) play; the proxy forwards Range for seeking. The base embeds the
+/// per-process auth token every proxy URL must carry.
 #[tauri::command]
 fn stream_proxy_base(
     webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     require_main_webview(&webview)?;
-    let port = stream_proxy_port(downloads_root(&app)?)?;
-    Ok(format!("http://127.0.0.1:{}", port))
+    let proxy = stream_proxy(downloads_root(&app)?)?;
+    Ok(format!("http://127.0.0.1:{}/t/{}", proxy.port, proxy.token))
+}
+
+struct StreamProxy {
+    port: u16,
+    token: String,
+}
+
+/// Random per-process secret: the proxy serves private downloads and open
+/// forwarding, so every request must prove it comes from the app itself.
+/// (A page in the capability-less dom-renderer webview can reach 127.0.0.1
+/// but never learns this token.)
+fn generate_proxy_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("proxy token: {e}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Constant-time byte comparison for the auth token.
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Every non-OPTIONS request must be `/t/<token>/<route>`.
+fn request_authorized(request_url: &str, token: &str) -> bool {
+    let path = request_url.split('?').next().unwrap_or("");
+    let mut segments = path.split('/');
+    segments.next(); // empty part before the leading '/'
+    let prefix = segments.next().unwrap_or("");
+    let supplied = segments.next().unwrap_or("");
+    let route = segments.next().unwrap_or("");
+    prefix == "t" && token_eq(supplied, token) && !route.is_empty()
 }
 
 /// Ephemeral localhost HTTP proxy that streams media with custom headers (e.g.
 /// a required Referer) and forwards Range so the <video> can seek.
 /// Bound to 127.0.0.1 on an ephemeral port; started on first use. Startup
 /// errors stay recoverable so the app can still use raw media URLs.
-fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
-    static PORT: OnceLock<StdMutex<Option<u16>>> = OnceLock::new();
-    let port = PORT.get_or_init(|| StdMutex::new(None));
-    let mut current = port
+fn stream_proxy(downloads_root: PathBuf) -> Result<StreamProxy, String> {
+    static PROXY: OnceLock<StdMutex<Option<StreamProxy>>> = OnceLock::new();
+    let proxy = PROXY.get_or_init(|| StdMutex::new(None));
+    let mut current = proxy
         .lock()
-        .map_err(|_| "stream proxy port lock poisoned".to_string())?;
-    if let Some(port) = *current {
-        return Ok(port);
+        .map_err(|_| "stream proxy lock poisoned".to_string())?;
+    if let Some(proxy) = current.as_ref() {
+        return Ok(StreamProxy {
+            port: proxy.port,
+            token: proxy.token.clone(),
+        });
     }
 
     let server =
@@ -969,6 +1012,7 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
         .to_ip()
         .ok_or_else(|| "stream proxy address is not an IP address".to_string())?
         .port();
+    let token = generate_proxy_token()?;
     // No total timeout on the proxy — a 122MB stream must not be aborted
     // mid-download like the 15s fetch_url client would. The async client's
     // per-read timeout instead drops connections that go silent (a stalled
@@ -983,12 +1027,29 @@ fn stream_proxy_port(downloads_root: PathBuf) -> Result<u16, String> {
         .read_timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("build stream proxy client: {e}"))?;
+    let serve_token = token.clone();
     let _stream_proxy = std::thread::Builder::new()
         .name("woyomi-stream-proxy".to_string())
-        .spawn(move || serve_streams(server, downloads_root, Arc::new(runtime), client))
+        .spawn(move || serve_streams(server, downloads_root, Arc::new(runtime), client, serve_token))
         .map_err(|e| format!("start stream proxy: {e}"))?;
-    *current = Some(port);
-    Ok(port)
+    *current = Some(StreamProxy {
+        port,
+        token: token.clone(),
+    });
+    Ok(StreamProxy { port, token })
+}
+
+/// Upper bound on concurrent proxy request threads: an unbounded spawn-per-
+/// request lets a local caller exhaust memory via many large buffering bodies.
+static ACTIVE_PROXY_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+const MAX_PROXY_REQUESTS: usize = 16;
+
+struct ActiveProxyRequest;
+
+impl Drop for ActiveProxyRequest {
+    fn drop(&mut self) {
+        ACTIVE_PROXY_REQUESTS.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn serve_streams(
@@ -996,20 +1057,41 @@ fn serve_streams(
     downloads_root: PathBuf,
     runtime: Arc<tokio::runtime::Runtime>,
     client: reqwest::Client,
+    token: String,
 ) {
     for request in server.incoming_requests() {
         let client = client.clone();
         let runtime = runtime.clone();
         let downloads_root = downloads_root.clone();
+        let token = token.clone();
+        if ACTIVE_PROXY_REQUESTS.fetch_add(1, Ordering::SeqCst) >= MAX_PROXY_REQUESTS {
+            ACTIVE_PROXY_REQUESTS.fetch_sub(1, Ordering::SeqCst);
+            let _ = request.respond(tiny_http::Response::empty(503));
+            continue;
+        }
         let _ = std::thread::spawn(move || {
+            let _active = ActiveProxyRequest;
             let result = if matches!(request.method(), tiny_http::Method::Options) {
                 respond_stream_preflight(request)
-            } else if request.url().starts_with("/offline/") {
-                serve_offline(&downloads_root, request)
-            } else if request.url().starts_with("/covers/") {
-                serve_cover(&downloads_root, request)
+            } else if !matches!(
+                request.method(),
+                tiny_http::Method::Get | tiny_http::Method::Head
+            ) {
+                request
+                    .respond(tiny_http::Response::empty(405))
+                    .map_err(|e| format!("respond: {e}"))
+            } else if !request_authorized(request.url(), &token) {
+                request
+                    .respond(tiny_http::Response::empty(401))
+                    .map_err(|e| format!("respond: {e}"))
+            } else if request.url().starts_with(&format!("/t/{token}/offline/")) {
+                serve_offline(&downloads_root, &token, request)
+            } else if request.url().starts_with(&format!("/t/{token}/covers/")) {
+                serve_cover(&downloads_root, &token, request)
+            } else if request.url().starts_with(&format!("/t/{token}/stream")) {
+                proxy_one(runtime, &client, &token, request)
             } else {
-                proxy_one(runtime, &client, request)
+                respond_empty(request, 404)
             };
             if let Err(error) = result {
                 eprintln!("stream proxy: {error}");
@@ -1018,7 +1100,7 @@ fn serve_streams(
     }
 }
 
-fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
+fn serve_cover(downloads_root: &Path, token: &str, request: tiny_http::Request) -> Result<(), String> {
     if !matches!(
         request.method(),
         tiny_http::Method::Get | tiny_http::Method::Head
@@ -1035,6 +1117,9 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         Some(segments) => segments,
         None => return respond_empty(request, 404),
     };
+    if segments.next() != Some("t") || segments.next() != Some(token) {
+        return respond_empty(request, 401);
+    }
     if segments.next() != Some("covers") {
         return respond_empty(request, 404);
     }
@@ -1081,15 +1166,33 @@ fn serve_cover(downloads_root: &Path, request: tiny_http::Request) -> Result<(),
         .map_err(|e| format!("respond: {e}"))
 }
 
+/// Only content-fetch headers may be forwarded upstream. Framing/host headers
+/// would corrupt the request or impersonate the upstream; authorization must
+/// never leave the app. Plugins legitimately need Referer/Cookie/User-Agent
+/// for hotlink-protected media.
+const ALLOWED_PROXY_HEADERS: &[&str] = &[
+    "referer",
+    "cookie",
+    "user-agent",
+    "accept",
+    "accept-language",
+    "origin",
+];
+
 fn proxy_one(
     runtime: Arc<tokio::runtime::Runtime>,
     client: &reqwest::Client,
+    token: &str,
     request: tiny_http::Request,
 ) -> Result<(), String> {
     // tiny_http gives the path+query (relative); parse against a dummy base so
     // the query string (url + headers) is reachable.
     let parsed = url::Url::parse(&format!("http://127.0.0.1{}", request.url()))
         .map_err(|e| format!("bad request url: {e}"))?;
+    let expected_path = format!("/t/{token}/stream");
+    if parsed.path() != expected_path.as_str() {
+        return respond_empty(request, 404);
+    }
     let target = parsed
         .query_pairs()
         .find(|(k, _)| k == "url")
@@ -1105,6 +1208,9 @@ fn proxy_one(
 
     let mut builder = client.get(&target);
     for (k, v) in headers {
+        if !ALLOWED_PROXY_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+            continue;
+        }
         builder = builder.header(k, v);
     }
     // Forward Range so seeking works on the proxy URL.
@@ -1256,7 +1362,11 @@ fn respond_stream_failure(request: tiny_http::Request) -> Result<(), String> {
         .map_err(|e| format!("respond: {e}"))
 }
 
-fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(), String> {
+fn serve_offline(
+    downloads_root: &Path,
+    token: &str,
+    request: tiny_http::Request,
+) -> Result<(), String> {
     if !matches!(
         request.method(),
         tiny_http::Method::Get | tiny_http::Method::Head
@@ -1274,6 +1384,9 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         Some(segments) => segments,
         None => return respond_empty(request, 404),
     };
+    if segments.next() != Some("t") || segments.next() != Some(token) {
+        return respond_empty(request, 401);
+    }
     if segments.next() != Some("offline") {
         return respond_empty(request, 404);
     }
@@ -1309,8 +1422,17 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         .map(|header| header.value.as_str());
     let (status, start, end) = match range_header {
         Some(value) => match parse_range(value, file_len) {
-            Some((start, end)) => (206, start, end),
-            None => return respond_range_not_satisfiable(request, file_len),
+            RangeOutcome::Satisfiable(start, end) => (206, start, end),
+            RangeOutcome::Unsatisfiable => return respond_range_not_satisfiable(request, file_len),
+            // Malformed or multi-range requests are ignored per RFC 7233
+            // (players probe with both and mishandle a 416 here).
+            RangeOutcome::Ignore => {
+                if file_len > 0 {
+                    (200, 0, file_len - 1)
+                } else {
+                    (200, 0, 0)
+                }
+            }
         },
         None if file_len > 0 => (200, 0, file_len - 1),
         None => (200, 0, 0),
@@ -1325,12 +1447,7 @@ fn serve_offline(downloads_root: &Path, request: tiny_http::Request) -> Result<(
         .query_pairs()
         .find(|(key, _)| key == "type")
         .map(|(_, value)| value.into_owned())
-        .filter(|value| {
-            !value.is_empty()
-                && value.is_ascii()
-                && !value.bytes().any(|byte| byte.is_ascii_control())
-                && value.contains('/')
-        })
+        .filter(|value| allowed_content_type(value))
         .unwrap_or_else(|| "application/octet-stream".to_string());
     let mut headers = vec![
         response_header("Content-Type", &content_type)?,
@@ -1393,33 +1510,91 @@ fn respond_range_not_satisfiable(request: tiny_http::Request, file_len: u64) -> 
         .map_err(|e| format!("respond: {e}"))
 }
 
-fn parse_range(value: &str, file_len: u64) -> Option<(u64, u64)> {
-    let (unit, range) = value.split_once('=')?;
+#[derive(Debug, PartialEq, Eq)]
+enum RangeOutcome {
+    Satisfiable(u64, u64),
+    /// Well-formed but beyond EOF: answer 416.
+    Unsatisfiable,
+    /// Malformed or multi-range: ignore the header and serve 200 (RFC 7233).
+    Ignore,
+}
+
+fn parse_range(value: &str, file_len: u64) -> RangeOutcome {
+    let Some((unit, range)) = value.split_once('=') else {
+        return RangeOutcome::Ignore;
+    };
     if !unit.eq_ignore_ascii_case("bytes") {
-        return None;
+        return RangeOutcome::Ignore;
     }
-    if file_len == 0 || range.contains(',') {
-        return None;
+    if range.contains(',') {
+        return RangeOutcome::Ignore;
     }
-    let (start, end) = range.split_once('-')?;
+    let Some((start, end)) = range.split_once('-') else {
+        return RangeOutcome::Ignore;
+    };
     if start.is_empty() {
-        let suffix = end.parse::<u64>().ok()?;
-        if suffix == 0 {
-            return None;
+        let Ok(suffix) = end.parse::<u64>() else {
+            return RangeOutcome::Ignore;
+        };
+        if suffix == 0 || file_len == 0 {
+            return RangeOutcome::Unsatisfiable;
         }
-        return Some((file_len.saturating_sub(suffix), file_len - 1));
+        return RangeOutcome::Satisfiable(file_len.saturating_sub(suffix), file_len - 1);
     }
 
-    let start = start.parse::<u64>().ok()?;
-    if start >= file_len {
-        return None;
+    let Ok(start) = start.parse::<u64>() else {
+        return RangeOutcome::Ignore;
+    };
+    if file_len == 0 || start >= file_len {
+        return RangeOutcome::Unsatisfiable;
     }
     let end = if end.is_empty() {
         file_len - 1
     } else {
-        end.parse::<u64>().ok()?.min(file_len - 1)
+        let Ok(end) = end.parse::<u64>() else {
+            return RangeOutcome::Ignore;
+        };
+        end.min(file_len - 1)
     };
-    (start <= end).then_some((start, end))
+    if start <= end {
+        RangeOutcome::Satisfiable(start, end)
+    } else {
+        RangeOutcome::Ignore
+    }
+}
+
+/// Content types the offline file server will serve verbatim. Anything else
+/// falls back to `application/octet-stream`: active document types (html, xhtml,
+/// svg, xml, script, pdf) must never be served from the localhost origin, while
+/// every media/manifest type the player and reader use stays allowed.
+fn allowed_content_type(value: &str) -> bool {
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+        return false;
+    }
+    let mime = value
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if mime.is_empty() || !mime.contains('/') {
+        return false;
+    }
+    if let Some(kind) = mime.strip_prefix("image/") {
+        return kind != "svg+xml";
+    }
+    if mime.starts_with("video/") || mime.starts_with("audio/") {
+        return true;
+    }
+    matches!(
+        mime.as_str(),
+        "text/plain"
+            | "text/vtt"
+            | "application/octet-stream"
+            | "application/x-mpegurl"
+            | "application/vnd.apple.mpegurl"
+            | "application/dash+xml"
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1464,8 +1639,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        dom_selector_script, dom_snapshot_script, parse_range, validate_cover_hash,
-        validate_file_id, DomRenderer,
+        allowed_content_type, dom_selector_script, dom_snapshot_script, parse_range, request_authorized,
+        token_eq, validate_cover_hash, validate_file_id, DomRenderer, RangeOutcome,
     };
 
     #[test]
@@ -1504,24 +1679,65 @@ mod tests {
 
     #[test]
     fn parses_single_byte_ranges() {
-        assert_eq!(parse_range("bytes=2-5", 10), Some((2, 5)));
-        assert_eq!(parse_range("BYTES=2-5", 10), Some((2, 5)));
-        assert_eq!(parse_range("bytes=7-", 10), Some((7, 9)));
-        assert_eq!(parse_range("bytes=-3", 10), Some((7, 9)));
-        assert_eq!(parse_range("bytes=-20", 10), Some((0, 9)));
-        assert_eq!(parse_range("bytes=2-20", 10), Some((2, 9)));
+        assert_eq!(parse_range("bytes=2-5", 10), RangeOutcome::Satisfiable(2, 5));
+        assert_eq!(parse_range("BYTES=2-5", 10), RangeOutcome::Satisfiable(2, 5));
+        assert_eq!(parse_range("bytes=7-", 10), RangeOutcome::Satisfiable(7, 9));
+        assert_eq!(parse_range("bytes=-3", 10), RangeOutcome::Satisfiable(7, 9));
+        assert_eq!(parse_range("bytes=-20", 10), RangeOutcome::Satisfiable(0, 9));
+        assert_eq!(parse_range("bytes=2-20", 10), RangeOutcome::Satisfiable(2, 9));
 
-        for invalid in [
-            "items=0-1",
-            "bytes=",
-            "bytes=1",
-            "bytes=5-2",
-            "bytes=10-",
-            "bytes=-0",
-            "bytes=0-1,3-4",
-        ] {
-            assert_eq!(parse_range(invalid, 10), None, "{invalid}");
+        // Malformed and multi-range probes are ignored (serve 200) per RFC 7233.
+        for ignored in ["items=0-1", "bytes=", "bytes=1", "bytes=5-2", "bytes=0-1,3-4", "bytes=x-y"] {
+            assert_eq!(parse_range(ignored, 10), RangeOutcome::Ignore, "{ignored}");
         }
-        assert_eq!(parse_range("bytes=0-", 0), None);
+        // Well-formed but beyond EOF is the only 416 case.
+        for unsatisfiable in ["bytes=10-", "bytes=-0"] {
+            assert_eq!(parse_range(unsatisfiable, 10), RangeOutcome::Unsatisfiable, "{unsatisfiable}");
+        }
+        assert_eq!(parse_range("bytes=0-", 0), RangeOutcome::Unsatisfiable);
+    }
+
+    #[test]
+    fn authorizes_only_matching_proxy_tokens() {
+        assert!(request_authorized("/t/abc123/stream?url=x", "abc123"));
+        assert!(request_authorized("/t/abc123/offline/f/0?type=image%2Fpng", "abc123"));
+        assert!(!request_authorized("/t/wrong/stream?url=x", "abc123"));
+        assert!(!request_authorized("/stream?url=x", "abc123"));
+        assert!(!request_authorized("/t/abc123", "abc123"));
+        assert!(!request_authorized("", "abc123"));
+        assert!(token_eq("abc123", "abc123"));
+        assert!(!token_eq("abc123", "abc124"));
+        assert!(!token_eq("abc123", "abc12"));
+    }
+
+    #[test]
+    fn gates_offline_content_types() {
+        for allowed in [
+            "image/jpeg",
+            "image/png; charset=binary",
+            "video/mp4",
+            "audio/mpeg",
+            "text/plain",
+            "text/vtt",
+            "application/octet-stream",
+            "application/vnd.apple.mpegurl",
+            "application/dash+xml",
+        ] {
+            assert!(allowed_content_type(allowed), "{allowed}");
+        }
+        for blocked in [
+            "text/html",
+            "application/xhtml+xml",
+            "image/svg+xml",
+            "text/xml",
+            "application/xml",
+            "application/pdf",
+            "text/javascript",
+            "",
+            "nonsense",
+            "text/html\u{7}x",
+        ] {
+            assert!(!allowed_content_type(blocked), "{blocked}");
+        }
     }
 }
