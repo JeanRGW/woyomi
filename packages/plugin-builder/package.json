@@ -53,7 +53,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "clean": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist', { recursive: true, force: true })\"",

@@ -114,9 +114,15 @@ importers:
       '@woyomi/core':
         specifier: workspace:*
         version: link:../../packages/core
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       hono:
         specifier: ^4.6.14
         version: 4.13.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.5
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -127,12 +133,6 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^3.2.7
         version: 3.2.7(vitest@3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@30.1.2)(lightningcss@1.32.0)(tsx@4.23.5))
-      dotenv:
-        specifier: ^17.4.2
-        version: 17.4.2
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

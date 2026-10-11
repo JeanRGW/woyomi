@@ -1,6 +1,6 @@
 import { build } from 'esbuild'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { PluginManifest } from '@woyomi/core'
 import { API_VERSION, validateManifest } from '@woyomi/core'
@@ -46,6 +46,9 @@ export async function buildPlugin(opts: BuildOptions): Promise<{ pluginJs: strin
   if (!code) throw new Error('esbuild produced no output')
 
   // Evaluate the bundle in-process to capture + validate the registration.
+  // Trusted-input boundary: plugin sources are first-party here (the app
+  // installs third-party bundles in a Web Worker sandbox instead). Keep this
+  // eval to build-time manifest capture only.
   const captured: { manifest: unknown }[] = []
   const prev = (globalThis as Record<string, unknown>)[REGISTER_KEY]
   ;(globalThis as Record<string, unknown>)[REGISTER_KEY] = (reg: { manifest: unknown }) => captured.push(reg)
@@ -73,8 +76,16 @@ export async function buildPlugin(opts: BuildOptions): Promise<{ pluginJs: strin
 
   await mkdir(outDir, { recursive: true })
   const sha256 = createHash('sha256').update(code).digest('hex')
-  await writeFile(join(outDir, finalManifest.entry), code)
-  await writeFile(join(outDir, `${finalManifest.id}.plugin.json`), JSON.stringify({ ...finalManifest, sha256 }, null, 2))
+  // tmp + rename so an interrupted build never leaves half-written artifacts
+  // in outDir (generateRepoIndex would happily index them).
+  await writeAtomic(join(outDir, finalManifest.entry), code)
+  await writeAtomic(join(outDir, `${finalManifest.id}.plugin.json`), JSON.stringify({ ...finalManifest, sha256 }, null, 2))
 
   return { pluginJs: code, manifest: finalManifest, sha256 }
+}
+
+async function writeAtomic(path: string, data: string): Promise<void> {
+  const tmp = `${path}.tmp`
+  await writeFile(tmp, data)
+  await rename(tmp, path)
 }

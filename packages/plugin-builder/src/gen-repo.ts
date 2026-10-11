@@ -1,5 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { validateManifest } from '@woyomi/core'
 
 /**
  * Generates a Mihon/Aniyomi-style repo `index.json` from a directory of
@@ -14,18 +16,17 @@ export async function generateRepoIndex(pluginDir: string, outfile = 'index.json
   const plugins = []
   for (const f of files) {
     if (!f.endsWith('.plugin.json')) continue
-    const manifest = JSON.parse(await readFile(join(pluginDir, f), 'utf8')) as {
-      id: string
-      name: string
-      version: string
-      apiVersion: number
-      lang?: string | string[]
-      nsfw?: boolean
-      description?: string
-      mediaTypes: string[]
-      entry: string
-      sha256: string
-      icon?: string
+    const raw = JSON.parse(await readFile(join(pluginDir, f), 'utf8')) as { icon?: string; sha256?: string }
+    const manifest = validateManifest(raw)
+    // The sidecar's sha256 is copied into the index as the install-time
+    // integrity check — re-hash the actual bundle so a drifted artifact can
+    // never be published as "verified".
+    const sidecarSha = raw.sha256
+    if (!sidecarSha) throw new Error(`${f}: sidecar is missing sha256`)
+    const bundle = await readFile(join(pluginDir, manifest.entry))
+    const actual = createHash('sha256').update(bundle).digest('hex')
+    if (actual !== sidecarSha) {
+      throw new Error(`${f}: sha256 mismatch for ${manifest.entry} (sidecar ${sidecarSha}, actual ${actual})`)
     }
     plugins.push({
       id: manifest.id,
@@ -37,7 +38,7 @@ export async function generateRepoIndex(pluginDir: string, outfile = 'index.json
       description: manifest.description,
       mediaTypes: manifest.mediaTypes,
       file: manifest.entry,
-      sha256: manifest.sha256
+      sha256: sidecarSha
     })
   }
   const index = { name: 'woyomi Repo', plugins }
