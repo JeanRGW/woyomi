@@ -66,7 +66,7 @@ export function makeSyncingStore(store: LibraryStore, markDirty: () => void): Li
   return new Proxy(store, {
     get(target, prop, receiver) {
       const method = Reflect.get(target, prop, receiver)
-      if (typeof prop === 'string' && prop in WRITE_METHODS) {
+      if (typeof prop === 'string' && Object.hasOwn(WRITE_METHODS, prop)) {
         return ((...args: never[]) => {
           const result = (method as (...a: never[]) => unknown).apply(target, args)
           if (result instanceof Promise) {

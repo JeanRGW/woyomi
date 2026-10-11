@@ -3,8 +3,10 @@ import DOMPurify from 'dompurify'
 /**
  * Sanitize untrusted HTML (plugin-provided synopses and chapter bodies) before it
  * is injected via `dangerouslySetInnerHTML`. Scripts, event handlers, frames,
- * forms, style attributes and non-http(s) URLs are stripped; only conservative
- * formatting elements and attributes survive.
+ * forms and style attributes are stripped; only conservative formatting
+ * elements and attributes survive. URL attributes fall back to DOMPurify's
+ * default scheme policy (http(s), mailto/tel/etc.; `data:` only where
+ * DOMPurify allows it for media), so no script-capable URL survives.
  */
 const ALLOWED_TAGS = [
   'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em', 'figcaption', 'figure',
