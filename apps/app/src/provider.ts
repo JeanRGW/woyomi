@@ -96,7 +96,13 @@ export async function fetchRepoIndex(fetch: FetchFn, repoUrl: string): Promise<R
   const indexUrl = repoUrl.endsWith('/index.json') ? repoUrl : repoUrl.endsWith('/') ? repoUrl + 'index.json' : repoUrl + '/index.json'
   const res = await fetch(indexUrl)
   if (res.status < 200 || res.status >= 300) throw new Error(`repo ${repoUrl} -> HTTP ${res.status}`)
-  const parsed = RepoIndexSchema.safeParse(JSON.parse(res.body))
+  let raw: unknown
+  try {
+    raw = JSON.parse(res.body)
+  } catch {
+    throw new Error(`invalid repo index from ${repoUrl}: not valid JSON`)
+  }
+  const parsed = RepoIndexSchema.safeParse(raw)
   if (!parsed.success) throw new Error(`invalid repo index: ${parsed.error.message}`)
   const base = repoBase(indexUrl)
   return parsed.data.plugins.map((p) => ({

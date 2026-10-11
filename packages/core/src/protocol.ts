@@ -42,6 +42,13 @@ export const StreamSourceSchema = z.object({
   headers: z.record(z.string()).optional()
 })
 
+/** Shape of the native fetch_url command's response, validated at the IPC boundary. */
+export const FetchResultSchema = z.object({
+  status: z.number(),
+  headers: z.record(z.string()),
+  body: z.string()
+})
+
 export const SearchResultsSchema = z.object({
   page: z.number(),
   hasNextPage: z.boolean(),
