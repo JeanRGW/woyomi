@@ -92,7 +92,13 @@ async fn fetch_url(
         req = req.body(b.clone());
     }
 
-    let mut resp = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let mut resp = req
+        .send()
+        .await
+        // Error-message prefixes "fetch failed:"/"read body:" are a stable
+        // contract: the web app classifies network failures by them
+        // (apps/app/src/scrape.ts `isNetworkError`). Keep them on rename.
+        .map_err(|e| format!("fetch failed: {e}"))?;
     let status = resp.status().as_u16();
     let mut headers = HashMap::new();
     for (k, v) in resp.headers() {
