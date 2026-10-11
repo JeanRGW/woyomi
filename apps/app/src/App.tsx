@@ -27,7 +27,7 @@ export type Route =
   | { name: 'settings' }
   | { name: 'plugin-settings' }
 
-function parseHash(hash: string): Route {
+export function parseHash(hash: string): Route {
   const [path, ...rest] = hash.replace(/^#\/?/, '').split('/')
   switch (path) {
     case 'media':

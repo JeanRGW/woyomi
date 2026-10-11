@@ -86,6 +86,65 @@ async function waitForState(store: DownloadStore, id: string, state: DownloadSta
 }
 
 describe('DownloadManager', () => {
+  it('re-queues a failed download for retry and completes it', async () => {
+    const failed: DownloadRecord = {
+      id: episode.id,
+      fileId: 'retry-file',
+      media,
+      episode,
+      kind: 'pages',
+      state: 'failed',
+      assetCount: 1,
+      completedAssets: 0,
+      downloadedBytes: 0,
+      contentTypes: [],
+      error: 'previous failure',
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const { store } = memoryStore([failed])
+    const { engine } = engineMock({ type: 'pages', images: ['https://img.test/1.jpg'] })
+    const { invoke } = nativeInvoke()
+    const manager = new DownloadManager(engine, store, invoke)
+
+    const record = await manager.retry(episode.id)
+    expect(record?.state).toBe('queued')
+    expect(record?.error).toBeUndefined()
+    await waitForState(store, episode.id, 'complete')
+  })
+
+  it('cancels the active asset and removes its files on remove()', async () => {
+    const { store } = memoryStore()
+    const { engine } = engineMock({ type: 'pages', images: ['https://img.test/1.jpg'] })
+    let cancelled = false
+    const removedFileIds: string[] = []
+    const invoke = vi.fn(async (command: string, input?: { args: Record<string, unknown> }): Promise<unknown> => {
+      if (command === 'start_download_asset') return undefined
+      if (command === 'download_asset_status') {
+        return cancelled
+          ? { state: 'cancelled', downloadedBytes: 0 }
+          : { state: 'downloading', downloadedBytes: 0, totalBytes: 10 }
+      }
+      if (command === 'cancel_download_asset') {
+        cancelled = true
+        return undefined
+      }
+      if (command === 'remove_download_files') {
+        removedFileIds.push(String(input?.args.fileId))
+        return undefined
+      }
+      throw new Error(`unexpected invoke: ${command}`)
+    })
+    const manager = new DownloadManager(engine, store, invoke)
+    const record = await manager.enqueueReader(media, episode)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('start_download_asset', expect.anything()))
+
+    await manager.remove(record.id)
+
+    expect(await store.get(record.id)).toBeUndefined()
+    expect(removedFileIds).toContain(record.fileId)
+  })
+
   it('persists text as complete and serves saved HTML without native assets', async () => {
     const { store } = memoryStore()
     const { engine } = engineMock({ type: 'text', html: '<p>saved</p>' })
